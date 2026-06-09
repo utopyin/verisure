@@ -1,0 +1,20 @@
+{
+  "name": "@verisure/api",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/worker.ts"
+  },
+  "dependencies": {
+    "@verisure/db": "workspace:*",
+    "@verisure/domain": "workspace:*",
+    "@verisure/rpc-contract": "workspace:*",
+    "@verisure/server": "workspace:*",
+    "alchemy": "link:alchemy",
+    "effect": "4.0.0-beta.78"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check:types": "tsc"
+  }
+}

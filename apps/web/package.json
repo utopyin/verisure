@@ -1,0 +1,16 @@
+{
+  "name": "@verisure/web",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check:types": "tsc"
+  },
+  "dependencies": {
+    "@verisure/rpc-contract": "workspace:*",
+    "effect": "4.0.0-beta.78",
+    "vite": "^8.0.16"
+  }
+}

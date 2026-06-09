@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "tui",
+  "globalPassThroughEnv": [
+    "BETTER_AUTH_SECRET",
+    "CREDENTIAL_ENCRYPTION_KEY",
+    "TOKEN_PEPPER",
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_EMAIL_FROM",
+    "CLOUDFLARE_EMAIL_TO"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "check:types": {
+      "dependsOn": ["^check:types"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "dev": {
+      "persistent": true,
+      "cache": false
+    },
+    "deploy": {
+      "dependsOn": ["^build"],
+      "cache": false
+    }
+  }
+}
