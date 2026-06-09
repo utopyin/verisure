@@ -1,9 +1,6 @@
 export const RpcContractPackage = "@verisure/rpc-contract" as const;
 
-export type DashboardRpcGroupName =
-  | "AuthRpcs"
-  | "CredentialRpcs"
-  | "InstallationRpcs"
-  | "AlarmRpcs"
-  | "DeviceRpcs"
-  | "ShortcutRpcs";
+export * from "./errors.ts";
+export * from "./middleware.ts";
+export * from "./rpcs.ts";
+export * from "./schemas.ts";
