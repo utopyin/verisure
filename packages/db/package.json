@@ -3,11 +3,13 @@
   "type": "module",
   "private": true,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cloudflare": "./src/cloudflare.ts"
   },
   "dependencies": {
-    "@verisure/domain": "workspace:*",
+    "@effect/sql-d1": "link:@effect/sql-d1",
     "alchemy": "link:alchemy",
+    "drizzle-orm": "1.0.0-rc.1",
     "effect": "4.0.0-beta.83"
   },
   "scripts": {

@@ -2,10 +2,12 @@ import { adopt } from "alchemy/AdoptPolicy";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Workers from "alchemy/Cloudflare/Workers";
+import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { D1Database as AppDb } from "@verisure/db/cloudflare";
 import ApiWorkerLayer, {
   ApiWorker,
-  AppDb,
   VerisureCache,
 } from "./apps/api/src/worker.ts";
 import Web from "./apps/web/src/Web.ts";
@@ -13,7 +15,10 @@ import Web from "./apps/web/src/Web.ts";
 export default Alchemy.Stack(
   "Verisure",
   {
-    providers: Cloudflare.providers() as any,
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      Drizzle.providers(),
+    ),
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {

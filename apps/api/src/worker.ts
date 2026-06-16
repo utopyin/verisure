@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import { DatabaseLive } from "@verisure/db/cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,10 +10,6 @@ import {
   VerisureSessionObject,
   VerisureSessionObjectLive,
 } from "./SessionObject.ts";
-
-export const AppDb = Cloudflare.D1Database("AppDb", {
-  migrationsDir: "./packages/db/drizzle",
-});
 
 export const Email = Cloudflare.SendEmail("Email");
 
@@ -48,7 +45,6 @@ export class ApiWorker extends Cloudflare.Worker<
 
 export default ApiWorker.make(
   Effect.gen(function* () {
-    const _db = yield* Cloudflare.D1Connection.bind(AppDb);
     const _email = yield* Cloudflare.SendEmail.bind(Email);
     const _sessions = yield* VerisureSessionObject.from(ApiWorker);
     const _cache = yield* Cloudflare.KVNamespace.bind(VerisureCache);
@@ -87,7 +83,7 @@ export default ApiWorker.make(
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        Cloudflare.D1ConnectionLive,
+        DatabaseLive.pipe(Layer.provide(Cloudflare.D1ConnectionLive)),
         Cloudflare.SendEmailBindingLive,
         Cloudflare.KVNamespaceBindingLive,
         Cloudflare.RateLimitBindingLive,
