@@ -17,7 +17,7 @@ const logLevel = Effect.provideService(
 
 test.provider("create, update, delete vpc service", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
@@ -52,7 +52,6 @@ test.provider("create, update, delete vpc service", (stack) =>
       serviceId: service.serviceId,
     });
     expect(fetched.serviceId).toEqual(service.serviceId);
-    // @ts-expect-error
     expect(fetched.httpPort).toEqual(8080);
 
     const updated = yield* stack.deploy(
@@ -81,9 +80,7 @@ test.provider("create, update, delete vpc service", (stack) =>
       accountId,
       serviceId: service.serviceId,
     });
-    // @ts-expect-error
     expect(fetchedUpdated.httpPort).toEqual(3000);
-    // @ts-expect-error
     expect(fetchedUpdated.httpsPort).toEqual(3001);
 
     yield* stack.destroy();
@@ -94,7 +91,7 @@ test.provider("create, update, delete vpc service", (stack) =>
 
 test.provider("create vpc service with ipv4 host", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
@@ -137,7 +134,7 @@ test.provider("create vpc service with ipv4 host", (stack) =>
 // schema's Schema.Union, so `ipv6` is silently stripped on encode.
 test.provider.skip("create vpc service with dual-stack host", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 

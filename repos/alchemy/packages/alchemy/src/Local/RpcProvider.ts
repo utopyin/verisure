@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import type { Scope } from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { AlchemyContext } from "../AlchemyContext.ts";
 import { InstanceId } from "../InstanceId.ts";
 import type { Platform } from "../Platform.ts";
 import * as Provider from "../Provider.ts";
@@ -76,6 +77,7 @@ export const effect = <
     cls,
     Effect.gen(function* () {
       const client = yield* Effect.serviceOption(RpcProviderProxy);
+      const context = yield* Effect.context();
       const stack = yield* Stack;
 
       if (client._tag === "None") {
@@ -87,6 +89,7 @@ export const effect = <
             return (...args: any[]) => {
               const result = value(...args);
               const services = Layer.mergeAll(
+                Layer.succeedContext(context),
                 layerFallback(Stack, stack),
                 layerFallback(Stage, stack.stage),
                 Predicate.hasProperty(args[0], "instanceId") &&
@@ -127,7 +130,8 @@ const layerFallback = <I, S>(
  */
 export const providerServices = <ROut, E, RIn>(
   self: Layer.Layer<ROut, E, RIn>,
-): Layer.Layer<ROut, E, RIn> => providerServicesEffect(Effect.succeed(self));
+): Layer.Layer<ROut, E, RIn | AlchemyContext> =>
+  providerServicesEffect(Effect.succeed(self));
 
 /**
  * Conditionally constructs a layer for use by an RpcProvider.
@@ -137,10 +141,12 @@ export const providerServices = <ROut, E, RIn>(
  */
 export const providerServicesEffect = <A, E1, R1, E, R>(
   self: Effect.Effect<Layer.Layer<A, E1, R1>, E, R>,
-): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope>> =>
-  Effect.serviceOption(RpcProviderProxy).pipe(
-    Effect.flatMap((client) =>
-      client._tag === "None" ? self : (Effect.succeed(Layer.empty) as never),
+): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope> | AlchemyContext> =>
+  Effect.zip(AlchemyContext, Effect.serviceOption(RpcProviderProxy)).pipe(
+    Effect.flatMap(([context, client]) =>
+      context.dev && client._tag === "None"
+        ? self
+        : (Effect.succeed(Layer.empty) as never),
     ),
     Layer.unwrap,
   );

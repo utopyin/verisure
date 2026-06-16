@@ -180,7 +180,7 @@ test.provider(
       // The zone itself is deleted (destroy, not retain) — assert it's gone in
       // Cloudflare. (Querying the phase entrypoint here is meaningless: the
       // zone no longer exists, so Cloudflare answers Unauthorized, not 404.)
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const zoneAfter = yield* findZoneByName({
         accountId,
         name: unresolvedZoneName,
@@ -200,12 +200,6 @@ const getPhaseRules = Effect.fn(function* (
     })
     .pipe(
       Effect.map((ruleset) => ruleset.rules ?? []),
-      Effect.catchIf(isNotFoundError, () => Effect.succeed([])),
+      Effect.catchTag("RulesetNotFound", () => Effect.succeed([])),
     );
 });
-
-const isNotFoundError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  (("status" in error && (error as { status: unknown }).status === 404) ||
-    ("_tag" in error && (error as { _tag: unknown })._tag === "NotFound"));

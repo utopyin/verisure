@@ -1,5 +1,4 @@
 import {
-  layerRuntime,
   Runtime,
   RuntimeError,
   type BindingHook,
@@ -8,6 +7,7 @@ import {
   type Module,
   type Assets as RuntimeAssets,
   type DurableObjectNamespace as RuntimeDurableObjectNamespace,
+  type QueueConsumer as RuntimeQueueConsumer,
   type RuntimeServices,
 } from "@distilled.cloud/cloudflare-runtime";
 import {
@@ -20,12 +20,14 @@ import {
   Data,
   DispatchNamespace,
   DurableObjectNamespace,
+  Flagship,
   Hyperdrive,
   Images,
   Json,
   KvNamespace,
   MtlsCertificate,
   Pipelines,
+  Queue,
   R2Bucket,
   RateLimit,
   SendEmail,
@@ -44,22 +46,23 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Hash from "effect/Hash";
+import * as MutableHashMap from "effect/MutableHashMap";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { AlchemyContext } from "../../AlchemyContext.ts";
 import type * as Bundle from "../../Bundle/Bundle.ts";
 import { isResolved } from "../../Diff.ts";
 import * as RpcProvider from "../../Local/RpcProvider.ts";
 import type { ResourceBinding } from "../../Resource.ts";
 import { Stack } from "../../Stack.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { LOCAL_ENTRY_URL, LocalRuntimeState } from "../LocalRuntime.ts";
 import type { WorkerAssetsConfig, WorkerProps } from "../Workers/Worker.ts";
 import { getCompatibility } from "./Compatibility.ts";
-import * as Vite from "./Vite.ts";
 import { Worker } from "./Worker.ts";
 import { getCronBindings } from "./WorkerAsyncBindings.ts";
 import type { WorkerBinding } from "./WorkerBinding.ts";
@@ -79,42 +82,16 @@ export class WorkerValidationError extends Schema.TaggedErrorClass<WorkerValidat
   },
 ) {}
 
-export const localRuntimeServices = () =>
-  RpcProvider.providerServicesEffect(
-    Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
-      const { dotAlchemy } = yield* AlchemyContext;
-      const path = yield* Path.Path;
-      return layerRuntime({
-        api: {
-          accountId,
-        },
-        storage: {
-          directory: path.join(dotAlchemy, "local"),
-        },
-      });
-    }),
-  );
-
 export const LocalWorkerProvider = () =>
   RpcProvider.effect(
     Worker,
-    import.meta.resolve(
-      // `import.meta.resolve(<string>)` is a runtime API — TypeScript's
-      // `rewriteRelativeImportExtensions` does NOT touch the string literal, so
-      // we have to pick the right extension ourselves. `import.meta.url` reflects
-      // the actual on-disk extension of *this* file (`.ts` when loaded from
-      // `src/` under Bun or vitest, `.js` when loaded from the compiled `lib/`
-      // under Node), which is exactly the signal we need.
-      import.meta.url.endsWith(".ts") ? "../Local.ts" : "../Local.js",
-      import.meta.url,
-    ),
+    LOCAL_ENTRY_URL,
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
       const bundler = yield* WorkerBundle;
       const runtime = yield* Runtime;
       const stack = yield* Stack;
       const path = yield* Path.Path;
+      const localRuntimeState = yield* LocalRuntimeState;
       const workerProxy = yield* WorkerProxy.WorkerProxy;
       const proxyInstances = new Map<
         string,
@@ -124,6 +101,32 @@ export const LocalWorkerProvider = () =>
           scope: Scope.Closeable;
         }
       >();
+
+      const getQueueConsumers = Effect.fnUntraced(function* (
+        scriptName: string,
+      ) {
+        const consumers: RuntimeQueueConsumer[] = [];
+        for (const consumer of MutableHashMap.values(
+          localRuntimeState.queueConsumers,
+        )) {
+          if (consumer.scriptName === scriptName) {
+            const queue = MutableHashMap.get(
+              localRuntimeState.queues,
+              consumer.queueId,
+            ).pipe(Option.getOrUndefined);
+            if (queue) {
+              consumers.push({
+                queueName: queue.queueName,
+                deadLetterQueue: consumer.deadLetterQueue,
+                ...consumer.settings,
+              });
+            } else {
+              return yield* Effect.die(`Queue ${consumer.queueId} not found`);
+            }
+          }
+        }
+        return consumers;
+      });
 
       const startProxy = Effect.fn(function* (
         id: string,
@@ -212,6 +215,7 @@ export const LocalWorkerProvider = () =>
             durableObjectNamespaces: toRuntimeDurableObjectNamespaces(
               worker.durableObjectNamespaces,
             ),
+            queueConsumers: yield* getQueueConsumers(worker.name),
             modules: yield* toRuntimeModules(bundle),
             assets: toRuntimeAssets(worker.assets),
           })
@@ -306,7 +310,7 @@ export const LocalWorkerProvider = () =>
             compatibility,
             entry: props.isExternal
               ? { kind: "external" }
-              : { kind: "effect", exports: (props.exports ?? {}) as any },
+              : { kind: "effect", exports: props.exports ?? {} },
             stack: { name: stack.name, stage: stack.stage },
             extraOptions: props.build,
           } satisfies WorkerBundleOptions,
@@ -380,6 +384,9 @@ export const LocalWorkerProvider = () =>
       ) {
         const proxy = yield* maybeStartProxy(worker.id, worker.dev);
         yield* proxy.unset().pipe(Effect.forkChild);
+        // Loaded lazily: `./Vite.ts` pulls in `@distilled.cloud/cloudflare-vite-plugin`
+        // (~0.5s); only needed when running a vite dev server.
+        const Vite = yield* Effect.promise(() => import("./Vite.ts"));
         const devServer = yield* Vite.viteDev(
           rootDir,
           worker.env ?? {},
@@ -393,6 +400,7 @@ export const LocalWorkerProvider = () =>
                 worker.durableObjectNamespaces,
               ),
               hyperdrives: worker.hyperdrives,
+              queueConsumers: yield* getQueueConsumers(worker.name),
               assets: toRuntimeAssets(worker.assets),
             },
             context,
@@ -424,6 +432,7 @@ export const LocalWorkerProvider = () =>
         props: WorkerPropsWithDev;
         bindings: ResourceBinding<Worker["Binding"]>[];
       }) {
+        const { accountId } = yield* yield* CloudflareEnvironment;
         const { props, bindings } = options;
         const config = yield* buildConfig(options);
         const url = yield* (
@@ -463,6 +472,7 @@ export const LocalWorkerProvider = () =>
           };
         }),
         reconcile: Effect.fn(function* ({ id, news, bindings }) {
+          const { accountId } = yield* yield* CloudflareEnvironment;
           // `dev: false` opts out of running a local Worker entirely —
           // typically because an external dev process (DevCommand) is
           // serving requests. Tear down any prior instance and return a
@@ -568,6 +578,8 @@ const toRuntimeBinding = Effect.fnUntraced(function* (b: WorkerBinding) {
           b.namespaceId ??
           encodeURIComponent(`${b.scriptName!}-${b.className}`),
       });
+    case "flagship":
+      return Flagship.remote(b.name, b.appId);
     case "hyperdrive":
       return Hyperdrive.local(b.name, b.id);
     case "images":
@@ -585,7 +597,10 @@ const toRuntimeBinding = Effect.fnUntraced(function* (b: WorkerBinding) {
     case "plain_text":
       return Text.local(b.name, b.text);
     case "queue":
-      return yield* unsupported();
+      return Queue.local({
+        binding: b.name,
+        queueName: b.queueName,
+      });
     case "r2_bucket":
       return R2Bucket.remote(b.name, b.bucketName, b.jurisdiction);
     case "ratelimit":
