@@ -43,10 +43,6 @@ const stackArg = Argument.string("stack").pipe(
   Argument.withDescription("Stack name (e.g. AlchemyEffectWebsite)"),
 );
 
-const stageArg = Argument.string("stage").pipe(
-  Argument.withDescription("Stage name (e.g. dev_samgoodwin, prod)"),
-);
-
 const fqnArg = Argument.string("fqn").pipe(
   Argument.withDescription("Fully-qualified resource name"),
 );
@@ -353,12 +349,17 @@ const clearCommand = Command.make(
             }
           }
 
-          for (const target of targets) {
-            yield* state.deleteStack(target);
-            yield* Console.log(
-              `cleared ${target.stack}${target.stage ? `/${target.stage}` : ""}`,
-            );
-          }
+          yield* Effect.forEach(
+            targets,
+            (target) =>
+              Effect.gen(function* () {
+                yield* state.deleteStack(target);
+                yield* Console.log(
+                  `cleared ${target.stack}${target.stage ? `/${target.stage}` : ""}`,
+                );
+              }),
+            { concurrency: 32 },
+          );
         }),
       );
     }),

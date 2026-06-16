@@ -163,6 +163,8 @@ const ALCHEMY_DEFAULT_PERMISSION_GROUP_NAMES: ReadonlySet<string> = new Set([
   "AI Gateway Read",
   "AI Gateway Run",
   "AI Gateway Write",
+  "Flagship Read",
+  "Flagship Write",
   "Browser Rendering Read",
   "Browser Rendering Write",
   "Images Read",
@@ -565,7 +567,7 @@ const stateLogsCommand = Command.make(
 
       yield* Effect.gen(function* () {
         const { accountId } =
-          yield* CloudflareEnvironment.CloudflareEnvironment;
+          yield* yield* CloudflareEnvironment.CloudflareEnvironment;
         const telemetry = yield* CloudflareLogs;
 
         const formatLine = (line: { timestamp: Date; message: string }) =>
