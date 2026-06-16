@@ -11,7 +11,7 @@
     "@verisure/rpc-contract": "workspace:*",
     "@verisure/server": "workspace:*",
     "alchemy": "link:alchemy",
-    "effect": "4.0.0-beta.78"
+    "effect": "4.0.0-beta.83"
   },
   "scripts": {
     "build": "tsc",

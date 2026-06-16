@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@verisure/domain": "workspace:*",
-    "effect": "4.0.0-beta.78"
+    "effect": "4.0.0-beta.83"
   },
   "scripts": {
     "build": "tsc",
