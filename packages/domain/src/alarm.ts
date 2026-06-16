@@ -1,21 +1,29 @@
-import { AlarmModes, type AlarmMode, type ShortcutAlarmMode } from "./dto.ts";
+import { AlarmModes } from "./dto.ts";
+import type { AlarmMode, ShortcutAlarmMode } from "./dto.ts";
 
 export const isAlarmMode = (value: string): value is AlarmMode =>
-  (AlarmModes as ReadonlyArray<string>).includes(value);
+  (AlarmModes as readonly string[]).includes(value);
 
-export const isShortcutAlarmMode = (value: string): value is ShortcutAlarmMode =>
-  value === "DISARMED" || value === "ARMED_AWAY";
+export const isShortcutAlarmMode = (
+  value: string
+): value is ShortcutAlarmMode => value === "DISARMED" || value === "ARMED_AWAY";
 
 export const alarmModeToVerisureMutation = (
-  mode: AlarmMode,
+  mode: AlarmMode
 ): "disarm" | "armAway" | "armHome" => {
   switch (mode) {
-    case "DISARMED":
+    case "DISARMED": {
       return "disarm";
-    case "ARMED_AWAY":
+    }
+    case "ARMED_AWAY": {
       return "armAway";
-    case "ARMED_HOME":
+    }
+    case "ARMED_HOME": {
       return "armHome";
+    }
+    default: {
+      throw new Error(`Unknown alarm mode: ${mode}`);
+    }
   }
 };
 

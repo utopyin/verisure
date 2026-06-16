@@ -92,20 +92,20 @@ ApiWorkerLive (Cloudflare.Worker / apps/api)
 
 Dashboard-to-backend calls should use Effect RPC. The REST API remains the stable automation surface for iPhone Shortcuts and other non-TypeScript clients.
 
-| Surface | Path | Auth | Purpose |
-| --- | --- | --- | --- |
-| Health | `GET /api/health` | none | Worker health check |
-| Better Auth | `/api/auth/*` | Better Auth | magic-link login, callback, logout, session |
-| Dashboard RPC | `POST /api/rpc` | Better Auth cookie | typed dashboard API |
-| Shortcut REST | `/api/v1/*` | bearer API token | iPhone Shortcuts / automations |
+| Surface       | Path              | Auth               | Purpose                                     |
+| ------------- | ----------------- | ------------------ | ------------------------------------------- |
+| Health        | `GET /api/health` | none               | Worker health check                         |
+| Better Auth   | `/api/auth/*`     | Better Auth        | magic-link login, callback, logout, session |
+| Dashboard RPC | `POST /api/rpc`   | Better Auth cookie | typed dashboard API                         |
+| Shortcut REST | `/api/v1/*`       | bearer API token   | iPhone Shortcuts / automations              |
 
 Shortcut REST endpoints:
 
-| Method | Path | Body / query |
-| --- | --- | --- |
-| `GET` | `/api/v1/alarm/status` | `?giid=:giid` |
+| Method | Path                        | Body / query                          |
+| ------ | --------------------------- | ------------------------------------- | -------------------------------- |
+| `GET`  | `/api/v1/alarm/status`      | `?giid=:giid`                         |
 | `POST` | `/api/v1/alarm/toggle-full` | `{ "giid": string, "code"?: string }` |
-| `POST` | `/api/v1/alarm/mode` | `{ "giid": string, "mode": "DISARMED" | "ARMED_AWAY", "code"?: string }` |
+| `POST` | `/api/v1/alarm/mode`        | `{ "giid": string, "mode": "DISARMED" | "ARMED_AWAY", "code"?: string }` |
 
 Dashboard RPC groups:
 
@@ -220,21 +220,23 @@ The Durable Object replaces Python's cookie file. Use one object per `verisureCr
 ```ts
 type SessionSnapshot = {
   readonly cookies: ReadonlyArray<{
-    name: string
-    value: string
-    domain?: string
-    path?: string
-    expires?: number
-  }>
-  readonly trustToken?: { trustTokenValue: string; expiresAt?: number }
-  readonly preferredBaseUrl?: "https://automation01.verisure.com" | "https://automation02.verisure.com"
-  readonly authenticatedAt: number
-  readonly expiresAt: number // conservative: now + 14 minutes after login/refresh
+    name: string;
+    value: string;
+    domain?: string;
+    path?: string;
+    expires?: number;
+  }>;
+  readonly trustToken?: { trustTokenValue: string; expiresAt?: number };
+  readonly preferredBaseUrl?:
+    | "https://automation01.verisure.com"
+    | "https://automation02.verisure.com";
+  readonly authenticatedAt: number;
+  readonly expiresAt: number; // conservative: now + 14 minutes after login/refresh
   readonly mfa?: {
-    readonly requestedAt: number
-    readonly cookies: SessionSnapshot["cookies"]
-  }
-}
+    readonly requestedAt: number;
+    readonly cookies: SessionSnapshot["cookies"];
+  };
+};
 ```
 
 KV may cache non-sensitive installation/status data, but never Verisure credentials, PINs, or session cookies.

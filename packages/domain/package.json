@@ -1,16 +1,19 @@
 {
   "name": "@verisure/domain",
-  "type": "module",
   "private": true,
+  "type": "module",
   "exports": {
     ".": "./src/index.ts"
-  },
-  "dependencies": {
-    "effect": "4.0.0-beta.83"
   },
   "scripts": {
     "build": "tsc",
     "check:types": "tsc",
     "test": "bun test ./src"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
   }
 }

@@ -102,8 +102,8 @@ export interface ApiTokenSummary {
   readonly id: string;
   readonly credentialId: string;
   readonly displayPrefix: string;
-  readonly scopes: ReadonlyArray<string>;
-  readonly allowedGiids?: ReadonlyArray<string>;
+  readonly scopes: readonly string[];
+  readonly allowedGiids?: readonly string[];
   readonly expiresAt?: Date;
   readonly lastUsedAt?: Date;
   readonly revokedAt?: Date;
@@ -119,6 +119,6 @@ export interface ShortcutExportResult {
   readonly credentialId: string;
   readonly giid?: string;
   readonly shortcutName: string;
-  readonly instructions: ReadonlyArray<string>;
+  readonly instructions: readonly string[];
   readonly downloadUrl?: string;
 }

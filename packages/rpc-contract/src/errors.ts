@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 
-export class Unauthorized extends Schema.ErrorClass<Unauthorized>("Unauthorized")({
+export class Unauthorized extends Schema.ErrorClass<Unauthorized>(
+  "Unauthorized"
+)({
   _tag: Schema.tag("Unauthorized"),
   message: Schema.String,
 }) {}
@@ -11,7 +13,7 @@ export class Forbidden extends Schema.ErrorClass<Forbidden>("Forbidden")({
 }) {}
 
 export class CredentialNotFound extends Schema.ErrorClass<CredentialNotFound>(
-  "CredentialNotFound",
+  "CredentialNotFound"
 )({
   _tag: Schema.tag("CredentialNotFound"),
   credentialId: Schema.String,
@@ -19,21 +21,23 @@ export class CredentialNotFound extends Schema.ErrorClass<CredentialNotFound>(
 }) {}
 
 export class InstallationNotFound extends Schema.ErrorClass<InstallationNotFound>(
-  "InstallationNotFound",
+  "InstallationNotFound"
 )({
   _tag: Schema.tag("InstallationNotFound"),
   giid: Schema.String,
   message: Schema.String,
 }) {}
 
-export class InvalidInput extends Schema.ErrorClass<InvalidInput>("InvalidInput")({
+export class InvalidInput extends Schema.ErrorClass<InvalidInput>(
+  "InvalidInput"
+)({
   _tag: Schema.tag("InvalidInput"),
-  message: Schema.String,
   field: Schema.optionalKey(Schema.String),
+  message: Schema.String,
 }) {}
 
 export class VerisureUpstreamError extends Schema.ErrorClass<VerisureUpstreamError>(
-  "VerisureUpstreamError",
+  "VerisureUpstreamError"
 )({
   _tag: Schema.tag("VerisureUpstreamError"),
   kind: Schema.Literals([

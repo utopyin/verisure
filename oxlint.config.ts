@@ -6,5 +6,17 @@ import vitest from "ultracite/oxlint/vitest";
 
 export default defineConfig({
   extends: [core, react, tanstack, vitest],
-  ignorePatterns: [...core.ignorePatterns, "repos/**"],
+  ignorePatterns: [...(core.ignorePatterns ?? []), "repos/**"],
+  rules: {
+    "func-names": "off",
+    "max-classes-per-file": "off",
+    "no-shadow": "off",
+    "no-use-before-define": "off",
+    "oxc/no-barrel-file": "off",
+    "typescript/ban-types": "off",
+    "typescript/no-empty-object-type": "off",
+    "unicorn/filename-case": "off",
+    "unicorn/no-array-for-each": "off",
+    "unicorn/no-array-method-this-argument": "off",
+  },
 });

@@ -11,7 +11,9 @@ export interface Cookie {
 }
 
 export const parseSetCookieHeader = (header: string): Cookie => {
-  const [nameValue, ...attributes] = header.split(";").map((part) => part.trim());
+  const [nameValue, ...attributes] = header
+    .split(";")
+    .map((part) => part.trim());
   const separator = nameValue?.indexOf("=") ?? -1;
   if (!nameValue || separator < 1) {
     throw new Error(`Invalid Set-Cookie header: ${header}`);
@@ -28,12 +30,14 @@ export const parseSetCookieHeader = (header: string): Cookie => {
     const value = rawValue.join("=");
 
     switch (name) {
-      case "domain":
+      case "domain": {
         cookie.domain = value;
         break;
-      case "path":
+      }
+      case "path": {
         cookie.path = value;
         break;
+      }
       case "expires": {
         const expires = new Date(value);
         if (!Number.isNaN(expires.getTime())) {
@@ -41,28 +45,38 @@ export const parseSetCookieHeader = (header: string): Cookie => {
         }
         break;
       }
-      case "max-age":
+      case "max-age": {
         cookie.maxAge = Number(value);
         break;
-      case "httponly":
+      }
+      case "httponly": {
         cookie.httpOnly = true;
         break;
-      case "secure":
+      }
+      case "secure": {
         cookie.secure = true;
         break;
-      case "samesite":
+      }
+      case "samesite": {
         cookie.sameSite = normalizeSameSite(value);
         break;
+      }
+      default: {
+        break;
+      }
     }
   }
 
   return cookie as unknown as Cookie;
 };
 
-export const parseSetCookieHeaders = (headers: Iterable<string>): ReadonlyArray<Cookie> =>
-  Array.from(headers, parseSetCookieHeader);
+export const parseSetCookieHeaders = (
+  headers: Iterable<string>
+): readonly Cookie[] => Array.from(headers, parseSetCookieHeader);
 
-export const serializeCookieHeader = (cookies: Iterable<Pick<Cookie, "name" | "value">>): string =>
+export const serializeCookieHeader = (
+  cookies: Iterable<Pick<Cookie, "name" | "value">>
+): string =>
   Array.from(cookies, ({ name, value }) => `${name}=${value}`).join("; ");
 
 export const serializeSetCookieHeader = (cookie: Cookie): string => {

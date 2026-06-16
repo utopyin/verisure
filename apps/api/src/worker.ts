@@ -1,10 +1,11 @@
-import * as Cloudflare from "alchemy/Cloudflare";
 import { DatabaseLive } from "@verisure/db/cloudflare";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
 import { ApiMounts } from "./Http/App.ts";
 import {
   VerisureSessionObject,
@@ -25,23 +26,20 @@ export class ApiWorker extends Cloudflare.Worker<
   ApiWorker,
   {},
   VerisureSessionObject
->()(
-  "Api",
-  {
-    main: import.meta.filename,
-    compatibility: {
-      flags: ["nodejs_compat"],
-    },
-    observability: {
-      enabled: true,
-    },
-    env: {
-      BETTER_AUTH_SECRET: Config.redacted("BETTER_AUTH_SECRET"),
-      CREDENTIAL_ENCRYPTION_KEY: Config.redacted("CREDENTIAL_ENCRYPTION_KEY"),
-      TOKEN_PEPPER: Config.redacted("TOKEN_PEPPER").pipe(Config.option),
-    },
+>()("Api", {
+  compatibility: {
+    flags: ["nodejs_compat"],
   },
-) {}
+  env: {
+    BETTER_AUTH_SECRET: Config.redacted("BETTER_AUTH_SECRET"),
+    CREDENTIAL_ENCRYPTION_KEY: Config.redacted("CREDENTIAL_ENCRYPTION_KEY"),
+    TOKEN_PEPPER: Config.redacted("TOKEN_PEPPER").pipe(Config.option),
+  },
+  main: import.meta.filename,
+  observability: {
+    enabled: true,
+  },
+}) {}
 
 export default ApiWorker.make(
   Effect.gen(function* () {
@@ -51,7 +49,7 @@ export default ApiWorker.make(
     const _rateLimit = yield* VerisureRateLimit;
 
     return {
-      fetch: Effect.gen(function* () {
+      fetch: Effect.gen(function* fetch() {
         const request = yield* HttpServerRequest;
         const url = new URL(request.url);
 
@@ -76,7 +74,7 @@ export default ApiWorker.make(
 
         return yield* HttpServerResponse.json(
           { error: "Not Found" },
-          { status: 404 },
+          { status: 404 }
         );
       }),
     };
@@ -87,14 +85,14 @@ export default ApiWorker.make(
         Cloudflare.SendEmailBindingLive,
         Cloudflare.KVNamespaceBindingLive,
         Cloudflare.RateLimitBindingLive,
-        VerisureSessionObjectLive,
-      ),
-    ),
-  ),
+        VerisureSessionObjectLive
+      )
+    )
+  )
 );
 
 const routePlaceholder = (name: string) =>
   HttpServerResponse.json(
     { route: name, status: "not-implemented" },
-    { status: 501 },
+    { status: 501 }
   );

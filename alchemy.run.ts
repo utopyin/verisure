@@ -1,11 +1,12 @@
-import { adopt } from "alchemy/AdoptPolicy";
+import { D1Database as AppDb } from "@verisure/db/cloudflare";
 import * as Alchemy from "alchemy";
+import { adopt } from "alchemy/AdoptPolicy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Workers from "alchemy/Cloudflare/Workers";
 import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { D1Database as AppDb } from "@verisure/db/cloudflare";
+
 import ApiWorkerLayer, {
   ApiWorker,
   VerisureCache,
@@ -15,10 +16,7 @@ import Web from "./apps/web/src/Web.ts";
 export default Alchemy.Stack(
   "Verisure",
   {
-    providers: Layer.mergeAll(
-      Cloudflare.providers(),
-      Drizzle.providers(),
-    ),
+    providers: Layer.mergeAll(Cloudflare.providers(), Drizzle.providers()),
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
@@ -30,17 +28,17 @@ export default Alchemy.Stack(
       name: "utopy.sh",
     }).pipe(adopt(true));
     const apiRoute = yield* Workers.WorkerRoute("ApiRoute", {
-      zoneId: zone.zoneId,
       pattern: "verisure.utopy.sh/api/*",
       script: api.workerName,
+      zoneId: zone.zoneId,
     }).pipe(adopt(true));
 
     return {
-      apiUrl: api.url.as<string>(),
-      webUrl: web.url.as<string>(),
-      dbId: db.databaseId,
-      cacheId: cache.namespaceId,
       apiRouteId: apiRoute.routeId,
+      apiUrl: api.url.as<string>(),
+      cacheId: cache.namespaceId,
+      dbId: db.databaseId,
+      webUrl: web.url.as<string>(),
     };
-  }).pipe(Effect.provide(ApiWorkerLayer)),
+  }).pipe(Effect.provide(ApiWorkerLayer))
 );

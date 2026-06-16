@@ -1,16 +1,16 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 
 export class Web extends Cloudflare.Vite<Web>()("Web", {
-  rootDir: "./apps/web",
-  compatibility: {
-    flags: ["nodejs_compat"],
-  },
   assets: {
     runWorkerFirst: true,
+  },
+  compatibility: {
+    flags: ["nodejs_compat"],
   },
   env: {
     VITE_API_BASE_URL: "/api",
   },
+  rootDir: "./apps/web",
 }) {}
 
 export default Web;

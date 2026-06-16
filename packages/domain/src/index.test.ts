@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, test, describe } from "vitest";
+
 import { DomainPackage } from "./index.ts";
 
-test("domain package scaffold is importable", () => {
-  expect(DomainPackage).toBe("@verisure/domain");
+describe("domain package", () => {
+  test("scaffold is importable", () => {
+    expect(DomainPackage).toBe("@verisure/domain");
+  });
 });

@@ -1,19 +1,20 @@
 {
   "name": "@verisure/db",
-  "type": "module",
   "private": true,
+  "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./cloudflare": "./src/cloudflare.ts"
+    "./cloudflare": "./src/cloudflare.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check:types": "tsc"
   },
   "dependencies": {
     "@effect/sql-d1": "link:@effect/sql-d1",
     "alchemy": "link:alchemy",
     "drizzle-orm": "1.0.0-rc.1",
     "effect": "4.0.0-beta.83"
-  },
-  "scripts": {
-    "build": "tsc",
-    "check:types": "tsc"
   }
 }

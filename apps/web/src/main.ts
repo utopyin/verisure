@@ -1,4 +1,4 @@
-const root = document.getElementById("root");
+const root = document.querySelector("#root");
 
 if (root) {
   root.innerHTML = `

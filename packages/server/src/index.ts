@@ -1,3 +1,5 @@
+export * from "./Repositories/index.ts";
+
 export const ServerPackage = "@verisure/server" as const;
 
 export const RequiredConfigKeys = [

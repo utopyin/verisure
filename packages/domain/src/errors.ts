@@ -6,7 +6,7 @@ export class RequestError extends Data.TaggedError("RequestError")<{
 }> {}
 
 export class AuthenticationError extends Data.TaggedError(
-  "AuthenticationError",
+  "AuthenticationError"
 )<{
   readonly message: string;
   readonly statusCode?: number;
@@ -23,7 +23,7 @@ export class CookieReadError extends Data.TaggedError("CookieReadError")<{
 }> {}
 
 export class CredentialsRejected extends Data.TaggedError(
-  "CredentialsRejected",
+  "CredentialsRejected"
 )<{
   readonly message: string;
   readonly statusCode?: number;
@@ -80,8 +80,13 @@ export const responseSignalsRateLimit = (text: string): boolean => {
 
 export const classifyHttpError = (
   statusCode: number,
-  text: string,
-): AuthenticationError | CredentialsRejected | LoginError | RateLimitError | ResponseError => {
+  text: string
+):
+  | AuthenticationError
+  | CredentialsRejected
+  | LoginError
+  | RateLimitError
+  | ResponseError => {
   if (statusCode === 401 || statusCode === 403) {
     return new AuthenticationError({ message: text, statusCode });
   }
@@ -103,7 +108,7 @@ export const classifyHttpError = (
 
 export const classifyGraphQLResponse = (
   response: unknown,
-  operationName?: string,
+  operationName?: string
 ): GraphQLError | undefined => {
   if (
     typeof response === "object" &&
@@ -111,9 +116,9 @@ export const classifyGraphQLResponse = (
     "errors" in response
   ) {
     return new GraphQLError({
+      errors: (response as { readonly errors: unknown }).errors,
       message: "Verisure GraphQL response contained errors",
       operationName,
-      errors: (response as { readonly errors: unknown }).errors,
     });
   }
   return undefined;

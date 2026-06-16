@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+
 import { DashboardRpcError } from "./errors.ts";
 import { DashboardAuthMiddleware } from "./middleware.ts";
 import {
@@ -31,124 +32,124 @@ import {
 
 export const AuthRpcs = RpcGroup.make(
   Rpc.make("GetSession", {
-    success: DashboardSession,
     error: DashboardRpcError,
+    success: DashboardSession,
   }),
   Rpc.make("Logout", {
     error: DashboardRpcError,
-  }),
+  })
 ).prefix("Auth.");
 
 export const CredentialRpcs = RpcGroup.make(
   Rpc.make("ListCredentials", {
-    success: Schema.Array(CredentialSummary),
     error: DashboardRpcError,
+    success: Schema.Array(CredentialSummary),
   }),
   Rpc.make("CreateCredential", {
+    error: DashboardRpcError,
     payload: CreateCredentialPayload,
     success: CredentialSummary,
-    error: DashboardRpcError,
   }),
   Rpc.make("DeleteCredential", {
-    payload: CredentialIdPayload,
     error: DashboardRpcError,
+    payload: CredentialIdPayload,
   }),
   Rpc.make("RequestCredentialMfa", {
+    error: DashboardRpcError,
     payload: CredentialIdPayload,
     success: MfaRequestResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("ValidateCredentialMfa", {
+    error: DashboardRpcError,
     payload: MfaCodePayload,
     success: MfaValidationResult,
-    error: DashboardRpcError,
-  }),
+  })
 ).prefix("Credential.");
 
 export const InstallationRpcs = RpcGroup.make(
   Rpc.make("ListInstallations", {
+    error: DashboardRpcError,
     payload: CredentialIdPayload,
     success: Schema.Array(InstallationSummary),
-    error: DashboardRpcError,
   }),
   Rpc.make("SetDefaultInstallation", {
+    error: DashboardRpcError,
     payload: CredentialInstallationPayload,
     success: CredentialSummary,
-    error: DashboardRpcError,
-  }),
+  })
 ).prefix("Installation.");
 
 export const AlarmRpcs = RpcGroup.make(
   Rpc.make("GetArmState", {
+    error: DashboardRpcError,
     payload: AlarmStatusPayload,
     success: ArmState,
-    error: DashboardRpcError,
   }),
   Rpc.make("SetAlarmMode", {
+    error: DashboardRpcError,
     payload: SetAlarmModePayload,
     success: AlarmMutationResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("ArmAway", {
+    error: DashboardRpcError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("ArmHome", {
+    error: DashboardRpcError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("Disarm", {
+    error: DashboardRpcError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("ToggleFullAlarm", {
+    error: DashboardRpcError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
-    error: DashboardRpcError,
-  }),
+  })
 ).prefix("Alarm.");
 
 export const DeviceRpcs = RpcGroup.make(
   Rpc.make("ListDoorWindows", {
+    error: DashboardRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(DoorWindowSensorStatus),
-    error: DashboardRpcError,
   }),
   Rpc.make("ListClimate", {
+    error: DashboardRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(ClimateSensorStatus),
-    error: DashboardRpcError,
   }),
   Rpc.make("ListSmartLocks", {
+    error: DashboardRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(SmartLockStatus),
-    error: DashboardRpcError,
   }),
   Rpc.make("ListSmartPlugs", {
+    error: DashboardRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(SmartPlugStatus),
-    error: DashboardRpcError,
-  }),
+  })
 ).prefix("Device.");
 
 export const ShortcutRpcs = RpcGroup.make(
   Rpc.make("ExportShortcut", {
+    error: DashboardRpcError,
     payload: ExportShortcutPayload,
     success: ShortcutExportResult,
-    error: DashboardRpcError,
   }),
   Rpc.make("ListApiTokens", {
+    error: DashboardRpcError,
     payload: ListApiTokensPayload,
     success: Schema.Array(ApiTokenSummary),
-    error: DashboardRpcError,
   }),
   Rpc.make("RevokeApiToken", {
-    payload: RevokeApiTokenPayload,
     error: DashboardRpcError,
-  }),
+    payload: RevokeApiTokenPayload,
+  })
 ).prefix("Shortcut.");
 
 export const DashboardRpcs = AuthRpcs.merge(
@@ -156,7 +157,7 @@ export const DashboardRpcs = AuthRpcs.merge(
   InstallationRpcs,
   AlarmRpcs,
   DeviceRpcs,
-  ShortcutRpcs,
+  ShortcutRpcs
 ).middleware(DashboardAuthMiddleware);
 
 export type DashboardRpcs = RpcGroup.Rpcs<typeof DashboardRpcs>;

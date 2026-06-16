@@ -3,12 +3,13 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+
 import { Database } from "./database.ts";
 
 const DrizzleSchema = Drizzle.Schema("AppSchema", {
-  schema: "./packages/db/src/schema.ts",
-  out: "./packages/db/drizzle",
   dialect: "sqlite",
+  out: "./packages/db/drizzle",
+  schema: "./packages/db/src/schema.ts",
 });
 
 export const D1Database = Effect.gen(function* D1Database() {
@@ -21,14 +22,14 @@ export const D1Database = Effect.gen(function* D1Database() {
 });
 
 const D1SqlClientLive = Layer.unwrap(
-  Effect.gen(function* () {
+  Effect.gen(function* D1SqlClientLive() {
     const database = yield* D1Database;
     const connect = yield* Cloudflare.D1Connection;
     const connection = yield* connect(database);
     const db = yield* connection.raw;
 
     return D1Client.layer({ db });
-  }),
+  })
 );
 
 export const DatabaseLive = Database.layer.pipe(Layer.provide(D1SqlClientLive));

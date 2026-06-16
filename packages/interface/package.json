@@ -1,20 +1,18 @@
 {
-  "name": "@verisure/rpc-contract",
+  "name": "@verisure/interface",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./entities": "./src/entities.ts"
   },
   "scripts": {
     "build": "tsc",
-    "check:types": "tsc",
-    "test": "bun test ./src"
+    "check:types": "tsc"
   },
   "dependencies": {
+    "@verisure/db": "workspace:*",
     "@verisure/domain": "workspace:*",
     "effect": "catalog:"
-  },
-  "devDependencies": {
-    "vitest": "catalog:"
   }
 }

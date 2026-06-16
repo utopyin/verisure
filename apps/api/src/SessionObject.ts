@@ -12,15 +12,13 @@ export class VerisureSessionObject extends Cloudflare.DurableObjectNamespace<
 >()("VerisureSessionObject") {}
 
 export const VerisureSessionObjectLive = VerisureSessionObject.make(
-  Effect.gen(function* () {
-    return Effect.gen(function* () {
-      return {
-        fetch: HttpServerResponse.json({
-          status: "session-object-placeholder",
-        }),
-      };
-    });
-  }),
+  Effect.succeed(
+    Effect.succeed({
+      fetch: HttpServerResponse.json({
+        status: "session-object-placeholder",
+      }),
+    })
+  )
 );
 
 export default VerisureSessionObjectLive;
