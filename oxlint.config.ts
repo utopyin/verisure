@@ -6,7 +6,11 @@ import vitest from "ultracite/oxlint/vitest";
 
 export default defineConfig({
   extends: [core, react, tanstack, vitest],
-  ignorePatterns: [...(core.ignorePatterns ?? []), "repos/**"],
+  ignorePatterns: [
+    ...(core.ignorePatterns ?? []),
+    "**/.alchemy/**",
+    "repos/**",
+  ],
   rules: {
     "func-names": "off",
     "max-classes-per-file": "off",

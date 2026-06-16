@@ -6,6 +6,8 @@ out
 dist
 lib
 **/lib
+.alchemy
+**/.alchemy
 *.tgz
 
 # code coverage

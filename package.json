@@ -13,7 +13,8 @@
       "drizzle-kit": "1.0.0-rc.1",
       "effect": "4.0.0-beta.83",
       "vite": "8.0.16",
-      "@cloudflare/workers-types": "^4.20260608.1"
+      "@cloudflare/workers-types": "^4.20260608.1",
+      "better-auth": "^1.6.19"
     }
   },
   "type": "module",

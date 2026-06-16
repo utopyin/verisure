@@ -38,7 +38,7 @@ Alchemy.Stack("Verisure")
     └── /api/health
 ```
 
-Custom-domain routing should use the local Alchemy branch with Worker route support so the public backend surface is `https://verisure.utopy.sh/api/*`, with RPC mounted at `https://verisure.utopy.sh/api/rpc/*`. Side quest recorded in `.pi/todos`: rebase `/Users/utopy/Documents/Void/Dev/alchemy-effect` branch `feat/cloudflare-worker-routes`, validate it, and link this repo to that local `alchemy` package.
+Custom-domain routing should use the local Alchemy branch with Worker route support so the public backend surface is `https://verisure.utopy.sh/api/*`, with RPC mounted at `https://verisure.utopy.sh/api/rpc/*`.
 
 ## Service model
 

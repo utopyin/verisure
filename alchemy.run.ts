@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 
 import ApiWorkerLayer, {
   ApiWorker,
+  ProductionApiWorkerName,
   VerisureCache,
 } from "./apps/api/src/worker.ts";
 import Web from "./apps/web/src/Web.ts";
@@ -24,17 +25,23 @@ export default Alchemy.Stack(
     const web = yield* Web;
     const db = yield* AppDb;
     const cache = yield* VerisureCache;
-    const zone = yield* Cloudflare.Zone("UtopyZone", {
-      name: "utopy.sh",
-    }).pipe(adopt(true));
-    const apiRoute = yield* Workers.WorkerRoute("ApiRoute", {
-      pattern: "verisure.utopy.sh/api/*",
-      script: api.workerName,
-      zoneId: zone.zoneId,
-    }).pipe(adopt(true));
+    const context = yield* Alchemy.AlchemyContext;
+    const apiRouteId = context.dev
+      ? undefined
+      : yield* Effect.gen(function* makeApiRoute() {
+          const zone = yield* Cloudflare.Zone("UtopyZone", {
+            name: "utopy.sh",
+          }).pipe(adopt(true));
+          const apiRoute = yield* Workers.WorkerRoute("ApiRoute", {
+            pattern: "verisure.utopy.sh/api/*",
+            script: ProductionApiWorkerName,
+            zoneId: zone.zoneId,
+          }).pipe(adopt(true));
+          return apiRoute.routeId;
+        });
 
     return {
-      apiRouteId: apiRoute.routeId,
+      apiRouteId,
       apiUrl: api.url.as<string>(),
       cacheId: cache.namespaceId,
       dbId: db.databaseId,

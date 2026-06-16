@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./Auth": "./src/Auth.ts"
   },
   "scripts": {
     "build": "tsc",
@@ -14,6 +15,7 @@
     "@verisure/domain": "workspace:*",
     "@verisure/interface": "workspace:*",
     "alchemy": "link:alchemy",
+    "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"
   }
