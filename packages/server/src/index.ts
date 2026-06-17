@@ -1,8 +1,8 @@
-export * from "./Auth.ts";
-export * from "./Email/index.ts";
-export * from "./Repositories/index.ts";
-export * from "./Runtime/index.ts";
-export * from "./Security/index.ts";
+export * from "./Auth";
+export * from "./Email";
+export * from "./Repositories";
+export * from "./Runtime";
+export * from "./Security";
 
 export const ServerPackage = "@verisure/server" as const;
 

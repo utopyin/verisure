@@ -12,6 +12,7 @@ import * as Redacted from "effect/Redacted";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
+import { EmailLive } from "../Email";
 import { EmailService } from "../Email/EmailService.ts";
 import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
 
@@ -64,7 +65,7 @@ export class BetterAuthService extends Context.Service<
       const database = yield* D1Database;
       const connection = yield* Cloudflare.D1Connection.bind(database);
 
-      const auth = yield* Effect.gen(function* makeAuth() {
+      const getBetterAuth = yield* Effect.gen(function* makeAuth() {
         const d1 = yield* connection.raw;
         const runtimeContext = yield* Effect.context<RuntimeContext>();
 
@@ -107,21 +108,20 @@ export class BetterAuthService extends Context.Service<
 
       const getSession: BetterAuthServiceShape["getSession"] = Effect.fn(
         "BetterAuthService.getSession"
-      )((input) =>
-        auth.pipe(
-          Effect.flatMap((auth) =>
-            Effect.tryPromise({
-              catch: (cause) =>
-                new AuthError({ cause, message: "Failed to read session" }),
-              try: () =>
-                auth.api.getSession({
-                  headers: input instanceof Headers ? input : input.headers,
-                }),
-            })
-          ),
-          Effect.flatMap(decodeAuthSession)
-        )
-      );
+      )(function* (input) {
+        const auth = yield* getBetterAuth;
+
+        const session = yield* Effect.tryPromise({
+          catch: (cause) =>
+            new AuthError({ cause, message: "Failed to read session" }),
+          try: () =>
+            auth.api.getSession({
+              headers: input instanceof Headers ? input : input.headers,
+            }),
+        });
+
+        return yield* decodeAuthSession(session);
+      });
 
       const fetch: BetterAuthServiceShape["fetch"] = Effect.gen(
         function* fetch() {
@@ -136,20 +136,20 @@ export class BetterAuthService extends Context.Service<
             );
           }
 
-          const resolvedAuth = yield* auth;
+          const auth = yield* getBetterAuth;
           const response = yield* Effect.tryPromise({
             catch: (cause) =>
               new AuthError({ cause, message: "Auth request failed" }),
-            try: () => resolvedAuth.handler(request.source as Request),
+            try: () => auth.handler(request.source as Request),
           });
 
           return HttpServerResponse.fromWeb(addCorsHeaders(request, response));
         }
       );
 
-      return BetterAuthService.of({ auth, fetch, getSession });
+      return BetterAuthService.of({ auth: getBetterAuth, fetch, getSession });
     })
-  ).pipe(Layer.provide(Cloudflare.D1ConnectionLive));
+  ).pipe(Layer.provide(EmailLive));
 }
 
 const renderMagicLinkEmail = (input: {

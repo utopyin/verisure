@@ -7,7 +7,7 @@ import {
   InstallationSummary,
   ShortcutExportResult,
   VerisureUpstreamError,
-} from "./index.ts";
+} from ".";
 
 describe("dashboard RPC schemas", () => {
   test("decodes representative installation payloads", () => {

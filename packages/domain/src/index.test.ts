@@ -1,6 +1,6 @@
 import { expect, test, describe } from "vitest";
 
-import { DomainPackage } from "./index.ts";
+import { DomainPackage } from ".";
 
 describe("domain package", () => {
   test("scaffold is importable", () => {

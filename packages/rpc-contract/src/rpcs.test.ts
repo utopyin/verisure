@@ -8,7 +8,7 @@ import {
   DeviceRpcs,
   InstallationRpcs,
   ShortcutRpcs,
-} from "./index.ts";
+} from ".";
 
 const requestTags = (group: {
   readonly requests: ReadonlyMap<string, unknown>;

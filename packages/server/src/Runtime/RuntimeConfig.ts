@@ -2,8 +2,8 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
+import type * as Option from "effect/Option";
+import type * as Redacted from "effect/Redacted";
 
 export interface RuntimeConfigShape {
   readonly appBaseUrl: string;
@@ -23,18 +23,15 @@ export class RuntimeConfig extends Context.Service<
       const appBaseUrl = yield* Config.string("APP_BASE_URL").pipe(
         Config.withDefault("https://verisure.utopy.sh")
       );
-      const betterAuthSecret = Redacted.make(
-        yield* Config.string("BETTER_AUTH_SECRET")
-      );
-      const credentialEncryptionKey = Redacted.make(
-        yield* Config.string("CREDENTIAL_ENCRYPTION_KEY")
+      const betterAuthSecret = yield* Config.redacted("BETTER_AUTH_SECRET");
+      const credentialEncryptionKey = yield* Config.redacted(
+        "CREDENTIAL_ENCRYPTION_KEY"
       );
       const emailFrom = yield* Config.string("CLOUDFLARE_EMAIL_FROM").pipe(
         Config.withDefault("Matteo Scotto <automations@verisure.utopy.sh>")
       );
-      const tokenPepper = yield* Config.string("TOKEN_PEPPER").pipe(
-        Config.option,
-        Effect.map(Option.map(Redacted.make))
+      const tokenPepper = yield* Config.redacted("TOKEN_PEPPER").pipe(
+        Config.option
       );
 
       return RuntimeConfig.of({

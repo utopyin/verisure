@@ -4,7 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./Auth": "./src/Auth.ts"
+    "./Auth": "./src/Auth/index.ts"
   },
   "scripts": {
     "build": "tsc",

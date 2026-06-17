@@ -1,10 +1,5 @@
 import { DatabaseLive } from "@verisure/db/cloudflare";
-import {
-  BetterAuthService,
-  CloudflareEmailLive,
-  ConsoleEmailLive,
-  RuntimeConfig,
-} from "@verisure/server";
+import { BetterAuthService, RuntimeConfig } from "@verisure/server";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,38 +18,28 @@ export const VerisureRateLimit = Cloudflare.RateLimit({
 
 export const ProductionApiWorkerName = "verisure-api" as const;
 
-const workerSecret = (name: string, devFallback: string) =>
-  process.env[name] ?? devFallback;
-
-const AuthSupportLive =
-  process.env.VERISURE_EMAIL_DRIVER === "cloudflare"
-    ? Layer.mergeAll(
-        RuntimeConfig.Live,
-        CloudflareEmailLive.pipe(Layer.provide(RuntimeConfig.Live))
-      )
-    : Layer.mergeAll(RuntimeConfig.Live, ConsoleEmailLive);
-
 export class ApiWorker extends Cloudflare.Worker<ApiWorker>()("Api", {
-  compatibility: {
-    flags: ["nodejs_compat"],
-  },
-  env: {
-    BETTER_AUTH_SECRET: workerSecret(
-      "BETTER_AUTH_SECRET",
-      "dev-better-auth-secret"
-    ),
-    CREDENTIAL_ENCRYPTION_KEY: workerSecret(
-      "CREDENTIAL_ENCRYPTION_KEY",
-      "dev-credential-encryption-key"
-    ),
-    TOKEN_PEPPER: workerSecret("TOKEN_PEPPER", "dev-token-pepper"),
-  },
+  compatibility: { flags: ["nodejs_compat"] },
   main: import.meta.filename,
   name: ProductionApiWorkerName,
   observability: {
     enabled: true,
   },
 }) {}
+
+export const ApiWorkerLive = Layer.mergeAll(
+  BetterAuthService.Live,
+  DatabaseLive
+).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Cloudflare.KVNamespaceBindingLive,
+      Cloudflare.RateLimitBindingLive,
+      Cloudflare.D1ConnectionLive,
+      RuntimeConfig.Live
+    )
+  )
+);
 
 export default ApiWorker.make(
   Effect.gen(function* () {
@@ -92,16 +77,7 @@ export default ApiWorker.make(
         );
       }),
     };
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        BetterAuthService.Live.pipe(Layer.provide(AuthSupportLive)),
-        DatabaseLive.pipe(Layer.provide(Cloudflare.D1ConnectionLive)),
-        Cloudflare.KVNamespaceBindingLive,
-        Cloudflare.RateLimitBindingLive
-      )
-    )
-  )
+  }).pipe(Effect.provide(ApiWorkerLive))
 );
 
 const routePlaceholder = (name: string) =>
