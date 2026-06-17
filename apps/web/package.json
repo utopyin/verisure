@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check:types": "tsc"
+    "check:types": "tsgo"
   },
   "dependencies": {
     "@verisure/rpc-contract": "workspace:*",

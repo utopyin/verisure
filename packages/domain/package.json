@@ -6,8 +6,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "check:types": "tsc",
+    "check:types": "tsgo",
     "test": "bun test ./src"
   },
   "dependencies": {

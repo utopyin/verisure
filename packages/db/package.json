@@ -8,8 +8,7 @@
     "./schema": "./src/schema.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "check:types": "tsc"
+    "check:types": "tsgo"
   },
   "dependencies": {
     "@effect/sql-d1": "link:@effect/sql-d1",

@@ -1,5 +1,4 @@
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as Drizzle from "./drizzle.ts";
@@ -13,8 +12,6 @@ export class Database extends Context.Service<Database, DrizzleDatabase>()(
 ) {
   static readonly layer = Layer.effect(
     Database,
-    Effect.gen(function* makeDatabase() {
-      return yield* Drizzle.make({ relations, schema: tables });
-    })
+    Drizzle.make({ relations, schema: tables })
   );
 }

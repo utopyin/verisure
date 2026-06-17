@@ -6,8 +6,7 @@
     ".": "./src/worker.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "check:types": "tsc"
+    "check:types": "tsgo"
   },
   "dependencies": {
     "@verisure/db": "workspace:*",

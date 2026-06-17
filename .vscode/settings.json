@@ -6,8 +6,9 @@
   "editor.formatOnPaste": true,
   "editor.formatOnSave": true,
   "emmet.showExpandedAbbreviation": "never",
-  "js/ts.tsdk.path": "node_modules/typescript/lib",
-  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
+  "typescript.native-preview.tsdk": "node_modules/.bin",
+  "typescript.native-preview.additionalTsdkLocations": ["node_modules/.bin"],
+  "typescript.experimental.useTsgo": true,
   "[css]": {
     "editor.defaultFormatter": "oxc.oxc-vscode"
   },
@@ -58,6 +59,5 @@
   },
   "editor.codeActionsOnSave": {
     "source.fixAll.oxc": "explicit"
-  },
-  "typescript.tsdk": "node_modules/typescript/lib"
+  }
 }

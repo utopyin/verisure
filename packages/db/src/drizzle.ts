@@ -85,7 +85,7 @@ const patchQueryPromise = (prototype: object) => {
   if ("pipe" in prototype) {
     return;
   }
-  Object.assign(prototype, queryPromiseEffectPrototype);
+  void Object.assign(prototype, queryPromiseEffectPrototype);
 };
 
 patchQueryPromise(QueryPromise.prototype);
