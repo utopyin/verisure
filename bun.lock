@@ -53,6 +53,7 @@
     "packages/domain": {
       "name": "@verisure/domain",
       "dependencies": {
+        "@verisure/shared": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -83,10 +84,20 @@
         "@verisure/db": "workspace:*",
         "@verisure/domain": "workspace:*",
         "@verisure/interface": "workspace:*",
+        "@verisure/shared": "workspace:*",
         "alchemy": "link:alchemy",
         "better-auth": "catalog:",
         "drizzle-orm": "catalog:",
         "effect": "catalog:",
+      },
+      "devDependencies": {
+        "vitest": "catalog:",
+      },
+    },
+    "packages/shared": {
+      "name": "@verisure/shared",
+      "devDependencies": {
+        "vitest": "catalog:",
       },
     },
   },
@@ -386,6 +397,8 @@
     "@verisure/rpc-contract": ["@verisure/rpc-contract@workspace:packages/rpc-contract"],
 
     "@verisure/server": ["@verisure/server@workspace:packages/server"],
+
+    "@verisure/shared": ["@verisure/shared@workspace:packages/shared"],
 
     "@verisure/web": ["@verisure/web@workspace:apps/web"],
 

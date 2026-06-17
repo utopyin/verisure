@@ -1,5 +1,3 @@
-export const DomainPackage = "@verisure/domain" as const;
-
 export const AlarmModes = ["DISARMED", "ARMED_AWAY", "ARMED_HOME"] as const;
 export type AlarmMode = (typeof AlarmModes)[number];
 

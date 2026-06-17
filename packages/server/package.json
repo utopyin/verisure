@@ -4,18 +4,24 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./Auth": "./src/Auth/index.ts"
+    "./Auth": "./src/Auth/index.ts",
+    "./Verisure": "./src/Verisure/index.ts"
   },
   "scripts": {
-    "check:types": "tsgo"
+    "check:types": "tsgo",
+    "test": "vitest ./src"
   },
   "dependencies": {
     "@verisure/db": "workspace:*",
     "@verisure/domain": "workspace:*",
     "@verisure/interface": "workspace:*",
+    "@verisure/shared": "workspace:*",
     "alchemy": "link:alchemy",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
   }
 }

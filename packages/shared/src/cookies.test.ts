@@ -1,0 +1,84 @@
+import { describe, expect, test } from "vitest";
+
+import {
+  mergeCookies,
+  parseSetCookieHeader,
+  serializeCookieHeader,
+  serializeSetCookieHeader,
+  splitCombinedSetCookieHeader,
+} from "./cookies.ts";
+
+describe("cookie helpers", () => {
+  test("parses Set-Cookie headers", () => {
+    expect(
+      parseSetCookieHeader(
+        "vs-session=abc123; Domain=.verisure.com; Path=/; Expires=Tue, 09 Jun 2026 10:00:00 GMT; HttpOnly; Secure; SameSite=None"
+      )
+    ).toStrictEqual({
+      domain: ".verisure.com",
+      expires: new Date("Tue, 09 Jun 2026 10:00:00 GMT"),
+      httpOnly: true,
+      name: "vs-session",
+      path: "/",
+      sameSite: "None",
+      secure: true,
+      value: "abc123",
+    });
+  });
+
+  test("serializes request Cookie header", () => {
+    expect(
+      serializeCookieHeader([
+        { name: "a", value: "1" },
+        { name: "b", value: "2" },
+      ])
+    ).toBe("a=1; b=2");
+  });
+
+  test("serializes Set-Cookie header", () => {
+    expect(
+      serializeSetCookieHeader({
+        httpOnly: true,
+        name: "trust",
+        path: "/",
+        sameSite: "Lax",
+        secure: true,
+        value: "token",
+      })
+    ).toBe("trust=token; Path=/; HttpOnly; Secure; SameSite=Lax");
+  });
+
+  test("splits combined Set-Cookie headers without splitting Expires commas", () => {
+    expect(
+      splitCombinedSetCookieHeader(
+        "vid=one; Expires=Tue, 09 Jun 2026 10:00:00 GMT; Path=/, vs-refresh=two; Path=/"
+      )
+    ).toStrictEqual([
+      "vid=one; Expires=Tue, 09 Jun 2026 10:00:00 GMT; Path=/",
+      "vs-refresh=two; Path=/",
+    ]);
+  });
+
+  test("merges incoming cookies and removes expired cookies", () => {
+    expect(
+      mergeCookies(
+        [
+          { name: "vid", value: "old" },
+          { name: "vs-refresh", value: "keep" },
+        ],
+        [
+          { name: "vid", value: "new" },
+          {
+            expires: new Date("2020-01-01T00:00:00.000Z"),
+            name: "gone",
+            value: "",
+          },
+        ],
+        new Date("2026-01-01T00:00:00.000Z")
+      )
+    ).toStrictEqual([
+      { name: "vid", value: "new" },
+      { name: "vs-refresh", value: "keep" },
+    ]);
+  });
+});

@@ -3,8 +3,7 @@ export * from "./Email";
 export * from "./Repositories";
 export * from "./Runtime";
 export * from "./Security";
-
-export const ServerPackage = "@verisure/server" as const;
+export * from "./Verisure";
 
 export const RequiredConfigKeys = [
   "BETTER_AUTH_SECRET",

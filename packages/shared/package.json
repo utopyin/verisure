@@ -1,17 +1,14 @@
 {
-  "name": "@verisure/domain",
+  "name": "@verisure/shared",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cookies": "./src/cookies.ts"
   },
   "scripts": {
     "check:types": "tsgo",
     "test": "bun test ./src"
-  },
-  "dependencies": {
-    "@verisure/shared": "workspace:*",
-    "effect": "catalog:"
   },
   "devDependencies": {
     "vitest": "catalog:"
