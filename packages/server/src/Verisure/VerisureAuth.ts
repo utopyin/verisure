@@ -312,125 +312,108 @@ export class VerisureAuth extends Context.Service<
           return yield* result.failure;
         });
 
-      const ensureSession = sessions.withCredentialLock(
-        withStatusUpdates(
-          Effect.gen(function* () {
-            const valid = yield* currentValidSnapshot;
-            if (Option.isSome(valid)) {
-              return valid.value;
-            }
+      const ensureSession = Effect.gen(function* () {
+        const valid = yield* currentValidSnapshot;
+        if (Option.isSome(valid)) {
+          return valid.value;
+        }
 
-            const snapshot = yield* sessions.getSnapshot;
-            if (Option.isSome(snapshot)) {
-              return yield* recoverExpiredSnapshot(snapshot.value);
-            }
+        const snapshot = yield* sessions.getSnapshot;
+        if (Option.isSome(snapshot)) {
+          return yield* recoverExpiredSnapshot(snapshot.value);
+        }
 
-            return yield* loginWithBasicAuth;
-          })
-        )
-      );
+        return yield* loginWithBasicAuth;
+      }).pipe(withStatusUpdates, sessions.withCredentialLock);
 
-      const requestMfa = sessions.withCredentialLock(
-        withStatusUpdates(
-          Effect.gen(function* () {
-            const decrypted = yield* decryptedCredential;
-            const response = yield* loginRequest(
-              decrypted.email,
-              decrypted.password
+      const requestMfa = Effect.gen(function* () {
+        const decrypted = yield* decryptedCredential;
+        const response = yield* loginRequest(
+          decrypted.email,
+          decrypted.password
+        );
+        const text = yield* responseText(response);
+        const loginCookies = yield* responseCookies(response);
+        if (!text.includes("stepUpToken")) {
+          return yield* new LoginError({
+            message:
+              "Multifactor authentication is not enabled for this credential",
+            statusCode: response.status,
+          });
+        }
+
+        let lastError: VerisureAuthError = new LoginError({
+          message: "Failed to request Verisure MFA code",
+        });
+        for (const mfaType of MfaTypes) {
+          const attempt = yield* Effect.result(
+            transport.request(
+              HttpClientRequest.post(`/auth/mfa?type=${mfaType}`, {
+                headers: cookieHeader(loginCookies),
+              })
+            )
+          );
+          if (Result.isSuccess(attempt)) {
+            const cookies = mergeSessionCookies(
+              loginCookies,
+              yield* responseCookies(attempt.success)
             );
-            const text = yield* responseText(response);
-            const loginCookies = yield* responseCookies(response);
-            if (!text.includes("stepUpToken")) {
-              return yield* new LoginError({
-                message:
-                  "Multifactor authentication is not enabled for this credential",
-                statusCode: response.status,
-              });
-            }
-
-            let lastError: VerisureAuthError = new LoginError({
-              message: "Failed to request Verisure MFA code",
+            const requestedAt = Date.now();
+            yield* sessions.putMfaState({ cookies, requestedAt });
+            yield* setStatus("mfa_required", "Verisure MFA code requested", {
+              mfaRequestedAt: new Date(requestedAt),
             });
-            for (const mfaType of MfaTypes) {
-              const attempt = yield* Effect.result(
-                transport.request(
-                  HttpClientRequest.post(`/auth/mfa?type=${mfaType}`, {
-                    headers: cookieHeader(loginCookies),
-                  })
-                )
-              );
-              if (Result.isSuccess(attempt)) {
-                const cookies = mergeSessionCookies(
-                  loginCookies,
-                  yield* responseCookies(attempt.success)
-                );
-                const requestedAt = Date.now();
-                yield* sessions.putMfaState({ cookies, requestedAt });
-                yield* setStatus(
-                  "mfa_required",
-                  "Verisure MFA code requested",
-                  { mfaRequestedAt: new Date(requestedAt) }
-                );
-                return;
-              }
-              lastError = attempt.failure;
-            }
-            return yield* lastError;
-          })
-        )
-      );
+            return;
+          }
+          lastError = attempt.failure;
+        }
+        return yield* lastError;
+      }).pipe(withStatusUpdates, sessions.withCredentialLock);
 
       const validateMfa: VerisureAuthShape["validateMfa"] = (token) =>
-        sessions.withCredentialLock(
-          withStatusUpdates(
-            Effect.gen(function* () {
-              const mfa = yield* sessions.getMfaState;
-              if (Option.isNone(mfa)) {
-                return yield* new CookieReadError({
-                  message: "No pending Verisure MFA state found",
-                });
-              }
+        Effect.gen(function* () {
+          const mfa = yield* sessions.getMfaState;
+          if (Option.isNone(mfa)) {
+            return yield* new CookieReadError({
+              message: "No pending Verisure MFA state found",
+            });
+          }
 
-              const validateResponse = yield* transport.request(
-                HttpClientRequest.post("/auth/mfa/validate", {
-                  headers: {
-                    ...cookieHeader(mfa.value.cookies),
-                    Accept: "application/json",
-                    "Content-Type": "application/json",
-                  },
-                }).pipe(HttpClientRequest.bodyJsonUnsafe({ token }))
-              );
-              const validatedCookies = mergeSessionCookies(
-                mfa.value.cookies,
-                yield* responseCookies(validateResponse)
-              );
+          const validateResponse = yield* transport.request(
+            HttpClientRequest.post("/auth/mfa/validate", {
+              headers: {
+                ...cookieHeader(mfa.value.cookies),
+                Accept: "application/json",
+                "Content-Type": "application/json",
+              },
+            }).pipe(HttpClientRequest.bodyJsonUnsafe({ token }))
+          );
+          const validatedCookies = mergeSessionCookies(
+            mfa.value.cookies,
+            yield* responseCookies(validateResponse)
+          );
 
-              const trustResponse = yield* transport.request(
-                HttpClientRequest.post("/auth/trust", {
-                  headers: {
-                    ...cookieHeader(validatedCookies),
-                    Accept: "application/json",
-                  },
-                })
-              );
-              const trustCookies = mergeSessionCookies(
-                validatedCookies,
-                yield* responseCookies(trustResponse)
-              );
-              const trustToken = yield* trustTokenFromResponse(trustResponse);
-              const decrypted = yield* decryptedCredential;
-              yield* verifySession(
-                Redacted.value(decrypted.email),
-                trustCookies
-              );
-              const snapshot = yield* makeSnapshot({
-                cookies: trustCookies,
-                trustToken,
-              });
-              return yield* saveConnectedSnapshot(snapshot);
+          const trustResponse = yield* transport.request(
+            HttpClientRequest.post("/auth/trust", {
+              headers: {
+                ...cookieHeader(validatedCookies),
+                Accept: "application/json",
+              },
             })
-          )
-        );
+          );
+          const trustCookies = mergeSessionCookies(
+            validatedCookies,
+            yield* responseCookies(trustResponse)
+          );
+          const trustToken = yield* trustTokenFromResponse(trustResponse);
+          const decrypted = yield* decryptedCredential;
+          yield* verifySession(Redacted.value(decrypted.email), trustCookies);
+          const snapshot = yield* makeSnapshot({
+            cookies: trustCookies,
+            trustToken,
+          });
+          return yield* saveConnectedSnapshot(snapshot);
+        }).pipe(withStatusUpdates, sessions.withCredentialLock);
 
       const clearLogoutState = Effect.gen(function* () {
         yield* sessions.clearSnapshot;
@@ -441,44 +424,43 @@ export class VerisureAuth extends Context.Service<
         });
       });
 
-      const logout = sessions.withCredentialLock(
-        Effect.gen(function* () {
-          const snapshot = yield* sessions.getSnapshot;
-          if (Option.isSome(snapshot)) {
-            if (snapshot.value.trustToken !== undefined) {
-              yield* transport.request(
-                HttpClientRequest.delete(
-                  `/auth/trust/${snapshot.value.trustToken.trustTokenValue}`,
-                  {
-                    headers: {
-                      ...cookieHeader(snapshot.value.cookies),
-                      Accept: "application/json",
-                    },
-                  }
-                )
-              );
-            }
+      const logout = Effect.gen(function* () {
+        const snapshot = yield* sessions.getSnapshot;
+        if (Option.isSome(snapshot)) {
+          if (snapshot.value.trustToken !== undefined) {
             yield* transport.request(
-              HttpClientRequest.delete("/auth/logout", {
-                headers: cookieHeader(snapshot.value.cookies),
-              })
+              HttpClientRequest.delete(
+                `/auth/trust/${snapshot.value.trustToken.trustTokenValue}`,
+                {
+                  headers: {
+                    ...cookieHeader(snapshot.value.cookies),
+                    Accept: "application/json",
+                  },
+                }
+              )
             );
           }
-        }).pipe(
-          Effect.ensuring(
-            clearLogoutState.pipe(
-              Effect.ignore({
-                log: true,
-                message: "Failed to clear Verisure logout state",
-              })
-            )
+          yield* transport.request(
+            HttpClientRequest.delete("/auth/logout", {
+              headers: cookieHeader(snapshot.value.cookies),
+            })
+          );
+        }
+      }).pipe(
+        Effect.ensuring(
+          clearLogoutState.pipe(
+            Effect.ignore({
+              log: true,
+              message: "Failed to clear Verisure logout state",
+            })
           )
-        )
+        ),
+        sessions.withCredentialLock
       );
 
       return VerisureAuth.of({
         ensureSession,
-        login: sessions.withCredentialLock(loginWithBasicAuth),
+        login: loginWithBasicAuth.pipe(sessions.withCredentialLock),
         logout,
         requestMfa,
         validateMfa,

@@ -86,13 +86,11 @@ describe(VerisureSessionStore, () => {
         const append = (event: string) =>
           Ref.update(events, (current) => [...current, event]);
         const task = (id: string) =>
-          store.withCredentialLock(
-            Effect.gen(function* () {
-              yield* append(`${id}:start`);
-              yield* Effect.sleep("10 millis");
-              yield* append(`${id}:end`);
-            })
-          );
+          Effect.gen(function* () {
+            yield* append(`${id}:start`);
+            yield* Effect.sleep("10 millis");
+            yield* append(`${id}:end`);
+          }).pipe(store.withCredentialLock);
 
         yield* Effect.all([task("a"), task("b")], { concurrency: 2 });
         return yield* Ref.get(events);
