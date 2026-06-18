@@ -215,27 +215,30 @@ REST error mapping should be safe and predictable: auth/MFA failures map to 401/
 
 ## Session storage
 
-The Durable Object replaces Python's cookie file. Use one object per `verisureCredentialId` to serialize login/refresh/cookie mutation and keep a warm in-memory copy.
+The Durable Object replaces Python's cookie file. Use one object per `verisureCredentialId` to serialize login/refresh/cookie mutation and keep a warm in-memory copy. Store authenticated sessions separately from temporary MFA state so MFA cookies cannot be mistaken for a valid authenticated session.
 
 ```ts
+type SessionCookie = {
+  readonly name: string;
+  readonly value: string;
+  readonly domain?: string;
+  readonly path?: string;
+  readonly expires?: number;
+};
+
 type SessionSnapshot = {
-  readonly cookies: ReadonlyArray<{
-    name: string;
-    value: string;
-    domain?: string;
-    path?: string;
-    expires?: number;
-  }>;
+  readonly cookies: ReadonlyArray<SessionCookie>;
   readonly trustToken?: { trustTokenValue: string; expiresAt?: number };
   readonly preferredBaseUrl?:
     | "https://automation01.verisure.com"
     | "https://automation02.verisure.com";
   readonly authenticatedAt: number;
   readonly expiresAt: number; // conservative: now + 14 minutes after login/refresh
-  readonly mfa?: {
-    readonly requestedAt: number;
-    readonly cookies: SessionSnapshot["cookies"];
-  };
+};
+
+type SessionMfaState = {
+  readonly requestedAt: number;
+  readonly cookies: ReadonlyArray<SessionCookie>;
 };
 ```
 

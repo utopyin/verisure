@@ -7,6 +7,9 @@ import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import { ApiMounts } from "./Http/App.ts";
+import { VerisureSessionObjectLive } from "./SessionObject.ts";
+import type { VerisureSessionObject } from "./SessionObject.ts";
+import { VerisureSessionStoreLive } from "./SessionStoreLive.ts";
 
 export const VerisureCache = Cloudflare.KVNamespace("VerisureCache");
 
@@ -18,7 +21,11 @@ export const VerisureRateLimit = Cloudflare.RateLimit({
 
 export const ProductionApiWorkerName = "verisure-api" as const;
 
-export class ApiWorker extends Cloudflare.Worker<ApiWorker>()("Api", {
+export class ApiWorker extends Cloudflare.Worker<
+  ApiWorker,
+  {},
+  VerisureSessionObject
+>()("Api", {
   compatibility: { flags: ["nodejs_compat"] },
   main: import.meta.filename,
   name: ProductionApiWorkerName,
@@ -29,10 +36,12 @@ export class ApiWorker extends Cloudflare.Worker<ApiWorker>()("Api", {
 
 export const ApiWorkerLive = Layer.mergeAll(
   BetterAuthService.Live,
-  DatabaseLive
+  DatabaseLive,
+  VerisureSessionStoreLive
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
+      VerisureSessionObjectLive,
       Cloudflare.KVNamespaceBindingLive,
       Cloudflare.RateLimitBindingLive,
       Cloudflare.D1ConnectionLive,
