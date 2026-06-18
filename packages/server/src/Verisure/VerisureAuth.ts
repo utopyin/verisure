@@ -7,14 +7,13 @@ import {
   RequestError,
   ResponseError,
   classifyGraphQLResponse,
-  fetchAllInstallations,
 } from "@verisure/domain";
 import type {
   ConnectionStatus,
   GraphQLError,
-  GraphQLOperation,
   VerisureDomainError,
 } from "@verisure/domain";
+import type { GraphQLOperation } from "@verisure/graphql-client";
 import {
   mergeCookies,
   parseSetCookieHeaders,
@@ -28,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -37,6 +37,7 @@ import type { RepositoryError } from "../Repositories/RepositoryError.ts";
 import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
 import { CurrentCredential } from "../Security/RequestContext.ts";
+import * as VerisureOperations from "./VerisureOperations.ts";
 import { VerisureSessionStore } from "./VerisureSessionStore.ts";
 import type {
   SessionCookie,
@@ -167,17 +168,23 @@ export class VerisureAuth extends Context.Service<
         cookies: readonly SessionCookie[]
       ) =>
         Effect.gen(function* () {
-          const operation = fetchAllInstallations(email);
-          const response = yield* graphQLRequest(
-            transport,
-            [operation],
-            cookies
-          );
+          const operation = VerisureOperations.fetchAllInstallations({ email });
+          const response = yield* graphQLRequest(transport, operation, cookies);
           const body = yield* responseJson(response);
           const error = graphQLErrorFromBody(body, operation.operationName);
           if (error !== undefined) {
             return yield* error;
           }
+          yield* operation.decode(body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ResponseError({
+                  message: "Failed to decode Verisure installations response",
+                  statusCode: response.status,
+                  text: cause.message,
+                })
+            )
+          );
         });
 
       const loginWithBasicAuth = Effect.gen(function* () {
@@ -527,31 +534,23 @@ const trustTokenFromResponse = (
   response: HttpClientResponse.HttpClientResponse
 ): Effect.Effect<SessionSnapshot["trustToken"], RequestError | ResponseError> =>
   responseJson(response).pipe(
-    Effect.flatMap((body) => {
-      if (
-        typeof body === "object" &&
-        body !== null &&
-        "trustTokenValue" in body &&
-        typeof body.trustTokenValue === "string"
-      ) {
-        return Effect.succeed({
-          trustTokenValue: body.trustTokenValue,
-          ...("expiresAt" in body && typeof body.expiresAt === "number"
-            ? { expiresAt: body.expiresAt }
-            : {}),
-        });
-      }
-      return new ResponseError({
-        message: "Verisure trust response did not contain a trust token",
-        statusCode: response.status,
-        text: JSON.stringify(body),
-      });
-    })
+    Effect.flatMap((body) =>
+      Schema.decodeUnknownEffect(TrustTokenResponse)(body).pipe(
+        Effect.mapError(
+          () =>
+            new ResponseError({
+              message: "Verisure trust response did not contain a trust token",
+              statusCode: response.status,
+              text: JSON.stringify(body),
+            })
+        )
+      )
+    )
   );
 
-const graphQLRequest = (
+const graphQLRequest = <A, V>(
   transport: VerisureTransportShape,
-  operations: readonly GraphQLOperation[],
+  operation: GraphQLOperation<A, V>,
   cookies: readonly SessionCookie[]
 ) =>
   transport.request(
@@ -560,7 +559,7 @@ const graphQLRequest = (
         ...cookieHeader(cookies),
         Accept: "application/json",
       },
-    }).pipe(HttpClientRequest.bodyJsonUnsafe(operations))
+    }).pipe(HttpClientRequest.bodyJsonUnsafe([operation.request]))
   );
 
 const graphQLErrorFromBody = (
@@ -571,19 +570,27 @@ const graphQLErrorFromBody = (
   if (topLevel !== undefined) {
     return topLevel;
   }
-  if (Array.isArray(body)) {
-    const errorIndex = body.findIndex(
-      (item) => classifyGraphQLResponse(item, operationName) !== undefined
-    );
-    if (errorIndex !== -1) {
-      return classifyGraphQLResponse(
-        body[errorIndex],
-        operationName
-      ) as GraphQLError;
+
+  const batch = Schema.decodeUnknownOption(GraphQLBatchBody)(body);
+  if (Option.isNone(batch)) {
+    return undefined;
+  }
+
+  for (const item of batch.value) {
+    const error = classifyGraphQLResponse(item, operationName);
+    if (error !== undefined) {
+      return error;
     }
   }
   return undefined;
 };
+
+const TrustTokenResponse = Schema.Struct({
+  expiresAt: Schema.optionalKey(Schema.Number),
+  trustTokenValue: Schema.String,
+});
+
+const GraphQLBatchBody = Schema.Array(Schema.Unknown);
 
 const cookieHeader = (cookies: readonly SessionCookie[]) =>
   cookies.length === 0 ? {} : { Cookie: serializeCookieHeader(cookies) };

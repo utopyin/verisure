@@ -147,7 +147,7 @@ export class VerisureSessionStore extends Context.Service<
           Effect.gen(function* () {
             const credentialId = yield* currentCredentialId;
             const semaphore = yield* getLock(credentialId);
-            return yield* TxSemaphore.withPermit(semaphore, effect);
+            return yield* effect.pipe(TxSemaphore.withPermit(semaphore));
           });
 
       return VerisureSessionStore.of({

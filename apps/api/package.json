@@ -9,6 +9,7 @@
     "check:types": "tsgo"
   },
   "dependencies": {
+    "@effect/platform-browser": "catalog:",
     "@verisure/db": "workspace:*",
     "@verisure/domain": "workspace:*",
     "@verisure/rpc-contract": "workspace:*",

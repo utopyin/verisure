@@ -3,6 +3,7 @@ export * from "./Email";
 export * from "./Repositories";
 export * from "./Runtime";
 export * from "./Security";
+export * from "./Services";
 export * from "./Verisure";
 
 export const RequiredConfigKeys = [

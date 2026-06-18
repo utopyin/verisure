@@ -1,0 +1,14 @@
+{
+  "name": "@verisure/graphql-client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check:types": "tsgo"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  }
+}

@@ -1,9 +1,16 @@
-import { GraphQLError, RequestError, ResponseError } from "@verisure/domain";
-import type { GraphQLOperation, VerisureDomainError } from "@verisure/domain";
+import {
+  RequestError,
+  ResponseError,
+  classifyGraphQLResponse,
+} from "@verisure/domain";
+import type { GraphQLError, VerisureDomainError } from "@verisure/domain";
+import type { GraphQLOperation } from "@verisure/graphql-client";
 import { serializeCookieHeader } from "@verisure/shared/cookies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import type { CurrentCredential } from "../Security/RequestContext.ts";
@@ -15,8 +22,8 @@ import { VerisureTransport } from "./VerisureTransport.ts";
 export type VerisureGraphQLError = VerisureAuthError | VerisureDomainError;
 
 export interface VerisureGraphQLShape {
-  readonly execute: <A = unknown>(
-    operations: readonly GraphQLOperation[]
+  readonly execute: <A, V>(
+    operation: GraphQLOperation<A, V>
   ) => Effect.Effect<A, VerisureGraphQLError, CurrentCredential>;
 }
 
@@ -30,14 +37,8 @@ export class VerisureGraphQL extends Context.Service<
       const auth = yield* VerisureAuth;
       const transport = yield* VerisureTransport;
 
-      const execute = <A = unknown>(
-        operations: readonly GraphQLOperation[]
-      ): Effect.Effect<A, VerisureGraphQLError, CurrentCredential> =>
+      const execute: VerisureGraphQLShape["execute"] = (operation) =>
         Effect.gen(function* () {
-          if (operations.length === 0) {
-            return {} as A;
-          }
-
           const session = yield* auth.ensureSession;
           const response = yield* transport.request(
             HttpClientRequest.post("/graphql", {
@@ -45,35 +46,42 @@ export class VerisureGraphQL extends Context.Service<
                 Accept: "application/json",
                 ...cookieHeader(session.cookies),
               },
-            }).pipe(HttpClientRequest.bodyJsonUnsafe(operations))
+            }).pipe(HttpClientRequest.bodyJsonUnsafe([operation.request]))
           );
-          const body = yield* response.text.pipe(
+          const text = yield* response.text.pipe(
             Effect.mapError(
               (cause) =>
                 new RequestError({
                   cause,
                   message: "Failed to read Verisure GraphQL response body",
                 })
-            ),
-            Effect.flatMap((text) =>
-              Effect.try({
-                catch: () =>
-                  new ResponseError({
-                    message: "Failed to parse Verisure GraphQL response",
-                    statusCode: response.status,
-                    text,
-                  }),
-                try: () => (text.length === 0 ? null : JSON.parse(text)),
-              })
             )
           );
+          const body = yield* Effect.try({
+            catch: () =>
+              new ResponseError({
+                message: "Failed to parse Verisure GraphQL response",
+                statusCode: response.status,
+                text,
+              }),
+            try: () => (text.length === 0 ? null : JSON.parse(text)),
+          });
 
-          const error = graphQLErrorFromBody(body, operations);
+          const error = graphQLErrorFromBody(body, operation.operationName);
           if (error !== undefined) {
             return yield* error;
           }
 
-          return body as A;
+          return yield* operation.decode(body).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ResponseError({
+                  message: "Failed to decode Verisure GraphQL response",
+                  statusCode: response.status,
+                  text: cause.message,
+                })
+            )
+          );
         });
 
       return VerisureGraphQL.of({ execute });
@@ -86,29 +94,26 @@ const cookieHeader = (cookies: readonly SessionCookie[]) =>
 
 const graphQLErrorFromBody = (
   body: unknown,
-  operations: readonly GraphQLOperation[]
+  operationName: string
 ): GraphQLError | undefined => {
-  if (hasErrors(body)) {
-    return new GraphQLError({
-      errors: body.errors,
-      message: "Verisure GraphQL response contained errors",
-      operationName: operations[0]?.operationName,
-    });
+  const topLevel = classifyGraphQLResponse(body, operationName);
+  if (topLevel !== undefined) {
+    return topLevel;
   }
 
-  if (Array.isArray(body)) {
-    const index = body.findIndex(hasErrors);
-    if (index !== -1) {
-      return new GraphQLError({
-        errors: body[index]?.errors,
-        message: "Verisure GraphQL response contained errors",
-        operationName: operations[index]?.operationName,
-      });
+  const batch = Schema.decodeUnknownOption(GraphQLBatchBody)(body);
+  if (Option.isNone(batch)) {
+    return undefined;
+  }
+
+  for (const item of batch.value) {
+    const error = classifyGraphQLResponse(item, operationName);
+    if (error !== undefined) {
+      return error;
     }
   }
 
   return undefined;
 };
 
-const hasErrors = (value: unknown): value is { readonly errors: unknown } =>
-  typeof value === "object" && value !== null && "errors" in value;
+const GraphQLBatchBody = Schema.Array(Schema.Unknown);

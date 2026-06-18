@@ -19,6 +19,7 @@ import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
 import { CurrentCredential } from "../Security/RequestContext.ts";
 import { VerisureAuth } from "./VerisureAuth.ts";
 import { VerisureGraphQL } from "./VerisureGraphQL.ts";
+import * as VerisureOperations from "./VerisureOperations.ts";
 import { VerisureSessionStore } from "./VerisureSessionStore.ts";
 import type { SessionSnapshot } from "./VerisureSessionStore.ts";
 import { VerisureTransport } from "./VerisureTransport.ts";
@@ -255,15 +256,8 @@ describe(VerisureGraphQL, () => {
     const error = await Effect.runPromise(
       Effect.gen(function* () {
         const graphql = yield* VerisureGraphQL;
-        return yield* Effect.flip(
-          graphql.execute([
-            {
-              operationName: "ArmState",
-              query: "query ArmState { ok }",
-              variables: {},
-            },
-          ])
-        );
+        const operation = VerisureOperations.armState({ giid: "GIID" });
+        return yield* Effect.flip(graphql.execute(operation));
       }).pipe(harness.provideGraphQLWithSnapshot(expiredSnapshot))
     );
 

@@ -1,3 +1,4 @@
+import * as BrowserCrypto from "@effect/platform-browser/BrowserCrypto";
 import { DatabaseLive } from "@verisure/db/cloudflare";
 import { BetterAuthService, RuntimeConfig } from "@verisure/server";
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -45,7 +46,8 @@ export const ApiWorkerLive = Layer.mergeAll(
       Cloudflare.KVNamespaceBindingLive,
       Cloudflare.RateLimitBindingLive,
       Cloudflare.D1ConnectionLive,
-      RuntimeConfig.Live
+      RuntimeConfig.Live,
+      BrowserCrypto.layer
     )
   )
 );

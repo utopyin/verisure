@@ -1,4 +1,6 @@
 import * as Data from "effect/Data";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 export class RequestError extends Data.TaggedError("RequestError")<{
   readonly message: string;
@@ -110,16 +112,17 @@ export const classifyGraphQLResponse = (
   response: unknown,
   operationName?: string
 ): GraphQLError | undefined => {
-  if (
-    typeof response === "object" &&
-    response !== null &&
-    "errors" in response
-  ) {
+  const payload = decodeGraphQLErrorPayload(response);
+  if (Option.isSome(payload)) {
     return new GraphQLError({
-      errors: (response as { readonly errors: unknown }).errors,
+      errors: payload.value.errors,
       message: "Verisure GraphQL response contained errors",
       operationName,
     });
   }
   return undefined;
 };
+
+const GraphQLErrorPayload = Schema.Struct({ errors: Schema.Unknown });
+const decodeGraphQLErrorPayload =
+  Schema.decodeUnknownOption(GraphQLErrorPayload);

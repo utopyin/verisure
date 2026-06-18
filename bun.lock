@@ -24,6 +24,7 @@
     "apps/api": {
       "name": "@verisure/api",
       "dependencies": {
+        "@effect/platform-browser": "catalog:",
         "@verisure/db": "workspace:*",
         "@verisure/domain": "workspace:*",
         "@verisure/rpc-contract": "workspace:*",
@@ -60,6 +61,12 @@
         "vitest": "catalog:",
       },
     },
+    "packages/graphql-client": {
+      "name": "@verisure/graphql-client",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+    },
     "packages/interface": {
       "name": "@verisure/interface",
       "dependencies": {
@@ -83,6 +90,7 @@
       "dependencies": {
         "@verisure/db": "workspace:*",
         "@verisure/domain": "workspace:*",
+        "@verisure/graphql-client": "workspace:*",
         "@verisure/interface": "workspace:*",
         "@verisure/shared": "workspace:*",
         "alchemy": "link:alchemy",
@@ -103,6 +111,7 @@
   },
   "catalog": {
     "@cloudflare/workers-types": "^4.20260608.1",
+    "@effect/platform-browser": "4.0.0-beta.83",
     "@effect/tsgo": "0.14.4",
     "@typescript/native-preview": "7.0.0-dev.20260616.1",
     "better-auth": "^1.6.19",
@@ -137,6 +146,8 @@
     "@clack/prompts": ["@clack/prompts@1.5.1", "", { "dependencies": { "@clack/core": "1.4.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-zccHj2z2oCCO4yrDiRSlFOxWerGqRiysP7a5jPK6uoI9URKAquwY42Dd/iUP8JWHxEzdRe4TlbvZCo8z1/mhrw=="],
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20260608.1", "", {}, "sha512-Yz90KXPZBB9K/AhsnLaA321s5+i5ZpWZRFbcGx9dWjyknQJXPAS1pK5CJSFEedwY6zoEr1cf2SkpBATL1idsWA=="],
+
+    "@effect/platform-browser": ["@effect/platform-browser@4.0.0-beta.83", "", { "dependencies": { "multipasta": "^0.2.7" }, "peerDependencies": { "effect": "^4.0.0-beta.83" } }, "sha512-eBySH9bvsadsqPZ4z9/Ah1d6jExuJ+Navg4ofPqszN3Fba2x14CGOoBhwWffWyRbreGRqcqDMvW9U7c95cFWoA=="],
 
     "@effect/sql-d1": ["@effect/sql-d1@link:@effect/sql-d1", {}],
 
@@ -391,6 +402,8 @@
     "@verisure/db": ["@verisure/db@workspace:packages/db"],
 
     "@verisure/domain": ["@verisure/domain@workspace:packages/domain"],
+
+    "@verisure/graphql-client": ["@verisure/graphql-client@workspace:packages/graphql-client"],
 
     "@verisure/interface": ["@verisure/interface@workspace:packages/interface"],
 

@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
@@ -180,62 +181,54 @@ const escapeHtml = (value: string) =>
 
 const decodeAuthSession = (
   value: unknown
-): Effect.Effect<Option.Option<AuthSession>, AuthError> => {
-  if (value === null || value === undefined) {
-    return Effect.succeed(Option.none());
-  }
-  if (!isRecord(value) || !isRecord(value.user) || !isRecord(value.session)) {
-    return Effect.fail(
-      new AuthError({ message: "Auth session response was invalid" })
+): Effect.Effect<Option.Option<AuthSession>, AuthError> =>
+  Effect.gen(function* () {
+    const session = yield* decodeAuthSessionResponse(value).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            cause,
+            message: "Auth session response was invalid",
+          })
+      )
     );
-  }
 
-  const { user, session } = value;
-  const { id } = user;
-  const { email } = user;
-  const { name } = user;
-  const { expiresAt } = session;
+    if (session === null || session === undefined) {
+      return Option.none<AuthSession>();
+    }
 
-  if (typeof id !== "string" || typeof email !== "string") {
-    return Effect.fail(
-      new AuthError({ message: "Auth user response was invalid" })
-    );
-  }
+    if (Number.isNaN(session.session.expiresAt.getTime())) {
+      return yield* new AuthError({
+        message: "Auth session expiry was invalid",
+      });
+    }
 
-  const parsedExpiresAt = parseSessionExpiresAt(expiresAt);
-
-  if (
-    parsedExpiresAt === undefined ||
-    Number.isNaN(parsedExpiresAt.getTime())
-  ) {
-    return Effect.fail(
-      new AuthError({ message: "Auth session expiry was invalid" })
-    );
-  }
-
-  return Effect.succeed(
-    Option.some({
-      expiresAt: parsedExpiresAt,
+    return Option.some({
+      expiresAt: session.session.expiresAt,
       user: {
-        email,
-        id,
-        ...(typeof name === "string" ? { name } : {}),
+        email: session.user.email,
+        id: session.user.id,
+        ...(session.user.name === null || session.user.name === undefined
+          ? {}
+          : { name: session.user.name }),
       },
-    })
-  );
-};
+    });
+  });
 
-const parseSessionExpiresAt = (value: unknown) => {
-  if (value instanceof Date) {
-    return value;
-  }
-  if (typeof value === "string") {
-    return new Date(value);
-  }
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
+const AuthSessionResponse = Schema.NullishOr(
+  Schema.Struct({
+    session: Schema.Struct({
+      expiresAt: Schema.Union([Schema.Date, Schema.DateFromString]),
+    }),
+    user: Schema.Struct({
+      email: Schema.String,
+      id: Schema.String,
+      name: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  })
+);
+const decodeAuthSessionResponse =
+  Schema.decodeUnknownEffect(AuthSessionResponse);
 
 const corsHeaders = (request: HttpServerRequest) => {
   const headers = new Headers();

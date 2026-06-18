@@ -12,6 +12,27 @@ export type ConnectionStatus =
   | "rate_limited"
   | "error";
 
+export interface CredentialSummary {
+  readonly id: string;
+  readonly alias: string;
+  readonly email: string;
+  readonly connectionStatus: ConnectionStatus;
+  readonly defaultGiid?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface MfaRequestResult {
+  readonly credentialId: string;
+  readonly deliveryHint?: string;
+  readonly status: "mfa_requested";
+}
+
+export interface MfaValidationResult {
+  readonly credential: CredentialSummary;
+  readonly installations: readonly InstallationSummary[];
+}
+
 export interface InstallationAddress {
   readonly street?: string;
   readonly city?: string;
