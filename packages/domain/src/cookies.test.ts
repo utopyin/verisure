@@ -1,4 +1,4 @@
-import { test, describe, expect } from "vitest";
+import { test, describe, expect } from "@effect/vitest";
 
 import {
   parseSetCookieHeader,

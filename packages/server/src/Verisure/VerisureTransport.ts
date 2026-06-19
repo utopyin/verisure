@@ -1,15 +1,19 @@
 import {
   RequestError,
   ResponseError,
+  classifyGraphQLResponse,
   classifyHttpError,
   responseSignalsRateLimit,
 } from "@verisure/domain";
-import type { VerisureDomainError } from "@verisure/domain";
+import type { GraphQLError, VerisureDomainError } from "@verisure/domain";
+import type { GraphQLOperation } from "@verisure/graphql-client";
+import { serializeCookieHeader } from "@verisure/shared/cookies";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -19,6 +23,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 
 import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
 import type { VerisureBaseUrls } from "../Runtime/RuntimeConfig.ts";
+import type { SessionCookie } from "./VerisureSessionStore.ts";
 
 const DEFAULT_APPLICATION_ID = "PS_PYTHON" as const;
 const DEFAULT_BASE_URLS = [
@@ -38,6 +43,10 @@ export interface VerisureTransportShape {
     HttpClientResponse.HttpClientResponse,
     VerisureDomainError
   >;
+  readonly executeGraphQL: <A, V>(input: {
+    readonly operation: GraphQLOperation<A, V>;
+    readonly cookies: readonly SessionCookie[];
+  }) => Effect.Effect<A, VerisureDomainError>;
   readonly preferredBaseUrl: Effect.Effect<string>;
 }
 
@@ -134,7 +143,61 @@ export class VerisureTransport extends Context.Service<
           return yield* lastError;
         });
 
+        const executeGraphQL: VerisureTransportShape["executeGraphQL"] = (
+          input
+        ) =>
+          Effect.gen(function* () {
+            const response = yield* request(
+              HttpClientRequest.post("/graphql", {
+                headers: {
+                  Accept: "application/json",
+                  ...cookieHeader(input.cookies),
+                },
+              }).pipe(
+                HttpClientRequest.bodyJsonUnsafe([input.operation.request])
+              )
+            );
+            const text = yield* response.text.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new RequestError({
+                    cause,
+                    message: "Failed to read Verisure GraphQL response body",
+                  })
+              )
+            );
+            const body = yield* Effect.try({
+              catch: () =>
+                new ResponseError({
+                  message: "Failed to parse Verisure GraphQL response",
+                  statusCode: response.status,
+                  text,
+                }),
+              try: () => (text.length === 0 ? null : JSON.parse(text)),
+            });
+
+            const error = graphQLErrorFromBody(
+              body,
+              input.operation.operationName
+            );
+            if (error !== undefined) {
+              return yield* error;
+            }
+
+            return yield* input.operation.decode(body).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ResponseError({
+                    message: "Failed to decode Verisure GraphQL response",
+                    statusCode: response.status,
+                    text: cause.message,
+                  })
+              )
+            );
+          });
+
         return VerisureTransport.of({
+          executeGraphQL,
           preferredBaseUrl: Ref.get(preferredBaseUrl),
           request,
         });
@@ -151,6 +214,35 @@ export class VerisureTransport extends Context.Service<
     })
   );
 }
+
+const cookieHeader = (cookies: readonly SessionCookie[]) =>
+  cookies.length === 0 ? {} : { Cookie: serializeCookieHeader(cookies) };
+
+const graphQLErrorFromBody = (
+  body: unknown,
+  operationName: string
+): GraphQLError | undefined => {
+  const topLevel = classifyGraphQLResponse(body, operationName);
+  if (topLevel !== undefined) {
+    return topLevel;
+  }
+
+  const batch = Schema.decodeUnknownOption(GraphQLBatchBody)(body);
+  if (Option.isNone(batch)) {
+    return undefined;
+  }
+
+  for (const item of batch.value) {
+    const error = classifyGraphQLResponse(item, operationName);
+    if (error !== undefined) {
+      return error;
+    }
+  }
+
+  return undefined;
+};
+
+const GraphQLBatchBody = Schema.Array(Schema.Unknown);
 
 const httpClientErrorToRequestError = (
   cause: HttpClientError.HttpClientError

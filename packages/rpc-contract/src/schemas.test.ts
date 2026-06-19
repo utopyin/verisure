@@ -1,5 +1,5 @@
+import { test, describe, expect } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { test, describe, expect } from "vitest";
 
 import {
   AlarmMode,

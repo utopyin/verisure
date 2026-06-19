@@ -9,7 +9,6 @@ import * as Context from "effect/Context";
 import { Crypto } from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 
@@ -17,25 +16,20 @@ import { CredentialRepository } from "../Repositories/CredentialRepository.ts";
 import type { RepositoryError } from "../Repositories/RepositoryError.ts";
 import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
-import {
-  CurrentCredential,
-  CurrentUser,
-  ScopeError,
-} from "../Security/RequestContext.ts";
+import { CurrentCredential, CurrentUser } from "../Security/RequestContext.ts";
 import { VerisureAuth } from "../Verisure/VerisureAuth.ts";
 import type { VerisureAuthError } from "../Verisure/VerisureAuth.ts";
-import type { VerisureGraphQLError } from "../Verisure/VerisureGraphQL.ts";
-import { VerisureGraphQLClient } from "../Verisure/VerisureGraphQLClient.ts";
+import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
 import type { ServiceError } from "./ServiceError.ts";
 
 export type CredentialServiceError =
   | CredentialCryptoError
   | PlatformError
   | RepositoryError
-  | ScopeError
   | ServiceError
   | VerisureAuthError
-  | VerisureGraphQLError;
+  | VerisureRequestsError;
 
 export interface CreateVerisureCredentialInput {
   readonly alias: string;
@@ -53,26 +47,33 @@ export interface CredentialServiceShape {
   readonly create: (
     input: CreateVerisureCredentialInput
   ) => Effect.Effect<CredentialSummary, CredentialServiceError, CurrentUser>;
-  readonly delete: (
-    credentialId: string
-  ) => Effect.Effect<void, CredentialServiceError, CurrentUser>;
-  readonly checkConnection: (
-    credentialId: string
-  ) => Effect.Effect<
+  readonly delete: Effect.Effect<
+    void,
+    CredentialServiceError,
+    CurrentCredential
+  >;
+  readonly checkConnection: Effect.Effect<
     readonly InstallationSummary[],
     CredentialServiceError,
-    CurrentUser
+    CurrentCredential
   >;
-  readonly requestMfa: (
-    credentialId: string
-  ) => Effect.Effect<MfaRequestResult, CredentialServiceError, CurrentUser>;
-  readonly validateMfa: (input: {
-    readonly credentialId: string;
-    readonly code: string;
-  }) => Effect.Effect<MfaValidationResult, CredentialServiceError, CurrentUser>;
-  readonly logout: (
-    credentialId: string
-  ) => Effect.Effect<void, CredentialServiceError, CurrentUser>;
+  readonly requestMfa: Effect.Effect<
+    MfaRequestResult,
+    CredentialServiceError,
+    CurrentCredential
+  >;
+  readonly validateMfa: (
+    code: string
+  ) => Effect.Effect<
+    MfaValidationResult,
+    CredentialServiceError,
+    CurrentCredential
+  >;
+  readonly logout: Effect.Effect<
+    void,
+    CredentialServiceError,
+    CurrentCredential
+  >;
 }
 
 export class CredentialService extends Context.Service<
@@ -85,7 +86,7 @@ export class CredentialService extends Context.Service<
       const auth = yield* VerisureAuth;
       const crypto = yield* CredentialCrypto;
       const platformCrypto = yield* Crypto;
-      const graphql = yield* VerisureGraphQLClient;
+      const requests = yield* VerisureRequests;
       const repository = yield* CredentialRepository;
 
       const summarize = (row: VerisureCredentialRow) =>
@@ -116,66 +117,44 @@ export class CredentialService extends Context.Service<
           return credentialSummary(row, input.email);
         });
 
-      const deleteCredential: CredentialServiceShape["delete"] = (
-        credentialId
-      ) =>
-        Effect.gen(function* () {
-          const user = yield* CurrentUser;
-          yield* repository.delete({ id: credentialId, userId: user.id });
+      const deleteCredential = Effect.gen(function* () {
+        const credential = yield* CurrentCredential;
+        yield* repository.delete({
+          id: credential.id,
+          userId: credential.userId,
         });
+      });
 
       const listScopedInstallations = Effect.gen(function* () {
         yield* auth.ensureSession;
         const credentialRow = yield* CurrentCredential;
         const credential = yield* crypto.decryptCredential(credentialRow);
-        return yield* graphql.fetchAllInstallations({
+        return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
       });
 
-      const withCredential =
-        (credentialId: string) =>
-        <A, E>(
-          effect: Effect.Effect<A, E, CurrentCredential>
-        ): Effect.Effect<A, E | RepositoryError | ScopeError, CurrentUser> =>
-          Effect.gen(function* () {
-            const user = yield* CurrentUser;
-            const credential = yield* repository.getOwnedById({
-              id: credentialId,
-              userId: user.id,
-            });
-            if (Option.isNone(credential)) {
-              return yield* new ScopeError({
-                credentialId,
-                message: "Credential not found or not owned by current user",
-              });
-            }
-            return yield* effect.pipe(
-              Effect.provideService(CurrentCredential, credential.value)
-            );
-          });
+      const checkConnection = listScopedInstallations;
 
-      const checkConnection: CredentialServiceShape["checkConnection"] = (
-        credentialId
-      ) => listScopedInstallations.pipe(withCredential(credentialId));
+      const requestMfa = Effect.gen(function* () {
+        const credential = yield* CurrentCredential;
+        yield* auth.requestMfa;
+        return {
+          credentialId: credential.id,
+          status: "mfa_requested" as const,
+        };
+      });
 
-      const requestMfa: CredentialServiceShape["requestMfa"] = (credentialId) =>
-        auth.requestMfa.pipe(
-          Effect.as({ credentialId, status: "mfa_requested" as const }),
-          withCredential(credentialId)
-        );
-
-      const validateMfa: CredentialServiceShape["validateMfa"] = (input) =>
+      const validateMfa: CredentialServiceShape["validateMfa"] = (code) =>
         Effect.gen(function* () {
-          yield* auth.validateMfa(input.code);
+          yield* auth.validateMfa(code);
           const installations = yield* listScopedInstallations;
           const current = yield* CurrentCredential;
           const credential = yield* summarize(current);
           return { credential, installations };
-        }).pipe(withCredential(input.credentialId));
+        });
 
-      const logout: CredentialServiceShape["logout"] = (credentialId) =>
-        auth.logout.pipe(withCredential(credentialId));
+      const { logout } = auth;
 
       return CredentialService.of({
         checkConnection,

@@ -14,14 +14,14 @@ import {
   CurrentCredential,
   CurrentInstallation,
 } from "../Security/RequestContext.ts";
-import type { VerisureGraphQLError } from "../Verisure/VerisureGraphQL.ts";
-import { VerisureGraphQLClient } from "../Verisure/VerisureGraphQLClient.ts";
+import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
 import { ServiceError } from "./ServiceError.ts";
 
 export type AlarmServiceError =
   | CredentialCryptoError
   | ServiceError
-  | VerisureGraphQLError;
+  | VerisureRequestsError;
 
 export interface AlarmServiceShape {
   readonly getArmState: Effect.Effect<
@@ -54,7 +54,7 @@ export class AlarmService extends Context.Service<
     AlarmService,
     Effect.gen(function* makeAlarmService() {
       const crypto = yield* CredentialCrypto;
-      const graphql = yield* VerisureGraphQLClient;
+      const requests = yield* VerisureRequests;
 
       const currentGiid = CurrentInstallation.pipe(
         Effect.map((installation) => installation.giid)
@@ -62,7 +62,7 @@ export class AlarmService extends Context.Service<
 
       const getArmState = Effect.gen(function* () {
         const giid = yield* currentGiid;
-        return yield* graphql.armState({ giid });
+        return yield* requests.armState({ giid });
       });
 
       const resolveCode = (code?: string) =>
@@ -84,7 +84,7 @@ export class AlarmService extends Context.Service<
         Effect.gen(function* () {
           const giid = yield* currentGiid;
           const code = yield* resolveCode(input.code);
-          return yield* graphql.setAlarmMode({
+          return yield* requests.setAlarmMode({
             code,
             giid,
             mode: input.mode,

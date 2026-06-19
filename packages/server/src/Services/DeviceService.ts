@@ -10,11 +10,11 @@ import * as Layer from "effect/Layer";
 
 import type { CurrentCredential } from "../Security/RequestContext.ts";
 import { CurrentInstallation } from "../Security/RequestContext.ts";
-import type { VerisureGraphQLError } from "../Verisure/VerisureGraphQL.ts";
-import { VerisureGraphQLClient } from "../Verisure/VerisureGraphQLClient.ts";
+import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
 import type { ServiceError } from "./ServiceError.ts";
 
-export type DeviceServiceError = ServiceError | VerisureGraphQLError;
+export type DeviceServiceError = ServiceError | VerisureRequestsError;
 
 export interface DeviceServiceShape {
   readonly listDoorWindows: Effect.Effect<
@@ -46,29 +46,29 @@ export class DeviceService extends Context.Service<
   static readonly Live = Layer.effect(
     DeviceService,
     Effect.gen(function* makeDeviceService() {
-      const graphql = yield* VerisureGraphQLClient;
+      const requests = yield* VerisureRequests;
       const currentGiid = CurrentInstallation.pipe(
         Effect.map((installation) => installation.giid)
       );
 
       const listDoorWindows = Effect.gen(function* () {
         const giid = yield* currentGiid;
-        return yield* graphql.doorWindows({ giid });
+        return yield* requests.doorWindows({ giid });
       });
 
       const listClimate = Effect.gen(function* () {
         const giid = yield* currentGiid;
-        return yield* graphql.climate({ giid });
+        return yield* requests.climate({ giid });
       });
 
       const listSmartLocks = Effect.gen(function* () {
         const giid = yield* currentGiid;
-        return yield* graphql.smartLocks({ giid });
+        return yield* requests.smartLocks({ giid });
       });
 
       const listSmartPlugs = Effect.gen(function* () {
         const giid = yield* currentGiid;
-        return yield* graphql.smartPlugs({ giid });
+        return yield* requests.smartPlugs({ giid });
       });
 
       return DeviceService.of({

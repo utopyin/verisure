@@ -11,6 +11,6 @@
     "test": "bun test ./src"
   },
   "devDependencies": {
-    "vitest": "catalog:"
+    "@effect/vitest": "catalog:"
   }
 }

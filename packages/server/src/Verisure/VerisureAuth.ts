@@ -6,14 +6,8 @@ import {
   RateLimitError,
   RequestError,
   ResponseError,
-  classifyGraphQLResponse,
 } from "@verisure/domain";
-import type {
-  ConnectionStatus,
-  GraphQLError,
-  VerisureDomainError,
-} from "@verisure/domain";
-import type { GraphQLOperation } from "@verisure/graphql-client";
+import type { ConnectionStatus, VerisureDomainError } from "@verisure/domain";
 import {
   mergeCookies,
   parseSetCookieHeaders,
@@ -37,7 +31,7 @@ import type { RepositoryError } from "../Repositories/RepositoryError.ts";
 import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
 import { CurrentCredential } from "../Security/RequestContext.ts";
-import * as VerisureOperations from "./VerisureOperations.ts";
+import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation.ts";
 import { VerisureSessionStore } from "./VerisureSessionStore.ts";
 import type {
   SessionCookie,
@@ -45,7 +39,6 @@ import type {
   VerisureSessionStoreError,
 } from "./VerisureSessionStore.ts";
 import { VerisureTransport } from "./VerisureTransport.ts";
-import type { VerisureTransportShape } from "./VerisureTransport.ts";
 
 const SessionTtlMs = 14 * 60 * 1000;
 const ValidSessionSkewMs = 15 * 1000;
@@ -168,23 +161,13 @@ export class VerisureAuth extends Context.Service<
         cookies: readonly SessionCookie[]
       ) =>
         Effect.gen(function* () {
-          const operation = VerisureOperations.fetchAllInstallations({ email });
-          const response = yield* graphQLRequest(transport, operation, cookies);
-          const body = yield* responseJson(response);
-          const error = graphQLErrorFromBody(body, operation.operationName);
-          if (error !== undefined) {
-            return yield* error;
-          }
-          yield* operation.decode(body).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ResponseError({
-                  message: "Failed to decode Verisure installations response",
-                  statusCode: response.status,
-                  text: cause.message,
-                })
-            )
-          );
+          const operation = yield* fetchAllInstallationsOperation({
+            email,
+          }).pipe(Effect.mapError(graphQLOperationInputError));
+          yield* transport.executeGraphQL({
+            cookies,
+            operation,
+          });
         });
 
       const loginWithBasicAuth = Effect.gen(function* () {
@@ -548,49 +531,17 @@ const trustTokenFromResponse = (
     )
   );
 
-const graphQLRequest = <A, V>(
-  transport: VerisureTransportShape,
-  operation: GraphQLOperation<A, V>,
-  cookies: readonly SessionCookie[]
-) =>
-  transport.request(
-    HttpClientRequest.post("/graphql", {
-      headers: {
-        ...cookieHeader(cookies),
-        Accept: "application/json",
-      },
-    }).pipe(HttpClientRequest.bodyJsonUnsafe([operation.request]))
-  );
-
-const graphQLErrorFromBody = (
-  body: unknown,
-  operationName?: string
-): GraphQLError | undefined => {
-  const topLevel = classifyGraphQLResponse(body, operationName);
-  if (topLevel !== undefined) {
-    return topLevel;
-  }
-
-  const batch = Schema.decodeUnknownOption(GraphQLBatchBody)(body);
-  if (Option.isNone(batch)) {
-    return undefined;
-  }
-
-  for (const item of batch.value) {
-    const error = classifyGraphQLResponse(item, operationName);
-    if (error !== undefined) {
-      return error;
-    }
-  }
-  return undefined;
-};
-
 const TrustTokenResponse = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.Number),
   trustTokenValue: Schema.String,
 });
 
-const GraphQLBatchBody = Schema.Array(Schema.Unknown);
+const graphQLOperationInputError = (cause: Schema.SchemaError) =>
+  new ResponseError({
+    message: "Failed to build Verisure GraphQL request",
+    statusCode: 0,
+    text: cause.message,
+  });
 
 const cookieHeader = (cookies: readonly SessionCookie[]) =>
   cookies.length === 0 ? {} : { Cookie: serializeCookieHeader(cookies) };

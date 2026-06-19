@@ -45,7 +45,7 @@ Custom-domain routing should use the local Alchemy branch with Worker route supp
 The service model has three kinds of services:
 
 1. **Infrastructure services** wrap Cloudflare or platform resources. `DbLive` wraps Drizzle/D1, `EmailServiceLive` wraps Cloudflare SendEmail, `RuntimeConfigLive` resolves Effect Config, `FetchHttpClientLive` wraps Web fetch, and `VerisureSessionStoreLive` wraps the Durable Object binding. These should follow Alchemy's infrastructure-layer pattern: the contract is cloud-agnostic, while the live layer declares/binds Cloudflare resources.
-2. **Application services** implement business behavior. `BetterAuthService` owns Better Auth setup and route handling; `CredentialCrypto`, `CredentialRepository`, `ApiTokenRepository`, `ShortcutExportService`, `VerisureAuth`, `VerisureGraphQL`, `AlarmService`, `InstallationService`, and `DeviceService` are Effect services with testable interfaces.
+2. **Application services** implement business behavior. `BetterAuthService` owns Better Auth setup and route handling; `CredentialCrypto`, `CredentialRepository`, `ApiTokenRepository`, `ShortcutExportService`, `VerisureAuth`, `VerisureRequests`, `AlarmService`, `InstallationService`, and `DeviceService` are Effect services with testable interfaces. `VerisureTransport` is the internal Verisure Upstream module that owns raw Verisure HTTP requests, automatic payload mapping, error parsing, and GraphQL requests built on top of the same HTTP path.
 3. **Request context tags** remove argument plumbing. HTTP/RPC middleware provides `CurrentUser`, `CurrentCredential`, and `CurrentInstallation`. Alarm/device/installation services read those tags instead of accepting repeated `(principal, credentialId, giid)` parameters.
 
 `EmailService` is intentionally separate from `BetterAuthService`. Better Auth needs an email callback for magic links, but email delivery is complex enough to be its own service. `BetterAuthServiceLive` should resolve its Better Auth config in an Effect that yields `EmailService`, so auth config can send magic links without leaking Cloudflare SendEmail details.
@@ -78,9 +78,9 @@ ApiWorkerLive (Cloudflare.Worker / apps/api)
     │   ├── ApiTokenMiddlewareLive               provides CurrentUser/CurrentCredential
     │   └── ShortcutAlarmRoutesLive
     ├── Verisure services
-    │   ├── VerisureAuthLive
-    │   ├── VerisureGraphQLLive
-    │   ├── VerisureTransportLive
+    │   ├── VerisureAuthLive                 Verisure Authentication seam
+    │   ├── VerisureRequestsLive             Verisure Requests seam
+    │   ├── VerisureTransportLive            internal HTTP + GraphQL transport
     │   └── VerisureSessionStoreLive ─── DurableObjectSessionBindingLive
     ├── Db-backed repositories
     ├── ErrorMappingMiddlewareLive
@@ -153,8 +153,9 @@ TanStack Query queryArmState(credentialId, giid)
             └── CredentialScopeMiddleware provides CurrentCredential
                 └── InstallationScopeMiddleware provides CurrentInstallation
                     └── AlarmService.getArmState()
-                        └── VerisureGraphQL.execute([ArmState])
-                            └── VerisureAuth.ensureSession()
+                        └── VerisureRequests.armState()
+                            ├── VerisureAuth.ensureSession()
+                            └── VerisureTransport.executeGraphQL(ArmState)
 ```
 
 ### Magic-link login
@@ -177,9 +178,11 @@ POST /api/v1/alarm/mode Authorization: Bearer <token>
     ├── reject revoked/expired tokens
     └── provide CurrentUser + CurrentCredential
         └── InstallationScopeMiddleware provides CurrentInstallation
-            └── AlarmService.armAway/disarm(code?)
+            └── AlarmService.setMode/toggleFull(code?)
                 ├── use request code or encrypted credential PIN
-                └── VerisureGraphQL.execute([mutation])
+                └── VerisureRequests.setAlarmMode()
+                    ├── VerisureAuth.ensureSession()
+                    └── VerisureTransport.executeGraphQL(mutation)
 ```
 
 ### Verisure session refresh / login

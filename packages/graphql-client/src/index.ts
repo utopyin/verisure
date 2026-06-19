@@ -21,18 +21,24 @@ export const operation = <Variables, Data>(input: {
   readonly variables: Schema.Decoder<Variables>;
   readonly data: Schema.Decoder<Data>;
 }) => {
+  const decodeVariables = Schema.decodeUnknownEffect(input.variables);
   const decodeResponse = Schema.decodeUnknownEffect(
     Schema.NonEmptyArray(Schema.Struct({ data: input.data }))
   );
 
-  return (variables: Variables): GraphQLOperation<Data, Variables> => ({
-    decode: (response) =>
-      decodeResponse(response).pipe(Effect.map(([first]) => first.data)),
-    operationName: input.operationName,
-    request: {
-      operationName: input.operationName,
-      query: input.query,
-      variables,
-    },
-  });
+  return (
+    variables: Variables
+  ): Effect.Effect<GraphQLOperation<Data, Variables>, Schema.SchemaError> =>
+    decodeVariables(variables).pipe(
+      Effect.map((decodedVariables) => ({
+        decode: (response: unknown) =>
+          decodeResponse(response).pipe(Effect.map(([first]) => first.data)),
+        operationName: input.operationName,
+        request: {
+          operationName: input.operationName,
+          query: input.query,
+          variables: decodedVariables,
+        },
+      }))
+    );
 };

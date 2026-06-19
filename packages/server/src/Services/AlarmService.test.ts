@@ -1,8 +1,8 @@
+import { describe, expect, it } from "@effect/vitest";
 import type { VerisureCredentialRow } from "@verisure/db/schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { describe, expect, test } from "vitest";
 
 import {
   CredentialCrypto,
@@ -12,8 +12,7 @@ import {
   CurrentCredential,
   CurrentInstallation,
 } from "../Security/RequestContext.ts";
-import { VerisureGraphQL } from "../Verisure/VerisureGraphQL.ts";
-import { VerisureGraphQLClient } from "../Verisure/VerisureGraphQLClient.ts";
+import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
 import { AlarmService } from "./AlarmService.ts";
 import { ServiceError } from "./ServiceError.ts";
 
@@ -35,70 +34,86 @@ const credential = {
 } satisfies VerisureCredentialRow;
 
 describe(AlarmService, () => {
-  test("toggles full alarm from current state and resolves the stored PIN", async () => {
-    const harness = makeHarness([
-      [{ data: { installation: { armState: { type: "ARMED_AWAY" } } } }],
-      [{ data: { armStateDisarm: "transaction-1" } }],
-    ]);
-
-    const result = await Effect.runPromise(
+  it.effect(
+    "toggles full alarm from current state and resolves the stored PIN",
+    () =>
       Effect.gen(function* () {
-        const alarm = yield* AlarmService;
-        return yield* alarm.toggleFull();
-      }).pipe(harness.provide)
-    );
+        const harness = makeHarness([
+          { type: "ARMED_AWAY" },
+          {
+            accepted: true,
+            giid: "GIID",
+            requestedMode: "DISARMED",
+            transactionId: "transaction-1",
+          },
+        ]);
 
-    expect(result).toStrictEqual({
-      accepted: true,
-      giid: "GIID",
-      requestedMode: "DISARMED",
-      transactionId: "transaction-1",
-    });
-    expect(
-      harness.operations.map((operation) => operation.operationName)
-    ).toStrictEqual(["ArmState", "disarm"]);
-    expect(harness.operations[1]?.variables).toStrictEqual({
-      code: "4321",
-      giid: "GIID",
-    });
-  });
+        const result = yield* Effect.gen(function* () {
+          const alarm = yield* AlarmService;
+          return yield* alarm.toggleFull();
+        }).pipe(harness.provide);
 
-  test("uses the request code before decrypting the stored PIN", async () => {
-    const harness = makeHarness([[{ data: { armStateArmAway: true } }]], {
-      failDecrypt: true,
-    });
+        expect(result).toStrictEqual({
+          accepted: true,
+          giid: "GIID",
+          requestedMode: "DISARMED",
+          transactionId: "transaction-1",
+        });
+        expect(
+          harness.operations.map((operation) => operation.operationName)
+        ).toStrictEqual(["armState", "setAlarmMode"]);
+        expect(harness.operations[1]?.variables).toStrictEqual({
+          code: "4321",
+          giid: "GIID",
+          mode: "DISARMED",
+        });
+      })
+  );
 
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("uses the request code before decrypting the stored PIN", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(
+        [{ accepted: true, giid: "GIID", requestedMode: "ARMED_AWAY" }],
+        {
+          failDecrypt: true,
+        }
+      );
+
+      const result = yield* Effect.gen(function* () {
         const alarm = yield* AlarmService;
         return yield* alarm.setMode({ code: "9999", mode: "ARMED_AWAY" });
-      }).pipe(harness.provide)
-    );
+      }).pipe(harness.provide);
 
-    expect(result).toStrictEqual({
-      accepted: true,
-      giid: "GIID",
-      requestedMode: "ARMED_AWAY",
-    });
-    expect(harness.operations[0]?.variables).toStrictEqual({
-      code: "9999",
-      giid: "GIID",
-    });
-  });
+      expect(result).toStrictEqual({
+        accepted: true,
+        giid: "GIID",
+        requestedMode: "ARMED_AWAY",
+      });
+      expect(harness.operations[0]?.variables).toStrictEqual({
+        code: "9999",
+        giid: "GIID",
+        mode: "ARMED_AWAY",
+      });
+    })
+  );
 
-  test("requires an alarm code when no request code or stored PIN exists", async () => {
-    const harness = makeHarness([], { pin: undefined });
-
-    const error = await Effect.runPromise(
+  it.effect(
+    "requires an alarm code when no request code or stored PIN exists",
+    () =>
       Effect.gen(function* () {
-        const alarm = yield* AlarmService;
-        return yield* Effect.flip(alarm.setMode({ mode: "DISARMED" }));
-      }).pipe(harness.provide)
-    );
+        const harness = makeHarness([], { pin: undefined });
 
-    expect(error).toBeInstanceOf(ServiceError);
-    expect(error.message).toBe("Alarm code is required for this credential");
-  });
+        const error = yield* Effect.gen(function* () {
+          const alarm = yield* AlarmService;
+          return yield* Effect.flip(alarm.setMode({ mode: "DISARMED" }));
+        }).pipe(harness.provide);
+
+        expect(error).toBeInstanceOf(ServiceError);
+        expect(error.message).toBe(
+          "Alarm code is required for this credential"
+        );
+      })
+  );
 });
 
 const makeHarness = (
@@ -111,28 +126,26 @@ const makeHarness = (
     readonly variables: Record<string, unknown>;
   }[] = [];
 
-  const graphql = Layer.succeed(
-    VerisureGraphQL,
-    VerisureGraphQL.of({
-      execute: <A>(input: {
-        readonly decode: (response: unknown) => Effect.Effect<A, unknown>;
-        readonly request: {
-          readonly operationName: string;
-          readonly variables: unknown;
-        };
-      }) =>
-        Effect.gen(function* () {
-          operations.push({
-            operationName: input.request.operationName,
-            variables: input.request.variables as Record<string, unknown>,
-          });
-          return yield* input.decode(queue.shift()).pipe(Effect.orDie);
-        }),
-    })
-  );
+  const nextResponse = <A>() => Effect.sync(() => queue.shift() as A);
 
-  const testVerisureGraphQLClient = VerisureGraphQLClient.layer.pipe(
-    Layer.provide(graphql)
+  const requests = Layer.succeed(
+    VerisureRequests,
+    VerisureRequests.of({
+      armState: (input) => {
+        operations.push({ operationName: "armState", variables: input });
+        return nextResponse();
+      },
+      climate: () => Effect.die(new Error("climate was not expected")),
+      doorWindows: () => Effect.die(new Error("doorWindows was not expected")),
+      fetchAllInstallations: () =>
+        Effect.die(new Error("fetchAllInstallations was not expected")),
+      setAlarmMode: (input) => {
+        operations.push({ operationName: "setAlarmMode", variables: input });
+        return nextResponse();
+      },
+      smartLocks: () => Effect.die(new Error("smartLocks was not expected")),
+      smartPlugs: () => Effect.die(new Error("smartPlugs was not expected")),
+    })
   );
 
   const decryptedPin = () => {
@@ -174,7 +187,7 @@ const makeHarness = (
   const layer = AlarmService.Live.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        testVerisureGraphQLClient,
+        requests,
         crypto,
         Layer.succeed(CurrentCredential, credential),
         Layer.succeed(CurrentInstallation, { giid: "GIID" })

@@ -1,9 +1,9 @@
+import { it, describe, expect } from "@effect/vitest";
 import type { VerisureCredentialRow } from "@verisure/db/schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import { describe, expect, test } from "vitest";
 
 import { CurrentCredential } from "../Security/RequestContext.ts";
 import { VerisureSessionStore } from "./VerisureSessionStore.ts";
@@ -42,26 +42,26 @@ const mfa = {
 } satisfies SessionMfaState;
 
 describe(VerisureSessionStore, () => {
-  test("stores, reads, and clears a session snapshot", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("stores, reads, and clears a session snapshot", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.gen(function* () {
         const store = yield* VerisureSessionStore;
         yield* store.putSnapshot(snapshot);
         const stored = yield* store.getSnapshot;
         yield* store.clearSnapshot;
         const cleared = yield* store.getSnapshot;
         return { cleared, stored };
-      }).pipe(provideStore)
-    );
+      }).pipe(provideStore);
 
-    expect(result.stored._tag).toBe("Some");
-    expect(Option.getOrThrow(result.stored)).toStrictEqual(snapshot);
-    expect(result.cleared._tag).toBe("None");
-  });
+      expect(result.stored._tag).toBe("Some");
+      expect(Option.getOrThrow(result.stored)).toStrictEqual(snapshot);
+      expect(result.cleared._tag).toBe("None");
+    })
+  );
 
-  test("stores and clears temporary MFA state", async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("stores and clears temporary MFA state", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.gen(function* () {
         const store = yield* VerisureSessionStore;
         yield* store.putMfaState(mfa);
         const stored = yield* store.getMfaState;
@@ -69,18 +69,18 @@ describe(VerisureSessionStore, () => {
         yield* store.clearMfaState;
         const cleared = yield* store.getMfaState;
         return { cleared, snapshotAfterMfa, stored };
-      }).pipe(provideStore)
-    );
+      }).pipe(provideStore);
 
-    expect(result.stored._tag).toBe("Some");
-    expect(Option.getOrThrow(result.stored)).toStrictEqual(mfa);
-    expect(result.snapshotAfterMfa._tag).toBe("None");
-    expect(result.cleared._tag).toBe("None");
-  });
+      expect(result.stored._tag).toBe("Some");
+      expect(Option.getOrThrow(result.stored)).toStrictEqual(mfa);
+      expect(result.snapshotAfterMfa._tag).toBe("None");
+      expect(result.cleared._tag).toBe("None");
+    })
+  );
 
-  test("serializes credential-scoped effects", async () => {
-    const trace = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("serializes credential-scoped effects", () =>
+    Effect.gen(function* () {
+      const trace = yield* Effect.gen(function* () {
         const store = yield* VerisureSessionStore;
         const events = yield* Ref.make<readonly string[]>([]);
         const append = (event: string) =>
@@ -88,19 +88,19 @@ describe(VerisureSessionStore, () => {
         const task = (id: string) =>
           Effect.gen(function* () {
             yield* append(`${id}:start`);
-            yield* Effect.sleep("10 millis");
+            yield* Effect.yieldNow;
             yield* append(`${id}:end`);
           }).pipe(store.withCredentialLock);
 
         yield* Effect.all([task("a"), task("b")], { concurrency: 2 });
         return yield* Ref.get(events);
-      }).pipe(provideStore)
-    );
+      }).pipe(provideStore);
 
-    expect(trace).toHaveLength(4);
-    const first = trace[0]?.split(":")[0];
-    expect(trace[1]).toBe(`${first}:end`);
-  });
+      expect(trace).toHaveLength(4);
+      const first = trace[0]?.split(":")[0];
+      expect(trace[1]).toBe(`${first}:end`);
+    })
+  );
 });
 
 const provideStore = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

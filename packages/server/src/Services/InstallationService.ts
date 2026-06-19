@@ -11,8 +11,8 @@ import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
 import { CurrentCredential } from "../Security/RequestContext.ts";
 import type { VerisureAuthError } from "../Verisure/VerisureAuth.ts";
-import type { VerisureGraphQLError } from "../Verisure/VerisureGraphQL.ts";
-import { VerisureGraphQLClient } from "../Verisure/VerisureGraphQLClient.ts";
+import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
 import { ServiceError } from "./ServiceError.ts";
 
 export type InstallationServiceError =
@@ -20,7 +20,7 @@ export type InstallationServiceError =
   | RepositoryError
   | ServiceError
   | VerisureAuthError
-  | VerisureGraphQLError;
+  | VerisureRequestsError;
 
 export interface InstallationServiceShape {
   readonly list: Effect.Effect<
@@ -50,13 +50,13 @@ export class InstallationService extends Context.Service<
     InstallationService,
     Effect.gen(function* makeInstallationService() {
       const crypto = yield* CredentialCrypto;
-      const graphql = yield* VerisureGraphQLClient;
+      const requests = yield* VerisureRequests;
       const repository = yield* CredentialRepository;
 
       const list = Effect.gen(function* () {
         const credentialRow = yield* CurrentCredential;
         const credential = yield* crypto.decryptCredential(credentialRow);
-        return yield* graphql.fetchAllInstallations({
+        return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
       });
