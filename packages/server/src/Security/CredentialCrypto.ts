@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
+import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 
 const CipherVersion = "v1" as const;
 const AesGcmIvBytes = 12;
@@ -58,7 +58,7 @@ export class CredentialCrypto extends Context.Service<
 >()("@verisure/server/CredentialCrypto") {
   static readonly Live = Layer.effect(
     CredentialCrypto,
-    Effect.gen(function* makeCredentialCrypto() {
+    Effect.gen(function* () {
       const config = yield* RuntimeConfig;
       const key = yield* importAesKey(
         Redacted.value(config.credentialEncryptionKey)

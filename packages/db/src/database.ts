@@ -1,9 +1,9 @@
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
-import * as Drizzle from "./drizzle.ts";
-import { relations, tables } from "./schema.ts";
-import type { Relations, Schema } from "./schema.ts";
+import * as Drizzle from "./drizzle";
+import { relations, tables } from "./schema";
+import type { Relations, Schema } from "./schema";
 
 export type DrizzleDatabase = Drizzle.EffectDrizzleDatabase<Schema, Relations>;
 

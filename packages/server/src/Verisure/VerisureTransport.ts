@@ -21,9 +21,9 @@ import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
-import type { VerisureBaseUrls } from "../Runtime/RuntimeConfig.ts";
-import type { SessionCookie } from "./VerisureSessionStore.ts";
+import { RuntimeConfig } from "../Runtime/RuntimeConfig";
+import type { VerisureBaseUrls } from "../Runtime/RuntimeConfig";
+import type { SessionCookie } from "./VerisureSessionStore";
 
 const DEFAULT_APPLICATION_ID = "PS_PYTHON" as const;
 const DEFAULT_BASE_URLS = [
@@ -57,7 +57,7 @@ export class VerisureTransport extends Context.Service<
   static readonly layer = (options: VerisureTransportOptions = {}) =>
     Layer.effect(
       VerisureTransport,
-      Effect.gen(function* makeVerisureTransport() {
+      Effect.gen(function* () {
         const applicationId = options.applicationId ?? DEFAULT_APPLICATION_ID;
         const baseUrls = options.baseUrls ?? DEFAULT_BASE_URLS;
         const httpClient = yield* HttpClient.HttpClient;
@@ -77,16 +77,12 @@ export class VerisureTransport extends Context.Service<
 
           for (const baseUrl of orderedBaseUrls) {
             const httpRequest = prepareRequest(input, applicationId, baseUrl);
-            const attempt = yield* Effect.gen(function* executeRequest() {
-              const httpResponse = yield* httpClient
-                .execute(httpRequest)
-                .pipe(Effect.mapError(httpClientErrorToRequestError));
-              const text = yield* httpResponse.text.pipe(
-                Effect.mapError(httpClientErrorToRequestError)
-              );
-
+            const attempt = yield* Effect.gen(function* () {
+              const httpResponse = yield* httpClient.execute(httpRequest);
+              const text = yield* httpResponse.text;
               return { httpResponse, text };
             }).pipe(
+              Effect.mapError(httpClientErrorToRequestError),
               Effect.matchEffect({
                 onFailure: (error) =>
                   Effect.succeed({ _tag: "Failure" as const, error }),
@@ -205,7 +201,7 @@ export class VerisureTransport extends Context.Service<
     ).pipe(Layer.provide(FetchHttpClient.layer));
 
   static readonly Live = Layer.unwrap(
-    Effect.gen(function* makeLiveVerisureTransport() {
+    Effect.gen(function* () {
       const config = yield* RuntimeConfig;
       return VerisureTransport.layer({
         applicationId: Option.getOrUndefined(config.verisureApplicationId),

@@ -1,1 +1,1 @@
-export * from "./BetterAuthService.ts";
+export * from "./BetterAuthService";

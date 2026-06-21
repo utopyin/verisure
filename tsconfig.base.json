@@ -12,7 +12,9 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "includeSuggestionsInTsc": false
+        "diagnosticSeverity": {
+          // "leakingRequirements": "off"
+        }
       }
     ],
     "allowImportingTsExtensions": true,

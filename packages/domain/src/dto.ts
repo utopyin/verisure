@@ -60,7 +60,7 @@ export const InstallationSummarySchema = Schema.Struct({
   dealerId: Schema.optionalKey(Schema.String),
   giid: Schema.String,
   locale: Schema.optionalKey(Schema.String),
-  pinCodeLength: Schema.optionalKey(Schema.Number),
+  pinCodeLength: Schema.optionalKey(Schema.Finite),
   subsidiary: Schema.optionalKey(Schema.String),
 });
 export type InstallationSummary = Schema.Schema.Type<
@@ -117,9 +117,9 @@ export const ClimateSensorStatusSchema = Schema.Struct({
   device: DeviceRefSchema,
   humidityEnabled: Schema.optionalKey(Schema.Boolean),
   humidityTimestamp: Schema.optionalKey(Schema.String),
-  humidityValue: Schema.optionalKey(Schema.Number),
+  humidityValue: Schema.optionalKey(Schema.Finite),
   temperatureTimestamp: Schema.optionalKey(Schema.String),
-  temperatureValue: Schema.optionalKey(Schema.Number),
+  temperatureValue: Schema.optionalKey(Schema.Finite),
 });
 export type ClimateSensorStatus = Schema.Schema.Type<
   typeof ClimateSensorStatusSchema

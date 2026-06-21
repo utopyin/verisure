@@ -4,7 +4,7 @@ import {
   parseSetCookieHeader,
   serializeCookieHeader,
   serializeSetCookieHeader,
-} from "./cookies.ts";
+} from "./cookies";
 
 describe("cookie helpers", () => {
   test("parses Set-Cookie headers", () => {

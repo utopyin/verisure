@@ -7,14 +7,14 @@ import * as Redacted from "effect/Redacted";
 import {
   CredentialCrypto,
   CredentialCryptoError,
-} from "../Security/CredentialCrypto.ts";
+} from "../Security/CredentialCrypto";
 import {
   CurrentCredential,
   CurrentInstallation,
-} from "../Security/RequestContext.ts";
-import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
-import { AlarmService } from "./AlarmService.ts";
-import { ServiceError } from "./ServiceError.ts";
+} from "../Security/RequestContext";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
+import { AlarmService } from "./AlarmService";
+import { ServiceError } from "./ServiceError";
 
 const credential = {
   alias: "Home",

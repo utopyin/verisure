@@ -4,7 +4,7 @@ import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Database } from "./database.ts";
+import { Database } from "./database";
 
 const DrizzleSchema = Drizzle.Schema("AppSchema", {
   dialect: "sqlite",
@@ -12,7 +12,7 @@ const DrizzleSchema = Drizzle.Schema("AppSchema", {
   schema: "./packages/db/src/schema.ts",
 });
 
-export const D1Database = Effect.gen(function* D1Database() {
+export const D1Database = Effect.gen(function* () {
   const schema = yield* DrizzleSchema;
 
   return yield* Cloudflare.D1Database("AppDb", {
@@ -22,7 +22,7 @@ export const D1Database = Effect.gen(function* D1Database() {
 });
 
 const D1SqlClientLive = Layer.unwrap(
-  Effect.gen(function* D1SqlClientLive() {
+  Effect.gen(function* () {
     const database = yield* D1Database;
     const connect = yield* Cloudflare.D1Connection;
     const connection = yield* connect(database);

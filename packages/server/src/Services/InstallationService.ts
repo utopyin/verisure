@@ -5,15 +5,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
-import { CredentialRepository } from "../Repositories/CredentialRepository.ts";
-import type { RepositoryError } from "../Repositories/RepositoryError.ts";
-import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
-import { CurrentCredential } from "../Security/RequestContext.ts";
-import type { VerisureAuthError } from "../Verisure/VerisureAuth.ts";
-import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
-import { ServiceError } from "./ServiceError.ts";
+import { CredentialRepository } from "../Repositories/CredentialRepository";
+import type { RepositoryError } from "../Repositories/RepositoryError";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
+import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CurrentCredential } from "../Security/RequestContext";
+import type { VerisureAuthError } from "../Verisure/VerisureAuth";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { ServiceError } from "./ServiceError";
 
 export type InstallationServiceError =
   | CredentialCryptoError
@@ -48,7 +48,7 @@ export class InstallationService extends Context.Service<
 >()("@verisure/server/InstallationService") {
   static readonly Live = Layer.effect(
     InstallationService,
-    Effect.gen(function* makeInstallationService() {
+    Effect.gen(function* () {
       const crypto = yield* CredentialCrypto;
       const requests = yield* VerisureRequests;
       const repository = yield* CredentialRepository;

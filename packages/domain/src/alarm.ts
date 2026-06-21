@@ -1,5 +1,5 @@
-import { AlarmModes } from "./dto.ts";
-import type { AlarmMode, ShortcutAlarmMode } from "./dto.ts";
+import { AlarmModes } from "./dto";
+import type { AlarmMode, ShortcutAlarmMode } from "./dto";
 
 export const isAlarmMode = (value: string): value is AlarmMode =>
   (AlarmModes as readonly string[]).includes(value);

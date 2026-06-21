@@ -38,7 +38,7 @@ const LockKey = "lock";
 
 export const VerisureSessionObjectLive = VerisureSessionObject.make(
   Effect.succeed(
-    Effect.gen(function* makeSessionObject() {
+    Effect.gen(function* () {
       const state = yield* Cloudflare.DurableObjectState;
 
       const getSnapshot = () =>

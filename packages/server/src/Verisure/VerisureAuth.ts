@@ -26,19 +26,19 @@ import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { CredentialRepository } from "../Repositories/CredentialRepository.ts";
-import type { RepositoryError } from "../Repositories/RepositoryError.ts";
-import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
-import { CurrentCredential } from "../Security/RequestContext.ts";
-import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation.ts";
-import { VerisureSessionStore } from "./VerisureSessionStore.ts";
+import { CredentialRepository } from "../Repositories/CredentialRepository";
+import type { RepositoryError } from "../Repositories/RepositoryError";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
+import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CurrentCredential } from "../Security/RequestContext";
+import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation";
+import { VerisureSessionStore } from "./VerisureSessionStore";
 import type {
   SessionCookie,
   SessionSnapshot,
   VerisureSessionStoreError,
-} from "./VerisureSessionStore.ts";
-import { VerisureTransport } from "./VerisureTransport.ts";
+} from "./VerisureSessionStore";
+import { VerisureTransport } from "./VerisureTransport";
 
 const SessionTtlMs = 14 * 60 * 1000;
 const ValidSessionSkewMs = 15 * 1000;
@@ -79,7 +79,7 @@ export class VerisureAuth extends Context.Service<
 >()("@verisure/server/VerisureAuth") {
   static readonly Live = Layer.effect(
     VerisureAuth,
-    Effect.gen(function* makeVerisureAuth() {
+    Effect.gen(function* () {
       const crypto = yield* CredentialCrypto;
       const credentials = yield* CredentialRepository;
       const sessions = yield* VerisureSessionStore;
@@ -532,7 +532,7 @@ const trustTokenFromResponse = (
   );
 
 const TrustTokenResponse = Schema.Struct({
-  expiresAt: Schema.optionalKey(Schema.Number),
+  expiresAt: Schema.optionalKey(Schema.Finite),
   trustTokenValue: Schema.String,
 });
 

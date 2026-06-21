@@ -9,7 +9,7 @@ import {
   classifyGraphQLResponse,
   classifyHttpError,
   responseSignalsRateLimit,
-} from "./errors.ts";
+} from "./errors";
 
 describe("domain error classification", () => {
   test("detects Verisure rate-limit response text", () => {

@@ -1,13 +1,13 @@
 import * as Layer from "effect/Layer";
 
-import { ApiTokenRepository } from "./ApiTokenRepository.ts";
-import { CredentialRepository } from "./CredentialRepository.ts";
-import { ShortcutExportRepository } from "./ShortcutExportRepository.ts";
+import { ApiTokenRepository } from "./ApiTokenRepository";
+import { CredentialRepository } from "./CredentialRepository";
+import { ShortcutExportRepository } from "./ShortcutExportRepository";
 
-export * from "./ApiTokenRepository.ts";
-export * from "./CredentialRepository.ts";
-export * from "./RepositoryError.ts";
-export * from "./ShortcutExportRepository.ts";
+export * from "./ApiTokenRepository";
+export * from "./CredentialRepository";
+export * from "./RepositoryError";
+export * from "./ShortcutExportRepository";
 
 export const RepositoryLive = Layer.mergeAll(
   ApiTokenRepository.Default,

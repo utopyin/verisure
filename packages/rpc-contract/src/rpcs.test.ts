@@ -64,9 +64,9 @@ describe("dashboard RPC contract", () => {
     expect(DashboardRpcs.requests.has("Shortcut.ExportShortcut")).toBeTruthy();
   });
 
-  test("requires dashboard auth middleware for every RPC", () => {
+  test("leaves runtime auth middleware to API adapters", () => {
     for (const rpc of DashboardRpcs.requests.values()) {
-      expect(rpc.middlewares.size).toBe(1);
+      expect(rpc.middlewares.size).toBe(0);
     }
   });
 });

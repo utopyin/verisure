@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { EmailService } from "./EmailService.ts";
-import type { EmailServiceShape } from "./EmailService.ts";
+import { EmailService } from "./EmailService";
+import type { EmailServiceShape } from "./EmailService";
 
 export const ConsoleEmailLive = Layer.succeed(
   EmailService,

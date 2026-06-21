@@ -12,16 +12,16 @@ import * as Layer from "effect/Layer";
 import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 
-import { CredentialRepository } from "../Repositories/CredentialRepository.ts";
-import type { RepositoryError } from "../Repositories/RepositoryError.ts";
-import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
-import { CurrentCredential, CurrentUser } from "../Security/RequestContext.ts";
-import { VerisureAuth } from "../Verisure/VerisureAuth.ts";
-import type { VerisureAuthError } from "../Verisure/VerisureAuth.ts";
-import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
-import type { ServiceError } from "./ServiceError.ts";
+import { CredentialRepository } from "../Repositories/CredentialRepository";
+import type { RepositoryError } from "../Repositories/RepositoryError";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
+import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CurrentCredential, CurrentUser } from "../Security/RequestContext";
+import { VerisureAuth } from "../Verisure/VerisureAuth";
+import type { VerisureAuthError } from "../Verisure/VerisureAuth";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import type { ServiceError } from "./ServiceError";
 
 export type CredentialServiceError =
   | CredentialCryptoError
@@ -82,7 +82,7 @@ export class CredentialService extends Context.Service<
 >()("@verisure/server/CredentialService") {
   static readonly Live = Layer.effect(
     CredentialService,
-    Effect.gen(function* makeCredentialService() {
+    Effect.gen(function* () {
       const auth = yield* VerisureAuth;
       const crypto = yield* CredentialCrypto;
       const platformCrypto = yield* Crypto;

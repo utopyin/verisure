@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { RepositoryError } from "./RepositoryError.ts";
+import { RepositoryError } from "./RepositoryError";
 
 export interface CreateShortcutExportInput {
   readonly id: string;
@@ -42,7 +42,7 @@ export class ShortcutExportRepository extends Context.Service<
 >()("@verisure/server/ShortcutExportRepository") {
   static readonly Default = Layer.effect(
     ShortcutExportRepository,
-    Effect.gen(function* makeShortcutExportRepository() {
+    Effect.gen(function* () {
       const db = yield* Database;
 
       const create: ShortcutExportRepositoryShape["create"] = Effect.fn(

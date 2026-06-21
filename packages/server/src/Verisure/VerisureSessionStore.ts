@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TxSemaphore from "effect/TxSemaphore";
 
-import { CurrentCredential } from "../Security/RequestContext.ts";
+import { CurrentCredential } from "../Security/RequestContext";
 
 export interface SessionCookie extends Omit<Cookie, "expires"> {
   readonly expires?: number;
@@ -74,7 +74,7 @@ export class VerisureSessionStore extends Context.Service<
 >()("@verisure/server/VerisureSessionStore") {
   static readonly InMemory = Layer.effect(
     VerisureSessionStore,
-    Effect.gen(function* makeInMemorySessionStore() {
+    Effect.gen(function* () {
       const snapshots = yield* Ref.make(new Map<string, SessionSnapshot>());
       const mfaStates = yield* Ref.make(new Map<string, SessionMfaState>());
       const locks = yield* Ref.make(new Map<string, TxSemaphore.TxSemaphore>());

@@ -20,11 +20,11 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 
-import type { CurrentCredential } from "../Security/RequestContext.ts";
-import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation.ts";
-import { VerisureAuth } from "./VerisureAuth.ts";
-import type { VerisureAuthError } from "./VerisureAuth.ts";
-import { VerisureTransport } from "./VerisureTransport.ts";
+import type { CurrentCredential } from "../Security/RequestContext";
+import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation";
+import { VerisureAuth } from "./VerisureAuth";
+import type { VerisureAuthError } from "./VerisureAuth";
+import { VerisureTransport } from "./VerisureTransport";
 
 export type VerisureRequestsError = VerisureAuthError | VerisureDomainError;
 
@@ -84,7 +84,7 @@ export class VerisureRequests extends Context.Service<
 >()("@verisure/server/VerisureRequests") {
   static readonly layer = Layer.effect(
     VerisureRequests,
-    Effect.gen(function* makeVerisureRequests() {
+    Effect.gen(function* () {
       const auth = yield* VerisureAuth;
       const transport = yield* VerisureTransport;
 
@@ -134,7 +134,7 @@ const optionalNullable = <S extends Schema.Top>(schema: S) =>
   );
 
 const OptionalString = optionalNullable(Schema.String);
-const OptionalNumber = optionalNullable(Schema.Number);
+const OptionalNumber = optionalNullable(Schema.Finite);
 const OptionalBoolean = optionalNullable(Schema.Boolean);
 
 const ArmStatePayload = Schema.Struct({

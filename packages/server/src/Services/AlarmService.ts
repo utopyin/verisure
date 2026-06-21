@@ -8,15 +8,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto.ts";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
+import type { CredentialCryptoError } from "../Security/CredentialCrypto";
 import {
   CurrentCredential,
   CurrentInstallation,
-} from "../Security/RequestContext.ts";
-import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
-import { ServiceError } from "./ServiceError.ts";
+} from "../Security/RequestContext";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { ServiceError } from "./ServiceError";
 
 export type AlarmServiceError =
   | CredentialCryptoError
@@ -52,7 +52,7 @@ export class AlarmService extends Context.Service<
 >()("@verisure/server/AlarmService") {
   static readonly Live = Layer.effect(
     AlarmService,
-    Effect.gen(function* makeAlarmService() {
+    Effect.gen(function* () {
       const crypto = yield* CredentialCrypto;
       const requests = yield* VerisureRequests;
 

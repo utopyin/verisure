@@ -7,12 +7,8 @@ import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import ApiWorkerLayer, {
-  ApiWorker,
-  ProductionApiWorkerName,
-  VerisureCache,
-} from "./apps/api/src/worker.ts";
-import Web from "./apps/web/src/Web.ts";
+import ApiWorker, { ApiWorkerName } from "./apps/api/src/worker";
+import Web from "./apps/web/src/Web";
 
 export default Alchemy.Stack(
   "Verisure",
@@ -24,17 +20,16 @@ export default Alchemy.Stack(
     const api = yield* ApiWorker;
     const web = yield* Web;
     const db = yield* AppDb;
-    const cache = yield* VerisureCache;
     const context = yield* Alchemy.AlchemyContext;
     const apiRouteId = context.dev
       ? undefined
-      : yield* Effect.gen(function* makeApiRoute() {
+      : yield* Effect.gen(function* () {
           const zone = yield* Cloudflare.Zone("UtopyZone", {
             name: "utopy.sh",
           }).pipe(adopt(true));
           const apiRoute = yield* Workers.WorkerRoute("ApiRoute", {
             pattern: "verisure.utopy.sh/api/*",
-            script: ProductionApiWorkerName,
+            script: ApiWorkerName,
             zoneId: zone.zoneId,
           }).pipe(adopt(true));
           return apiRoute.routeId;
@@ -43,9 +38,8 @@ export default Alchemy.Stack(
     return {
       apiRouteId,
       apiUrl: api.url.as<string>(),
-      cacheId: cache.namespaceId,
       dbId: db.databaseId,
       webUrl: web.url.as<string>(),
     };
-  }).pipe(Effect.provide(ApiWorkerLayer))
+  })
 );

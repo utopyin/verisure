@@ -1,3 +1,3 @@
-export * from "./CredentialCrypto.ts";
-export * from "./RequestContext.ts";
-export * from "./RequestScope.ts";
+export * from "./CredentialCrypto";
+export * from "./RequestContext";
+export * from "./RequestScope";

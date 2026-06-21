@@ -104,7 +104,7 @@ const makeRemoteCallback: Effect.Effect<
   AsyncRemoteCallback,
   never,
   SqlClient.SqlClient
-> = Effect.gen(function* makeRemoteCallback() {
+> = Effect.gen(function* () {
   const client = yield* SqlClient.SqlClient;
   const constructionContext = yield* Effect.context<never>();
 
@@ -148,6 +148,6 @@ export const make = <
   never,
   SqlClient.SqlClient
 > =>
-  Effect.gen(function* make() {
+  Effect.gen(function* () {
     return drizzle(yield* makeRemoteCallback, config);
   });

@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { RepositoryError } from "./RepositoryError.ts";
+import { RepositoryError } from "./RepositoryError";
 
 export interface CreateApiTokenInput {
   readonly id: string;
@@ -61,7 +61,7 @@ export class ApiTokenRepository extends Context.Service<
 >()("@verisure/server/ApiTokenRepository") {
   static readonly Default = Layer.effect(
     ApiTokenRepository,
-    Effect.gen(function* makeApiTokenRepository() {
+    Effect.gen(function* () {
       const db = yield* Database;
 
       const create: ApiTokenRepositoryShape["create"] = Effect.fn(

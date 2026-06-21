@@ -70,10 +70,10 @@ ApiWorkerLive (Cloudflare.Worker / apps/api)
     │       ├── EmailServiceLive ─── Cloudflare.SendEmailBindingLive
     │       └── RuntimeConfigLive ── Config.redacted/string
     ├── RpcMountLive (/api/rpc/*)
-    │   ├── DashboardAuthMiddlewareLive          provides CurrentUser
+    │   ├── AuthMiddlewareLive          provides CurrentUser
     │   ├── CredentialScopeMiddlewareLive        provides CurrentCredential
     │   ├── InstallationScopeMiddlewareLive      provides CurrentInstallation
-    │   └── DashboardHandlersLive
+    │   └── HandlersLive
     ├── ShortcutRestRoutesLive (/api/v1/*)
     │   ├── ApiTokenMiddlewareLive               provides CurrentUser/CurrentCredential
     │   └── ShortcutAlarmRoutesLive
@@ -149,7 +149,7 @@ These trees document the flows where dependency order matters. Simpler CRUD/RPC 
 TanStack Query queryArmState(credentialId, giid)
 └── RpcClient(DashboardRpcs).Alarm.GetArmState
     └── POST /api/rpc with Better Auth cookie
-        └── DashboardAuthMiddleware provides CurrentUser
+        └── AuthMiddleware provides CurrentUser
             └── CredentialScopeMiddleware provides CurrentCredential
                 └── InstallationScopeMiddleware provides CurrentInstallation
                     └── AlarmService.getArmState()
@@ -261,7 +261,7 @@ Use a Bun workspace. Apps live under `apps/`; reusable code lives under `package
 │   │       ├── worker.ts
 │   │       ├── SessionObject.ts
 │   │       ├── Http/                # App, RestApi, BetterAuthMount, RpcMount, RouteScopes
-│   │       ├── Rpc/                 # DashboardHandlers, DashboardAuthLive
+│   │       ├── Rpc/                 # DashboardHandlers, AuthMiddleware
 │   │       ├── Layers.ts
 │   │       └── *.test.ts
 │   └── web/                         # @verisure/web, TanStack Start

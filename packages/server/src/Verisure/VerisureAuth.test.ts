@@ -17,15 +17,15 @@ import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { CredentialRepository } from "../Repositories/CredentialRepository.ts";
-import { RepositoryError } from "../Repositories/RepositoryError.ts";
-import { CredentialCrypto } from "../Security/CredentialCrypto.ts";
-import { CurrentCredential } from "../Security/RequestContext.ts";
-import { VerisureAuth } from "./VerisureAuth.ts";
-import { VerisureRequests } from "./VerisureRequests.ts";
-import { VerisureSessionStore } from "./VerisureSessionStore.ts";
-import type { SessionSnapshot } from "./VerisureSessionStore.ts";
-import { VerisureTransport } from "./VerisureTransport.ts";
+import { CredentialRepository } from "../Repositories/CredentialRepository";
+import { RepositoryError } from "../Repositories/RepositoryError";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
+import { CurrentCredential } from "../Security/RequestContext";
+import { VerisureAuth } from "./VerisureAuth";
+import { VerisureRequests } from "./VerisureRequests";
+import { VerisureSessionStore } from "./VerisureSessionStore";
+import type { SessionSnapshot } from "./VerisureSessionStore";
+import { VerisureTransport } from "./VerisureTransport";
 
 const credential = {
   alias: "Home",

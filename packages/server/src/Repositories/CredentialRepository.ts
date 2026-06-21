@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { RepositoryError } from "./RepositoryError.ts";
+import { RepositoryError } from "./RepositoryError";
 
 export interface CreateCredentialInput {
   readonly id: string;
@@ -85,7 +85,7 @@ export class CredentialRepository extends Context.Service<
 >()("@verisure/server/CredentialRepository") {
   static readonly Default = Layer.effect(
     CredentialRepository,
-    Effect.gen(function* makeCredentialRepository() {
+    Effect.gen(function* () {
       const db = yield* Database;
 
       const create: CredentialRepositoryShape["create"] = Effect.fn(

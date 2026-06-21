@@ -16,7 +16,7 @@ const optionalNullable = <S extends Schema.Top>(schema: S) =>
   );
 
 const OptionalString = optionalNullable(Schema.String);
-const OptionalNumber = optionalNullable(Schema.Number);
+const OptionalNumber = optionalNullable(Schema.Finite);
 
 const InstallationAddressPayload = Schema.Struct({
   city: OptionalString,

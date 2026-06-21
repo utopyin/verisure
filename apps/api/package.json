@@ -6,7 +6,8 @@
     ".": "./src/worker.ts"
   },
   "scripts": {
-    "check:types": "tsgo"
+    "check:types": "tsgo",
+    "test": "vitest ./src"
   },
   "dependencies": {
     "@effect/platform-browser": "catalog:",
@@ -16,5 +17,8 @@
     "@verisure/server": "workspace:*",
     "alchemy": "link:alchemy",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "vitest": "catalog:"
   }
 }

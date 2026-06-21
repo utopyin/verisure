@@ -47,7 +47,7 @@ export class RuntimeConfig extends Context.Service<
 >()("@verisure/server/RuntimeConfig") {
   static readonly Live = Layer.effect(
     RuntimeConfig,
-    Effect.gen(function* makeRuntimeConfig() {
+    Effect.gen(function* () {
       const appBaseUrl = yield* Config.string("APP_BASE_URL").pipe(
         Config.withDefault("https://verisure.utopy.sh")
       );

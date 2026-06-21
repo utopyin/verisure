@@ -1,1 +1,1 @@
-export * from "./RuntimeConfig.ts";
+export * from "./RuntimeConfig";

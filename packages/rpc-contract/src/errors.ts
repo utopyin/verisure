@@ -53,7 +53,7 @@ export class VerisureUpstreamError extends Schema.ErrorClass<VerisureUpstreamErr
     "GraphQLError",
   ]),
   message: Schema.String,
-  statusCode: Schema.optionalKey(Schema.Number),
+  statusCode: Schema.optionalKey(Schema.Finite),
 }) {}
 
 export const DashboardRpcError = Schema.Union([

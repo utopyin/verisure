@@ -10,9 +10,7 @@ import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { VerisureTransport } from "./VerisureTransport.ts";
-
-type FetchLike = typeof globalThis.fetch;
+import { VerisureTransport } from "./VerisureTransport";
 
 const BASE_URLS = [
   "https://automation01.test",
@@ -188,7 +186,7 @@ const response = (status: number, body: string) =>
 const makeFetch = (results: readonly (Response | Error)[]) => {
   const queue = [...results];
   const calls: { readonly url: string; readonly headers: Headers }[] = [];
-  const fetch: FetchLike = (input, init) => {
+  const fetch: typeof globalThis.fetch = (input, init) => {
     calls.push({
       headers: new Headers(init?.headers),
       url: String(input),

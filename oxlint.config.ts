@@ -12,6 +12,7 @@ export default defineConfig({
   ],
   rules: {
     "func-names": "off",
+    "jsdoc/check-tag-names": "off",
     "max-classes-per-file": "off",
     "no-shadow": "off",
     "no-use-before-define": "off",

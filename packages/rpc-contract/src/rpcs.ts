@@ -2,38 +2,85 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { DashboardRpcError } from "./errors.ts";
-import { DashboardAuthMiddleware } from "./middleware.ts";
-import {
-  AlarmCommandPayload,
-  AlarmMutationResult,
-  AlarmStatusPayload,
-  ApiTokenSummary,
-  ArmState,
-  ClimateSensorStatus,
-  CreateCredentialPayload,
-  CredentialIdPayload,
-  CredentialInstallationPayload,
-  CredentialSummary,
-  DashboardSession,
-  DoorWindowSensorStatus,
-  ExportShortcutPayload,
-  InstallationSummary,
-  ListApiTokensPayload,
-  MfaCodePayload,
-  MfaRequestResult,
-  MfaValidationResult,
-  RevokeApiTokenPayload,
-  SetAlarmModePayload,
-  ShortcutExportResult,
-  SmartLockStatus,
-  SmartPlugStatus,
-} from "./schemas.ts";
+import { DashboardRpcError } from "./errors";
+
+const AlarmMode = Schema.Literals(["DISARMED", "ARMED_AWAY", "ARMED_HOME"]);
+
+const InstallationSummary = Schema.Struct({
+  address: Schema.optionalKey(
+    Schema.Struct({
+      city: Schema.optionalKey(Schema.String),
+      postalNumber: Schema.optionalKey(Schema.String),
+      street: Schema.optionalKey(Schema.String),
+    })
+  ),
+  alias: Schema.String,
+  customerType: Schema.optionalKey(Schema.String),
+  dealerId: Schema.optionalKey(Schema.String),
+  giid: Schema.String,
+  locale: Schema.optionalKey(Schema.String),
+  pinCodeLength: Schema.optionalKey(Schema.Finite),
+  subsidiary: Schema.optionalKey(Schema.String),
+});
+
+const CredentialSummary = Schema.Struct({
+  alias: Schema.String,
+  connectionStatus: Schema.Literals([
+    "unchecked",
+    "connected",
+    "mfa_required",
+    "auth_failed",
+    "rate_limited",
+    "error",
+  ]),
+  createdAt: Schema.String,
+  defaultGiid: Schema.optionalKey(Schema.String),
+  email: Schema.String,
+  id: Schema.String,
+  updatedAt: Schema.String,
+});
+
+const CredentialIdPayload = Schema.Struct({
+  credentialId: Schema.String,
+});
+
+const AlarmMutationResult = Schema.Struct({
+  accepted: Schema.Boolean,
+  giid: Schema.String,
+  requestedMode: AlarmMode,
+  transactionId: Schema.optionalKey(Schema.String),
+});
+
+const AlarmStatusPayload = Schema.Struct({
+  credentialId: Schema.String,
+  giid: Schema.String,
+});
+
+const AlarmCommandPayload = Schema.Struct({
+  code: Schema.optionalKey(Schema.String),
+  credentialId: Schema.String,
+  giid: Schema.String,
+});
+
+const DeviceRef = Schema.Struct({
+  area: Schema.optionalKey(Schema.String),
+  deviceLabel: Schema.String,
+  label: Schema.optionalKey(Schema.String),
+});
+
+const ShortcutTemplate = Schema.Literals(["toggle-full", "choose-mode"]);
 
 export const AuthRpcs = RpcGroup.make(
   Rpc.make("GetSession", {
     error: DashboardRpcError,
-    success: DashboardSession,
+    success: Schema.Struct({
+      expiresAt: Schema.String,
+      user: Schema.Struct({
+        email: Schema.String,
+        id: Schema.String,
+        name: Schema.optionalKey(Schema.String),
+      }),
+    }),
   }),
   Rpc.make("Logout", {
     error: DashboardRpcError,
@@ -47,7 +94,12 @@ export const CredentialRpcs = RpcGroup.make(
   }),
   Rpc.make("CreateCredential", {
     error: DashboardRpcError,
-    payload: CreateCredentialPayload,
+    payload: Schema.Struct({
+      alias: Schema.String,
+      email: Schema.String,
+      password: Schema.String,
+      pin: Schema.optionalKey(Schema.String),
+    }),
     success: CredentialSummary,
   }),
   Rpc.make("DeleteCredential", {
@@ -57,12 +109,22 @@ export const CredentialRpcs = RpcGroup.make(
   Rpc.make("RequestCredentialMfa", {
     error: DashboardRpcError,
     payload: CredentialIdPayload,
-    success: MfaRequestResult,
+    success: Schema.Struct({
+      credentialId: Schema.String,
+      deliveryHint: Schema.optionalKey(Schema.String),
+      status: Schema.Literal("mfa_requested"),
+    }),
   }),
   Rpc.make("ValidateCredentialMfa", {
     error: DashboardRpcError,
-    payload: MfaCodePayload,
-    success: MfaValidationResult,
+    payload: Schema.Struct({
+      code: Schema.String,
+      credentialId: Schema.String,
+    }),
+    success: Schema.Struct({
+      credential: CredentialSummary,
+      installations: Schema.Array(InstallationSummary),
+    }),
   })
 ).prefix("Credential.");
 
@@ -74,7 +136,10 @@ export const InstallationRpcs = RpcGroup.make(
   }),
   Rpc.make("SetDefaultInstallation", {
     error: DashboardRpcError,
-    payload: CredentialInstallationPayload,
+    payload: Schema.Struct({
+      credentialId: Schema.String,
+      giid: Schema.String,
+    }),
     success: CredentialSummary,
   })
 ).prefix("Installation.");
@@ -83,11 +148,22 @@ export const AlarmRpcs = RpcGroup.make(
   Rpc.make("GetArmState", {
     error: DashboardRpcError,
     payload: AlarmStatusPayload,
-    success: ArmState,
+    success: Schema.Struct({
+      changedVia: Schema.optionalKey(Schema.String),
+      date: Schema.optionalKey(Schema.String),
+      name: Schema.optionalKey(Schema.String),
+      statusType: Schema.optionalKey(Schema.String),
+      type: Schema.String,
+    }),
   }),
   Rpc.make("SetAlarmMode", {
     error: DashboardRpcError,
-    payload: SetAlarmModePayload,
+    payload: Schema.Struct({
+      code: Schema.optionalKey(Schema.String),
+      credentialId: Schema.String,
+      giid: Schema.String,
+      mode: AlarmMode,
+    }),
     success: AlarmMutationResult,
   }),
   Rpc.make("ArmAway", {
@@ -116,39 +192,104 @@ export const DeviceRpcs = RpcGroup.make(
   Rpc.make("ListDoorWindows", {
     error: DashboardRpcError,
     payload: AlarmStatusPayload,
-    success: Schema.Array(DoorWindowSensorStatus),
+    success: Schema.Array(
+      Schema.Struct({
+        area: Schema.optionalKey(Schema.String),
+        device: DeviceRef,
+        reportTime: Schema.optionalKey(Schema.String),
+        state: Schema.String,
+        type: Schema.optionalKey(Schema.String),
+        wired: Schema.optionalKey(Schema.Boolean),
+      })
+    ),
   }),
   Rpc.make("ListClimate", {
     error: DashboardRpcError,
     payload: AlarmStatusPayload,
-    success: Schema.Array(ClimateSensorStatus),
+    success: Schema.Array(
+      Schema.Struct({
+        device: DeviceRef,
+        humidityEnabled: Schema.optionalKey(Schema.Boolean),
+        humidityTimestamp: Schema.optionalKey(Schema.String),
+        humidityValue: Schema.optionalKey(Schema.Finite),
+        temperatureTimestamp: Schema.optionalKey(Schema.String),
+        temperatureValue: Schema.optionalKey(Schema.Finite),
+      })
+    ),
   }),
   Rpc.make("ListSmartLocks", {
     error: DashboardRpcError,
     payload: AlarmStatusPayload,
-    success: Schema.Array(SmartLockStatus),
+    success: Schema.Array(
+      Schema.Struct({
+        device: DeviceRef,
+        doorLockType: Schema.optionalKey(Schema.String),
+        doorState: Schema.optionalKey(Schema.String),
+        eventTime: Schema.optionalKey(Schema.String),
+        lockMethod: Schema.optionalKey(Schema.String),
+        lockStatus: Schema.optionalKey(Schema.String),
+        secureMode: Schema.optionalKey(Schema.Boolean),
+        userName: Schema.optionalKey(Schema.String),
+      })
+    ),
   }),
   Rpc.make("ListSmartPlugs", {
     error: DashboardRpcError,
     payload: AlarmStatusPayload,
-    success: Schema.Array(SmartPlugStatus),
+    success: Schema.Array(
+      Schema.Struct({
+        currentState: Schema.Union([Schema.Boolean, Schema.String]),
+        device: DeviceRef,
+        icon: Schema.optionalKey(Schema.String),
+        isHazardous: Schema.optionalKey(Schema.Boolean),
+      })
+    ),
   })
 ).prefix("Device.");
 
 export const ShortcutRpcs = RpcGroup.make(
   Rpc.make("ExportShortcut", {
     error: DashboardRpcError,
-    payload: ExportShortcutPayload,
-    success: ShortcutExportResult,
+    payload: Schema.Struct({
+      credentialId: Schema.String,
+      giid: Schema.optionalKey(Schema.String),
+      template: ShortcutTemplate,
+    }),
+    success: Schema.Struct({
+      apiUrl: Schema.String,
+      bearerToken: Schema.String,
+      credentialId: Schema.String,
+      downloadUrl: Schema.optionalKey(Schema.String),
+      giid: Schema.optionalKey(Schema.String),
+      instructions: Schema.Array(Schema.String),
+      shortcutName: Schema.String,
+      template: ShortcutTemplate,
+    }),
   }),
   Rpc.make("ListApiTokens", {
     error: DashboardRpcError,
-    payload: ListApiTokensPayload,
-    success: Schema.Array(ApiTokenSummary),
+    payload: Schema.Struct({
+      credentialId: Schema.optionalKey(Schema.String),
+    }),
+    success: Schema.Array(
+      Schema.Struct({
+        allowedGiids: Schema.optionalKey(Schema.Array(Schema.String)),
+        createdAt: Schema.String,
+        credentialId: Schema.String,
+        displayPrefix: Schema.String,
+        expiresAt: Schema.optionalKey(Schema.String),
+        id: Schema.String,
+        lastUsedAt: Schema.optionalKey(Schema.String),
+        revokedAt: Schema.optionalKey(Schema.String),
+        scopes: Schema.Array(Schema.String),
+      })
+    ),
   }),
   Rpc.make("RevokeApiToken", {
     error: DashboardRpcError,
-    payload: RevokeApiTokenPayload,
+    payload: Schema.Struct({
+      tokenId: Schema.String,
+    }),
   })
 ).prefix("Shortcut.");
 
@@ -158,6 +299,6 @@ export const DashboardRpcs = AuthRpcs.merge(
   AlarmRpcs,
   DeviceRpcs,
   ShortcutRpcs
-).middleware(DashboardAuthMiddleware);
+);
 
 export type DashboardRpcs = RpcGroup.Rpcs<typeof DashboardRpcs>;

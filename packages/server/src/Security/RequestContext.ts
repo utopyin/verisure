@@ -13,16 +13,31 @@ export interface CurrentInstallationShape {
   readonly giid: string;
 }
 
+/**
+ * Authenticated user for the current request/RPC execution.
+ *
+ * @effect-leakable-service
+ */
 export class CurrentUser extends Context.Service<
   CurrentUser,
   CurrentUserShape
 >()("@verisure/server/CurrentUser") {}
 
+/**
+ * Credential selected and authorized for the current request/RPC execution.
+ *
+ * @effect-leakable-service
+ */
 export class CurrentCredential extends Context.Service<
   CurrentCredential,
   VerisureCredentialRow
 >()("@verisure/server/CurrentCredential") {}
 
+/**
+ * Installation selected and authorized for the current request/RPC execution.
+ *
+ * @effect-leakable-service
+ */
 export class CurrentInstallation extends Context.Service<
   CurrentInstallation,
   CurrentInstallationShape

@@ -5,12 +5,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { CurrentCredential } from "../Security/RequestContext.ts";
-import { VerisureSessionStore } from "./VerisureSessionStore.ts";
-import type {
-  SessionMfaState,
-  SessionSnapshot,
-} from "./VerisureSessionStore.ts";
+import { CurrentCredential } from "../Security/RequestContext";
+import { VerisureSessionStore } from "./VerisureSessionStore";
+import type { SessionMfaState, SessionSnapshot } from "./VerisureSessionStore";
 
 const credential = {
   alias: "Home",

@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { VerisureSessionObject } from "./SessionObject.ts";
+import { VerisureSessionObject } from "./SessionObject";
 
 const LockTtlMs = 30_000;
 const LockRetryMs = 50;
@@ -29,7 +29,7 @@ const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 export const VerisureSessionStoreLive = Layer.effect(
   VerisureSessionStore,
-  Effect.gen(function* makeDurableObjectSessionStore() {
+  Effect.gen(function* () {
     const namespace = yield* VerisureSessionObject;
 
     const getStub = Effect.map(CurrentCredential, ({ id }) =>
@@ -37,7 +37,7 @@ export const VerisureSessionStoreLive = Layer.effect(
     );
 
     const acquire = (ownerId: string) =>
-      Effect.gen(function* acquireLoop() {
+      Effect.gen(function* () {
         while (true) {
           const stub = yield* getStub;
           const acquired = yield* wrap(

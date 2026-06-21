@@ -2,15 +2,15 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
-import { EmailError, EmailService } from "./EmailService.ts";
-import type { EmailServiceShape } from "./EmailService.ts";
+import { RuntimeConfig } from "../Runtime/RuntimeConfig";
+import { EmailError, EmailService } from "./EmailService";
+import type { EmailServiceShape } from "./EmailService";
 
 export const Email = Cloudflare.SendEmail("Email");
 
 export const CloudflareEmailLive = Layer.effect(
   EmailService,
-  Effect.gen(function* makeCloudflareEmail() {
+  Effect.gen(function* () {
     const config = yield* RuntimeConfig;
     const sender = yield* Email;
     const client = yield* Cloudflare.SendEmail.bind(sender);

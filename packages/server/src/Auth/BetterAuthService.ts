@@ -14,8 +14,8 @@ import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import { EmailLive } from "../Email";
-import { EmailService } from "../Email/EmailService.ts";
-import { RuntimeConfig } from "../Runtime/RuntimeConfig.ts";
+import { EmailService } from "../Email/EmailService";
+import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 
 export interface AuthUser {
   readonly id: string;
@@ -54,19 +54,25 @@ export interface BetterAuthServiceShape {
   ) => Effect.Effect<Option.Option<AuthSession>, AuthError, RuntimeContext>;
 }
 
+/**
+ * Better Auth operations are runtime-only because they use Alchemy runtime
+ * bindings such as D1 and Email under the hood.
+ *
+ * @effect-expect-leaking RuntimeContext
+ */
 export class BetterAuthService extends Context.Service<
   BetterAuthService,
   BetterAuthServiceShape
 >()("@verisure/server/BetterAuthService") {
   static readonly Live = Layer.effect(
     BetterAuthService,
-    Effect.gen(function* makeBetterAuthService() {
+    Effect.gen(function* () {
       const config = yield* RuntimeConfig;
       const email = yield* EmailService;
       const database = yield* D1Database;
       const connection = yield* Cloudflare.D1Connection.bind(database);
 
-      const getBetterAuth = yield* Effect.gen(function* makeAuth() {
+      const getBetterAuth = yield* Effect.gen(function* () {
         const d1 = yield* connection.raw;
         const runtimeContext = yield* Effect.context<RuntimeContext>();
 

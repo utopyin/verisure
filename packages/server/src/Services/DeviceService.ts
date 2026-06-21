@@ -8,11 +8,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { CurrentCredential } from "../Security/RequestContext.ts";
-import { CurrentInstallation } from "../Security/RequestContext.ts";
-import { VerisureRequests } from "../Verisure/VerisureRequests.ts";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests.ts";
-import type { ServiceError } from "./ServiceError.ts";
+import type { CurrentCredential } from "../Security/RequestContext";
+import { CurrentInstallation } from "../Security/RequestContext";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
+import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import type { ServiceError } from "./ServiceError";
 
 export type DeviceServiceError = ServiceError | VerisureRequestsError;
 
@@ -45,7 +45,7 @@ export class DeviceService extends Context.Service<
 >()("@verisure/server/DeviceService") {
   static readonly Live = Layer.effect(
     DeviceService,
-    Effect.gen(function* makeDeviceService() {
+    Effect.gen(function* () {
       const requests = yield* VerisureRequests;
       const currentGiid = CurrentInstallation.pipe(
         Effect.map((installation) => installation.giid)
