@@ -18,6 +18,7 @@ export type VerisureSafeUpstreamError =
 
 export type ApplicationError =
   | PlatformError
+  | Server.ApiTokenError
   | Server.CredentialCryptoError
   | Server.RepositoryError
   | Server.ScopeError
@@ -66,7 +67,10 @@ export const toDashboardRpcError = (
     });
   }
 
-  if (error instanceof Server.ServiceError) {
+  if (
+    error instanceof Server.ServiceError ||
+    error instanceof Server.ApiTokenError
+  ) {
     return new RpcContract.InvalidInput({ message: error.message });
   }
 

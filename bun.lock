@@ -101,6 +101,7 @@
         "effect": "catalog:",
       },
       "devDependencies": {
+        "@effect/platform-browser": "catalog:",
         "@effect/vitest": "catalog:",
         "vitest": "catalog:",
       },

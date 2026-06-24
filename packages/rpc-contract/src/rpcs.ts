@@ -70,6 +70,29 @@ const DeviceRef = Schema.Struct({
 
 const ShortcutTemplate = Schema.Literals(["toggle-full", "choose-mode"]);
 
+export const ShortcutExportPayload = Schema.Struct({
+  apiUrl: Schema.String,
+  bearerToken: Schema.String,
+  credentialId: Schema.String,
+  downloadUrl: Schema.optionalKey(Schema.String),
+  giid: Schema.optionalKey(Schema.String),
+  instructions: Schema.Array(Schema.String),
+  shortcutName: Schema.String,
+  template: ShortcutTemplate,
+});
+
+export const ShortcutApiTokenSummary = Schema.Struct({
+  allowedGiids: Schema.optionalKey(Schema.Array(Schema.String)),
+  createdAt: Schema.String,
+  credentialId: Schema.String,
+  displayPrefix: Schema.String,
+  expiresAt: Schema.optionalKey(Schema.String),
+  id: Schema.String,
+  lastUsedAt: Schema.optionalKey(Schema.String),
+  revokedAt: Schema.optionalKey(Schema.String),
+  scopes: Schema.Array(Schema.String),
+});
+
 export const AuthRpcs = RpcGroup.make(
   Rpc.make("GetSession", {
     error: DashboardRpcError,
@@ -255,35 +278,14 @@ export const ShortcutRpcs = RpcGroup.make(
       giid: Schema.optionalKey(Schema.String),
       template: ShortcutTemplate,
     }),
-    success: Schema.Struct({
-      apiUrl: Schema.String,
-      bearerToken: Schema.String,
-      credentialId: Schema.String,
-      downloadUrl: Schema.optionalKey(Schema.String),
-      giid: Schema.optionalKey(Schema.String),
-      instructions: Schema.Array(Schema.String),
-      shortcutName: Schema.String,
-      template: ShortcutTemplate,
-    }),
+    success: ShortcutExportPayload,
   }),
   Rpc.make("ListApiTokens", {
     error: DashboardRpcError,
     payload: Schema.Struct({
       credentialId: Schema.optionalKey(Schema.String),
     }),
-    success: Schema.Array(
-      Schema.Struct({
-        allowedGiids: Schema.optionalKey(Schema.Array(Schema.String)),
-        createdAt: Schema.String,
-        credentialId: Schema.String,
-        displayPrefix: Schema.String,
-        expiresAt: Schema.optionalKey(Schema.String),
-        id: Schema.String,
-        lastUsedAt: Schema.optionalKey(Schema.String),
-        revokedAt: Schema.optionalKey(Schema.String),
-        scopes: Schema.Array(Schema.String),
-      })
-    ),
+    success: Schema.Array(ShortcutApiTokenSummary),
   }),
   Rpc.make("RevokeApiToken", {
     error: DashboardRpcError,

@@ -58,6 +58,21 @@ const installation = {
   giid: "giid-1",
 } satisfies InstallationSummary;
 
+const apiToken = {
+  allowedGiids: [installation.giid],
+  createdAt: new Date("2026-01-03T00:00:00.000Z"),
+  credentialId: credentialRow.id,
+  displayPrefix: "vs_abc123…",
+  expiresAt: null,
+  id: "token-1",
+  lastUsedAt: null,
+  revokedAt: null,
+  scopes: [Server.ShortcutAlarmReadScope],
+  tokenHash: "hash",
+  updatedAt: new Date("2026-01-03T00:00:00.000Z"),
+  userId: user.id,
+};
+
 interface TestOptions {
   readonly session?: Option.Option<Server.AuthSession>;
   readonly ownedCredential?: Option.Option<VerisureCredentialRow>;
@@ -144,7 +159,15 @@ describe("dashboard RPC handlers", () => {
           credentialId: credentialRow.id,
           giid: installation.giid,
         });
-        return { alarmState, climate, credentials };
+        const shortcut = yield* client["Shortcut.ExportShortcut"]({
+          credentialId: credentialRow.id,
+          giid: installation.giid,
+          template: "toggle-full",
+        });
+        const tokens = yield* client["Shortcut.ListApiTokens"]({
+          credentialId: credentialRow.id,
+        });
+        return { alarmState, climate, credentials, shortcut, tokens };
       })
     );
 
@@ -154,6 +177,21 @@ describe("dashboard RPC handlers", () => {
       type: "DISARMED",
     });
     expect(result.climate).toStrictEqual([]);
+    expect(result.shortcut).toMatchObject({
+      bearerToken: "vs_plaintext",
+      credentialId: credentialRow.id,
+      template: "toggle-full",
+    });
+    expect(result.tokens).toStrictEqual([
+      {
+        allowedGiids: [installation.giid],
+        createdAt: "2026-01-03T00:00:00.000Z",
+        credentialId: credentialRow.id,
+        displayPrefix: "vs_abc123…",
+        id: "token-1",
+        scopes: [Server.ShortcutAlarmReadScope],
+      },
+    ]);
   });
 });
 
@@ -322,6 +360,34 @@ const testServices = (options: TestOptions) =>
         listDoorWindows: Server.CurrentInstallation.pipe(Effect.as([])),
         listSmartLocks: Server.CurrentInstallation.pipe(Effect.as([])),
         listSmartPlugs: Server.CurrentInstallation.pipe(Effect.as([])),
+      })
+    ),
+    Layer.succeed(
+      Server.ApiTokenService,
+      Server.ApiTokenService.of({
+        authenticate: () =>
+          Effect.die("ApiTokenService.authenticate not expected"),
+        create: () => Effect.die("ApiTokenService.create not expected"),
+        hashPlaintextToken: () =>
+          Effect.die("ApiTokenService.hashPlaintextToken not expected"),
+        list: () => Effect.succeed([apiToken]),
+        revoke: () => Effect.void,
+      })
+    ),
+    Layer.succeed(
+      Server.ShortcutExportService,
+      Server.ShortcutExportService.of({
+        exportShortcut: (payload) =>
+          Effect.succeed({
+            apiToken,
+            apiUrl: "https://verisure.utopy.sh/api/v1",
+            bearerToken: "vs_plaintext",
+            credentialId: payload.credentialId,
+            giid: payload.giid,
+            instructions: ["guided fallback"],
+            shortcutName: "Verisure Toggle Full Alarm",
+            template: payload.template,
+          }),
       })
     )
   );
