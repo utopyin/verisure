@@ -1,37 +1,23 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { VerisureCredentialRow } from "@verisure/db/schema";
+import { testCredentialRow } from "@verisure/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 
-import {
-  CredentialCrypto,
-  CredentialCryptoError,
-} from "../Security/CredentialCrypto";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
 import {
   CurrentCredential,
   CurrentInstallation,
 } from "../Security/RequestContext";
+import type { VerisureRequestsTestOperation } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
 import { AlarmService } from "./AlarmService";
 import { ServiceError } from "./ServiceError";
 
 const credential = {
-  alias: "Home",
-  connectedAt: null,
-  connectionStatus: "connected",
-  connectionStatusMessage: null,
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  ...testCredentialRow,
   defaultGiid: "GIID",
-  encryptedEmail: "encrypted-email",
-  encryptedPassword: "encrypted-password",
   encryptedPin: "encrypted-pin",
-  id: "credential-1",
-  lastConnectionAttemptAt: null,
-  mfaRequestedAt: null,
-  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-  userId: "user-1",
-} satisfies VerisureCredentialRow;
+};
 
 describe(AlarmService, () => {
   it.effect(
@@ -120,83 +106,22 @@ const makeHarness = (
   responses: readonly unknown[],
   options: { readonly failDecrypt?: boolean; readonly pin?: string } = {}
 ) => {
-  const queue = [...responses];
-  const operations: {
-    readonly operationName: string;
-    readonly variables: Record<string, unknown>;
-  }[] = [];
-
-  const nextResponse = <A>() => Effect.sync(() => queue.shift() as A);
-
-  const requests = Layer.succeed(
-    VerisureRequests,
-    VerisureRequests.of({
-      armState: (input) => {
-        operations.push({ operationName: "armState", variables: input });
-        return nextResponse();
-      },
-      climate: () => Effect.die(new Error("climate was not expected")),
-      doorWindows: () => Effect.die(new Error("doorWindows was not expected")),
-      fetchAllInstallations: () =>
-        Effect.die(new Error("fetchAllInstallations was not expected")),
-      setAlarmMode: (input) => {
-        operations.push({ operationName: "setAlarmMode", variables: input });
-        return nextResponse();
-      },
-      smartLocks: () => Effect.die(new Error("smartLocks was not expected")),
-      smartPlugs: () => Effect.die(new Error("smartPlugs was not expected")),
-    })
-  );
-
-  const decryptedPin = () => {
-    if (options.pin === undefined && !("pin" in options)) {
-      return { pin: Redacted.make("4321") };
-    }
-    if (options.pin === undefined) {
-      return {};
-    }
-    return { pin: Redacted.make(options.pin) };
-  };
-
-  const crypto = Layer.succeed(
-    CredentialCrypto,
-    CredentialCrypto.of({
-      decryptCredential: (row) =>
-        options.failDecrypt === true
-          ? Effect.fail(
-              new CredentialCryptoError({ message: "decrypt called" })
-            )
-          : Effect.succeed({
-              email: Redacted.make("user@example.com"),
-              id: row.id,
-              password: Redacted.make("secret"),
-              ...decryptedPin(),
-              userId: row.userId,
-            }),
-      decryptString: () => Effect.succeed("decrypted"),
-      encryptCredential: () =>
-        Effect.succeed({
-          encryptedEmail: "encrypted-email",
-          encryptedPassword: "encrypted-password",
-          encryptedPin: "encrypted-pin",
-        }),
-      encryptString: (value) => Effect.succeed(value),
-    })
-  );
+  const operations: VerisureRequestsTestOperation[] = [];
 
   const layer = AlarmService.Live.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        requests,
-        crypto,
+        VerisureRequests.Test({ operations, responses }),
+        CredentialCrypto.Test(options),
         Layer.succeed(CurrentCredential, credential),
         Layer.succeed(CurrentInstallation, { giid: "GIID" })
       )
     )
   );
 
-  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.provide(effect, layer);
+  const provide = <A, E>(
+    effect: Effect.Effect<A, E, Layer.Success<typeof layer>>
+  ) => Effect.provide(effect, layer);
 
   return { operations, provide };
 };

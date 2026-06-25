@@ -25,6 +25,7 @@
   "devDependencies": {
     "@effect/platform-browser": "catalog:",
     "@effect/vitest": "catalog:",
+    "@verisure/test": "workspace:*",
     "vitest": "catalog:"
   }
 }

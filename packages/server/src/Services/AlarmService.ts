@@ -8,14 +8,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import { CredentialCrypto } from "../Security/CredentialCrypto";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
 import {
   CurrentCredential,
   CurrentInstallation,
 } from "../Security/RequestContext";
-import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
 import { ServiceError } from "./ServiceError";
 
 export type AlarmServiceError =
@@ -50,6 +50,36 @@ export class AlarmService extends Context.Service<
   AlarmService,
   AlarmServiceShape
 >()("@verisure/server/AlarmService") {
+  static readonly Test = (options: { readonly armState?: ArmState } = {}) =>
+    Layer.succeed(
+      AlarmService,
+      AlarmService.of({
+        getArmState: CurrentInstallation.pipe(
+          Effect.map((installation) => ({
+            name: installation.giid,
+            type: "DISARMED" as const,
+            ...options.armState,
+          }))
+        ),
+        setMode: (input) =>
+          CurrentInstallation.pipe(
+            Effect.map((installation) => ({
+              accepted: true,
+              giid: installation.giid,
+              requestedMode: input.mode,
+            }))
+          ),
+        toggleFull: () =>
+          CurrentInstallation.pipe(
+            Effect.map((installation) => ({
+              accepted: true,
+              giid: installation.giid,
+              requestedMode: "ARMED_AWAY" as const,
+            }))
+          ),
+      })
+    );
+
   static readonly Live = Layer.effect(
     AlarmService,
     Effect.gen(function* () {

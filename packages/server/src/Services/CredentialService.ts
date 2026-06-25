@@ -14,13 +14,13 @@ import * as Redacted from "effect/Redacted";
 
 import { CredentialRepository } from "../Repositories/CredentialRepository";
 import type { RepositoryError } from "../Repositories/RepositoryError";
-import { CredentialCrypto } from "../Security/CredentialCrypto";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential, CurrentUser } from "../Security/RequestContext";
-import { VerisureAuth } from "../Verisure/VerisureAuth";
 import type { VerisureAuthError } from "../Verisure/VerisureAuth";
-import { VerisureRequests } from "../Verisure/VerisureRequests";
+import { VerisureAuth } from "../Verisure/VerisureAuth";
 import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { ServiceError } from "./ServiceError";
 
 export type CredentialServiceError =
@@ -80,6 +80,55 @@ export class CredentialService extends Context.Service<
   CredentialService,
   CredentialServiceShape
 >()("@verisure/server/CredentialService") {
+  static readonly Test = (
+    options: {
+      readonly credential?: CredentialSummary;
+      readonly installations?: readonly InstallationSummary[];
+    } = {}
+  ) =>
+    Layer.succeed(
+      CredentialService,
+      CredentialService.of({
+        checkConnection: Effect.succeed(options.installations ?? []),
+        create: () =>
+          Effect.succeed(
+            options.credential ?? {
+              alias: "Home",
+              connectionStatus: "connected" as const,
+              createdAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+              email: "user@example.com",
+              id: "credential-1",
+              updatedAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+            }
+          ),
+        delete: CurrentCredential.pipe(Effect.asVoid),
+        list: CurrentUser.pipe(
+          Effect.as(
+            options.credential === undefined ? [] : [options.credential]
+          )
+        ),
+        logout: Effect.void,
+        requestMfa: CurrentCredential.pipe(
+          Effect.map((credential) => ({
+            credentialId: credential.id,
+            status: "mfa_requested" as const,
+          }))
+        ),
+        validateMfa: () =>
+          Effect.succeed({
+            credential: options.credential ?? {
+              alias: "Home",
+              connectionStatus: "connected" as const,
+              createdAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+              email: "user@example.com",
+              id: "credential-1",
+              updatedAt: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+            },
+            installations: options.installations ?? [],
+          }),
+      })
+    );
+
   static readonly Live = Layer.effect(
     CredentialService,
     Effect.gen(function* () {

@@ -59,6 +59,79 @@ export class ApiTokenRepository extends Context.Service<
   ApiTokenRepository,
   ApiTokenRepositoryShape
 >()("@verisure/server/ApiTokenRepository") {
+  static readonly InMemory = (tokens: ApiTokenRecord[]) =>
+    Layer.succeed(
+      ApiTokenRepository,
+      ApiTokenRepository.of({
+        create: (input) => {
+          const token = {
+            ...(input.allowedGiids === undefined
+              ? {}
+              : { allowedGiids: input.allowedGiids }),
+            createdAt: input.now,
+            credentialId: input.credentialId,
+            displayPrefix: input.displayPrefix,
+            expiresAt: input.expiresAt ?? null,
+            id: input.id,
+            lastUsedAt: null,
+            revokedAt: null,
+            scopes: input.scopes,
+            tokenHash: input.tokenHash,
+            updatedAt: input.now,
+            userId: input.userId,
+          } satisfies ApiTokenRecord;
+          tokens.push(token);
+          return Effect.succeed(token);
+        },
+        findUsableByHash: (input) =>
+          Effect.succeed(
+            Option.fromNullishOr(
+              tokens.find(
+                (token) =>
+                  token.tokenHash === input.tokenHash &&
+                  token.revokedAt === null &&
+                  (token.expiresAt === null || token.expiresAt > input.now)
+              )
+            )
+          ),
+        getById: (id) =>
+          Effect.succeed(
+            Option.fromNullishOr(tokens.find((token) => token.id === id))
+          ),
+        listForCredential: ({ credentialId, userId }) =>
+          Effect.succeed(
+            tokens.filter(
+              (token) =>
+                token.credentialId === credentialId && token.userId === userId
+            )
+          ),
+        listForUser: (userId) =>
+          Effect.succeed(tokens.filter((token) => token.userId === userId)),
+        markUsed: ({ id, usedAt }) => {
+          const index = tokens.findIndex((token) => token.id === id);
+          const token = tokens[index];
+          if (token === undefined) {
+            return Effect.succeed(Option.none());
+          }
+          const updated = { ...token, lastUsedAt: usedAt };
+          tokens[index] = updated;
+          return Effect.succeed(Option.some(updated));
+        },
+        revoke: ({ id, revokedAt, userId }) => {
+          const index = tokens.findIndex(
+            (token) => token.id === id && token.userId === userId
+          );
+          const token = tokens[index];
+          if (token === undefined) {
+            return Effect.succeed(Option.none());
+          }
+          const updated = { ...token, revokedAt };
+          tokens[index] = updated;
+          return Effect.succeed(Option.some(updated));
+        },
+      })
+    );
+
   static readonly Default = Layer.effect(
     ApiTokenRepository,
     Effect.gen(function* () {

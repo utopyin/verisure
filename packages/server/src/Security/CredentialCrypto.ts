@@ -56,6 +56,42 @@ export class CredentialCrypto extends Context.Service<
   CredentialCrypto,
   CredentialCryptoShape
 >()("@verisure/server/CredentialCrypto") {
+  static readonly Test = (
+    options: {
+      readonly failDecrypt?: boolean;
+      readonly pin?: string | undefined;
+    } = {}
+  ) =>
+    Layer.succeed(
+      CredentialCrypto,
+      CredentialCrypto.of({
+        decryptCredential: (row) => {
+          if (options.failDecrypt === true) {
+            return Effect.fail(
+              new CredentialCryptoError({ message: "decrypt called" })
+            );
+          }
+
+          const pin = "pin" in options ? options.pin : "4321";
+          return Effect.succeed({
+            email: Redacted.make("user@example.com"),
+            id: row.id,
+            password: Redacted.make("secret"),
+            ...(pin === undefined ? {} : { pin: Redacted.make(pin) }),
+            userId: row.userId,
+          });
+        },
+        decryptString: () => Effect.succeed("decrypted"),
+        encryptCredential: () =>
+          Effect.succeed({
+            encryptedEmail: "encrypted-email",
+            encryptedPassword: "encrypted-password",
+            encryptedPin: "encrypted-pin",
+          }),
+        encryptString: (value) => Effect.succeed(value),
+      })
+    );
+
   static readonly Live = Layer.effect(
     CredentialCrypto,
     Effect.gen(function* () {

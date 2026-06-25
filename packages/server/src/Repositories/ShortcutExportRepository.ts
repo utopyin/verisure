@@ -40,6 +40,39 @@ export class ShortcutExportRepository extends Context.Service<
   ShortcutExportRepository,
   ShortcutExportRepositoryShape
 >()("@verisure/server/ShortcutExportRepository") {
+  static readonly InMemory = (exports: ShortcutExportRow[]) =>
+    Layer.succeed(
+      ShortcutExportRepository,
+      ShortcutExportRepository.of({
+        create: (input) => {
+          const row = {
+            apiTokenId: input.apiTokenId,
+            createdAt: input.now,
+            credentialId: input.credentialId,
+            downloadNonceHash: input.downloadNonceHash ?? null,
+            id: input.id,
+            template: input.template,
+            userId: input.userId,
+          } satisfies ShortcutExportRow;
+          exports.push(row);
+          return Effect.succeed(row);
+        },
+        getById: (id) =>
+          Effect.succeed(
+            Option.fromNullishOr(exports.find((row) => row.id === id))
+          ),
+        listForCredential: ({ credentialId, userId }) =>
+          Effect.succeed(
+            exports.filter(
+              (row) =>
+                row.credentialId === credentialId && row.userId === userId
+            )
+          ),
+        listForUser: (userId) =>
+          Effect.succeed(exports.filter((row) => row.userId === userId)),
+      })
+    );
+
   static readonly Default = Layer.effect(
     ShortcutExportRepository,
     Effect.gen(function* () {

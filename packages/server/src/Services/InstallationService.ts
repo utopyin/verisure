@@ -7,12 +7,12 @@ import * as Redacted from "effect/Redacted";
 
 import { CredentialRepository } from "../Repositories/CredentialRepository";
 import type { RepositoryError } from "../Repositories/RepositoryError";
-import { CredentialCrypto } from "../Security/CredentialCrypto";
 import type { CredentialCryptoError } from "../Security/CredentialCrypto";
+import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential } from "../Security/RequestContext";
 import type { VerisureAuthError } from "../Verisure/VerisureAuth";
-import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
 import { ServiceError } from "./ServiceError";
 
 export type InstallationServiceError =
@@ -46,6 +46,34 @@ export class InstallationService extends Context.Service<
   InstallationService,
   InstallationServiceShape
 >()("@verisure/server/InstallationService") {
+  static readonly Test = (
+    options: {
+      readonly credential?: CredentialSummary;
+      readonly installations?: readonly InstallationSummary[];
+    } = {}
+  ) =>
+    Layer.succeed(
+      InstallationService,
+      InstallationService.of({
+        getDefault: CurrentCredential.pipe(
+          Effect.map((credential) => credential.defaultGiid ?? undefined)
+        ),
+        list: CurrentCredential.pipe(Effect.as(options.installations ?? [])),
+        setDefault: (giid) =>
+          CurrentCredential.pipe(
+            Effect.map((credential) => ({
+              alias: credential.alias,
+              connectionStatus: credential.connectionStatus,
+              createdAt: credential.createdAt.toISOString(),
+              ...(giid === null ? {} : { defaultGiid: giid }),
+              email: options.credential?.email ?? "user@example.com",
+              id: credential.id,
+              updatedAt: credential.updatedAt.toISOString(),
+            }))
+          ),
+      })
+    );
+
   static readonly Live = Layer.effect(
     InstallationService,
     Effect.gen(function* () {

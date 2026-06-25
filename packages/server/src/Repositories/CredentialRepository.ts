@@ -1,6 +1,6 @@
 import { Database } from "@verisure/db";
-import { verisureCredential } from "@verisure/db/schema";
 import type { VerisureCredentialRow } from "@verisure/db/schema";
+import { verisureCredential } from "@verisure/db/schema";
 import type { ConnectionStatus } from "@verisure/domain";
 import { decodeVerisureCredentialRow } from "@verisure/interface";
 import { and, eq } from "drizzle-orm";
@@ -83,6 +83,62 @@ export class CredentialRepository extends Context.Service<
   CredentialRepository,
   CredentialRepositoryShape
 >()("@verisure/server/CredentialRepository") {
+  static readonly Test = (options: {
+    readonly credentials: readonly VerisureCredentialRow[];
+    readonly statuses?: {
+      readonly status: ConnectionStatus;
+      readonly message?: string | null;
+    }[];
+  }) =>
+    Layer.succeed(
+      CredentialRepository,
+      CredentialRepository.of({
+        create: () => Effect.die("CredentialRepository.create not expected"),
+        delete: () => Effect.die("CredentialRepository.delete not expected"),
+        getById: (id) =>
+          Effect.succeed(
+            Option.fromNullishOr(
+              options.credentials.find((credential) => credential.id === id)
+            )
+          ),
+        getOwnedById: ({ id, userId }) =>
+          Effect.succeed(
+            Option.fromNullishOr(
+              options.credentials.find(
+                (credential) =>
+                  credential.id === id && credential.userId === userId
+              )
+            )
+          ),
+        listForUser: (userId) =>
+          Effect.succeed(
+            options.credentials.filter(
+              (credential) => credential.userId === userId
+            )
+          ),
+        setConnectionStatus: (input) => {
+          options.statuses?.push({
+            message: input.message,
+            status: input.status,
+          });
+          return Effect.succeed(
+            Option.fromNullishOr(
+              options.credentials.find(
+                (credential) =>
+                  credential.id === input.id &&
+                  credential.userId === input.userId
+              )
+            )
+          );
+        },
+        setDefaultInstallation: () =>
+          Effect.die(
+            "CredentialRepository.setDefaultInstallation not expected"
+          ),
+        update: () => Effect.die("CredentialRepository.update not expected"),
+      })
+    );
+
   static readonly Default = Layer.effect(
     CredentialRepository,
     Effect.gen(function* () {

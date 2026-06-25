@@ -14,42 +14,9 @@
   "format_on_save": "on",
   "formatter": "language_server",
   "lsp": {
-    "effect-tsgo": {
+    "biome": {
       "settings": {
-        "package_version": "0.14.4"
-      }
-    },
-    "typescript-language-server": {
-      "settings": {
-        "typescript": {
-          "preferences": {
-            "includePackageJsonAutoImports": "on"
-          }
-        }
-      }
-    },
-    "oxfmt": {
-      "initialization_options": {
-        "settings": {
-          "configPath": null,
-          "flags": {},
-          "fmt.configPath": null,
-          "fmt.experimental": true,
-          "run": "onSave",
-          "typeAware": false,
-          "unusedDisableDirectives": false
-        }
-      }
-    },
-    "oxlint": {
-      "initialization_options": {
-        "settings": {
-          "disableNestedConfig": false,
-          "fixKind": "safe_fix",
-          "run": "onType",
-          "typeAware": true,
-          "unusedDisableDirectives": "deny"
-        }
+        "require_config_file": true
       }
     }
   },
@@ -58,6 +25,7 @@
       "language_servers": [
         "effect-tsgo",
         "!eslint",
+        "!biome",
         "!tsgo",
         "!vtsls",
         "!typescript-language-server",
@@ -77,6 +45,7 @@
       "language_servers": [
         "effect-tsgo",
         "!eslint",
+        "!biome",
         "!tsgo",
         "!vtsls",
         "!typescript-language-server",
@@ -96,6 +65,7 @@
       "language_servers": [
         "effect-tsgo",
         "!eslint",
+        "!biome",
         "!tsgo",
         "!vtsls",
         "!typescript-language-server",

@@ -64,6 +64,20 @@ export class BetterAuthService extends Context.Service<
   BetterAuthService,
   BetterAuthServiceShape
 >()("@verisure/server/BetterAuthService") {
+  static readonly Test = (
+    options: {
+      readonly session?: Option.Option<AuthSession>;
+    } = {}
+  ) =>
+    Layer.succeed(
+      BetterAuthService,
+      BetterAuthService.of({
+        auth: Effect.die("auth instance not used in tests"),
+        fetch: Effect.die("auth fetch not used in tests"),
+        getSession: () => Effect.succeed(options.session ?? Option.none()),
+      })
+    );
+
   static readonly Live = Layer.effect(
     BetterAuthService,
     Effect.gen(function* () {

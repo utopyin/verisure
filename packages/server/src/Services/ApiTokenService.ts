@@ -78,6 +78,29 @@ export class ApiTokenService extends Context.Service<
   ApiTokenService,
   ApiTokenServiceShape
 >()("@verisure/server/ApiTokenService") {
+  static readonly Test = (
+    options: {
+      readonly tokens?: readonly ApiTokenRecord[];
+    } = {}
+  ) =>
+    Layer.succeed(
+      ApiTokenService,
+      ApiTokenService.of({
+        authenticate: () =>
+          Effect.fail(
+            new ApiTokenError({ message: "authenticate not stubbed" })
+          ),
+        create: () =>
+          Effect.fail(new ApiTokenError({ message: "create not stubbed" })),
+        hashPlaintextToken: () =>
+          Effect.fail(
+            new ApiTokenError({ message: "hashPlaintextToken not stubbed" })
+          ),
+        list: () => Effect.succeed(options.tokens ?? []),
+        revoke: () => Effect.void,
+      })
+    );
+
   static readonly Live = Layer.effect(
     ApiTokenService,
     Effect.gen(function* () {

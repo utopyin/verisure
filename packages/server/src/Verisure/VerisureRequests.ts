@@ -10,8 +10,8 @@ import type {
   VerisureDomainError,
 } from "@verisure/domain";
 import * as Domain from "@verisure/domain";
-import { operation } from "@verisure/graphql-client";
 import type { GraphQLOperation } from "@verisure/graphql-client";
+import { operation } from "@verisure/graphql-client";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,8 +22,8 @@ import * as SchemaGetter from "effect/SchemaGetter";
 
 import type { CurrentCredential } from "../Security/RequestContext";
 import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation";
-import { VerisureAuth } from "./VerisureAuth";
 import type { VerisureAuthError } from "./VerisureAuth";
+import { VerisureAuth } from "./VerisureAuth";
 import { VerisureTransport } from "./VerisureTransport";
 
 export type VerisureRequestsError = VerisureAuthError | VerisureDomainError;
@@ -78,10 +78,66 @@ export interface VerisureRequestsShape {
   >;
 }
 
+export interface VerisureRequestsTestOperation {
+  readonly operationName: string;
+  readonly variables: Record<string, unknown>;
+}
+
 export class VerisureRequests extends Context.Service<
   VerisureRequests,
   VerisureRequestsShape
 >()("@verisure/server/VerisureRequests") {
+  static readonly Test = (
+    input: {
+      readonly responses?: readonly unknown[];
+      readonly installations?: readonly InstallationSummary[];
+      readonly operations?: VerisureRequestsTestOperation[];
+    } = {}
+  ) => {
+    const queue = [...(input.responses ?? [])];
+    const nextResponse = <A>() => Effect.sync(() => queue.shift() as A);
+    const record = (
+      operationName: string,
+      variables: Record<string, unknown>
+    ) => input.operations?.push({ operationName, variables });
+
+    return Layer.succeed(
+      VerisureRequests,
+      VerisureRequests.of({
+        armState: (variables) => {
+          record("armState", variables);
+          return nextResponse();
+        },
+        climate: (variables) => {
+          record("climate", variables);
+          return nextResponse();
+        },
+        doorWindows: (variables) => {
+          record("doorWindows", variables);
+          return nextResponse();
+        },
+        fetchAllInstallations: (variables) => {
+          record("fetchAllInstallations", variables);
+          return input.installations === undefined
+            ? nextResponse()
+            : Effect.succeed(input.installations);
+        },
+        setAlarmMode: (variables) => {
+          record("setAlarmMode", variables);
+          return nextResponse();
+        },
+        smartLocks: (variables) => {
+          record("smartLocks", variables);
+          return nextResponse();
+        },
+        smartPlugs: (variables) => {
+          record("smartPlugs", variables);
+          return nextResponse();
+        },
+      })
+    );
+  };
+
   static readonly layer = Layer.effect(
     VerisureRequests,
     Effect.gen(function* () {

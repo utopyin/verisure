@@ -15,6 +15,7 @@
     "@verisure/domain": "workspace:*",
     "@verisure/rpc-contract": "workspace:*",
     "@verisure/server": "workspace:*",
+    "@verisure/test": "workspace:*",
     "alchemy": "link:alchemy",
     "effect": "catalog:"
   },

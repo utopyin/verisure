@@ -2,8 +2,8 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Option from "effect/Option";
-import type * as Redacted from "effect/Redacted";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -45,6 +45,28 @@ export class RuntimeConfig extends Context.Service<
   RuntimeConfig,
   RuntimeConfigShape
 >()("@verisure/server/RuntimeConfig") {
+  static readonly Test = (
+    options: {
+      readonly appBaseUrl?: string;
+      readonly tokenPepper?: string;
+    } = {}
+  ) =>
+    Layer.succeed(
+      RuntimeConfig,
+      RuntimeConfig.of({
+        appBaseUrl: options.appBaseUrl ?? "https://verisure.utopy.sh",
+        betterAuthSecret: Redacted.make("better-auth-secret"),
+        credentialEncryptionKey: Redacted.make("credential-key"),
+        emailFrom: "test@example.com",
+        tokenPepper:
+          options.tokenPepper === undefined
+            ? Option.none()
+            : Option.some(Redacted.make(options.tokenPepper)),
+        verisureApplicationId: Option.none(),
+        verisureBaseUrls: Option.none(),
+      })
+    );
+
   static readonly Live = Layer.effect(
     RuntimeConfig,
     Effect.gen(function* () {

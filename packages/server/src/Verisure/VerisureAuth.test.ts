@@ -1,48 +1,35 @@
-import { it, describe, expect } from "@effect/vitest";
-import type { VerisureCredentialRow } from "@verisure/db/schema";
+import { describe, expect, it } from "@effect/vitest";
+import type { ConnectionStatus } from "@verisure/domain";
 import {
   AuthenticationError,
+  classifyGraphQLResponse,
   GraphQLError,
   RequestError,
   ResponseError,
-  classifyGraphQLResponse,
 } from "@verisure/domain";
-import type { ConnectionStatus } from "@verisure/domain";
 import { serializeCookieHeader } from "@verisure/shared/cookies";
+import { testCredentialRow } from "@verisure/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { CredentialRepository } from "../Repositories/CredentialRepository";
-import { RepositoryError } from "../Repositories/RepositoryError";
 import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential } from "../Security/RequestContext";
 import { VerisureAuth } from "./VerisureAuth";
 import { VerisureRequests } from "./VerisureRequests";
-import { VerisureSessionStore } from "./VerisureSessionStore";
 import type { SessionSnapshot } from "./VerisureSessionStore";
+import { VerisureSessionStore } from "./VerisureSessionStore";
 import { VerisureTransport } from "./VerisureTransport";
 
 const credential = {
-  alias: "Home",
-  connectedAt: null,
-  connectionStatus: "unchecked",
-  connectionStatusMessage: null,
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  ...testCredentialRow,
+  connectionStatus: "unchecked" as const,
   defaultGiid: null,
-  encryptedEmail: "encrypted-email",
-  encryptedPassword: "encrypted-password",
-  encryptedPin: null,
-  id: "credential-1",
-  lastConnectionAttemptAt: null,
-  mfaRequestedAt: null,
-  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-  userId: "user-1",
-} satisfies VerisureCredentialRow;
+};
 
 describe(VerisureAuth, () => {
   it.effect(
@@ -394,84 +381,44 @@ const makeHarness = (
     })
   );
 
-  const crypto = Layer.succeed(
-    CredentialCrypto,
-    CredentialCrypto.of({
-      decryptCredential: (row) =>
-        Effect.succeed({
-          email: Redacted.make("user@example.com"),
-          id: row.id,
-          password: Redacted.make("secret"),
-          userId: row.userId,
-        }),
-      decryptString: () => Effect.succeed("decrypted"),
-      encryptCredential: () =>
-        Effect.succeed({
-          encryptedEmail: "encrypted-email",
-          encryptedPassword: "encrypted-password",
-          encryptedPin: null,
-        }),
-      encryptString: (value) => Effect.succeed(value),
-    })
-  );
-
-  const notImplemented = Effect.fail(
-    new RepositoryError({ cause: "not implemented" })
-  );
-  const repository = Layer.succeed(
-    CredentialRepository,
-    CredentialRepository.of({
-      create: () => notImplemented,
-      delete: () => notImplemented,
-      getById: () => notImplemented,
-      getOwnedById: () => notImplemented,
-      listForUser: () => notImplemented,
-      setConnectionStatus: (input) => {
-        statuses.push({ message: input.message, status: input.status });
-        return Effect.succeed(Option.some(credential));
-      },
-      setDefaultInstallation: () => notImplemented,
-      update: () => notImplemented,
-    })
-  );
-
   const baseLayer = Layer.mergeAll(
     VerisureSessionStore.InMemory,
     transport,
-    crypto,
-    repository,
+    CredentialCrypto.Test({ pin: undefined }),
+    CredentialRepository.Test({ credentials: [credential], statuses }),
     Layer.succeed(CurrentCredential, credential)
   );
 
   const authLayer = VerisureAuth.Live.pipe(Layer.provideMerge(baseLayer));
 
-  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.provide(effect, authLayer);
+  const provide = <A, E>(
+    effect: Effect.Effect<A, E, Layer.Success<typeof authLayer>>
+  ) => Effect.provide(effect, authLayer);
 
-  const provideRequestsWithSnapshot =
-    (snapshot: SessionSnapshot) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.provide(
-        effect,
-        VerisureRequests.layer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(
-              transport,
-              Layer.succeed(
-                VerisureAuth,
-                VerisureAuth.of({
-                  ensureSession: Effect.succeed(snapshot),
-                  login: Effect.succeed(snapshot),
-                  logout: Effect.void,
-                  requestMfa: Effect.void,
-                  validateMfa: () => Effect.succeed(snapshot),
-                })
-              ),
-              Layer.succeed(CurrentCredential, credential)
-            )
-          )
+  const provideRequestsWithSnapshot = (snapshot: SessionSnapshot) => {
+    const requestsLayer = VerisureRequests.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          transport,
+          Layer.succeed(
+            VerisureAuth,
+            VerisureAuth.of({
+              ensureSession: Effect.succeed(snapshot),
+              login: Effect.succeed(snapshot),
+              logout: Effect.void,
+              requestMfa: Effect.void,
+              validateMfa: () => Effect.succeed(snapshot),
+            })
+          ),
+          Layer.succeed(CurrentCredential, credential)
         )
-      );
+      )
+    );
+
+    return <A, E>(
+      effect: Effect.Effect<A, E, Layer.Success<typeof requestsLayer>>
+    ) => Effect.provide(effect, requestsLayer);
+  };
 
   return { calls, provide, provideRequestsWithSnapshot, statuses };
 };

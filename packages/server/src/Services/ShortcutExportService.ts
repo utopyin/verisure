@@ -8,8 +8,8 @@ import type { RepositoryError } from "../Repositories/RepositoryError";
 import { ShortcutExportRepository } from "../Repositories/ShortcutExportRepository";
 import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 import { CurrentUser } from "../Security/RequestContext";
-import { ApiTokenService, ShortcutAlarmScopes } from "./ApiTokenService";
 import type { ApiTokenError } from "./ApiTokenService";
+import { ApiTokenService, ShortcutAlarmScopes } from "./ApiTokenService";
 
 export interface ShortcutExportCommand {
   readonly credentialId: string;
@@ -46,6 +46,34 @@ export class ShortcutExportService extends Context.Service<
   ShortcutExportService,
   ShortcutExportServiceShape
 >()("@verisure/server/ShortcutExportService") {
+  static readonly Test = (options: {
+    readonly apiToken: ApiTokenRecord;
+    readonly apiUrl?: string;
+    readonly bearerToken?: string;
+    readonly instructions?: readonly string[];
+    readonly shortcutName?: string;
+  }) =>
+    Layer.succeed(
+      ShortcutExportService,
+      ShortcutExportService.of({
+        exportShortcut: (command) =>
+          Effect.succeed({
+            apiToken: options.apiToken,
+            apiUrl: options.apiUrl ?? "https://verisure.utopy.sh/api/v1",
+            bearerToken: options.bearerToken ?? "vs_plaintext",
+            credentialId: command.credentialId,
+            ...(command.giid === undefined ? {} : { giid: command.giid }),
+            instructions: options.instructions ?? ["guided fallback"],
+            shortcutName:
+              options.shortcutName ??
+              (command.template === "toggle-full"
+                ? "Verisure Toggle Full Alarm"
+                : "Verisure Choose Alarm Mode"),
+            template: command.template,
+          }),
+      })
+    );
+
   static readonly Live = Layer.effect(
     ShortcutExportService,
     Effect.gen(function* () {

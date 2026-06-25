@@ -1,8 +1,17 @@
 import type { VerisureCredentialRow } from "@verisure/db/schema";
-import type { CredentialSummary, InstallationSummary } from "@verisure/domain";
+import type { InstallationSummary } from "@verisure/domain";
 import * as RpcContract from "@verisure/rpc-contract";
 import * as Server from "@verisure/server";
-import { RuntimeContext } from "alchemy";
+import {
+  RuntimeContextTestLayer,
+  testApiToken,
+  testAuthSession,
+  testCredentialRow,
+  testCredentialSummary,
+  testInstallation,
+  testUser,
+} from "@verisure/test";
+import type { Scope } from "effect";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -14,64 +23,6 @@ import { describe, expect, test } from "vitest";
 
 import { AuthMiddleware } from "./AuthMiddleware";
 import { HandlersLive, Rpcs } from "./index";
-
-const user = {
-  email: "user@example.com",
-  id: "user-1",
-  name: "User One",
-} satisfies Server.AuthUser;
-
-const authSession = Option.some({
-  expiresAt: new Date("2030-01-01T00:00:00.000Z"),
-  user,
-} satisfies Server.AuthSession);
-
-const credentialRow = {
-  alias: "Home",
-  connectedAt: null,
-  connectionStatus: "connected",
-  connectionStatusMessage: null,
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
-  defaultGiid: "giid-1",
-  encryptedEmail: "encrypted-email",
-  encryptedPassword: "encrypted-password",
-  encryptedPin: null,
-  id: "cred-1",
-  lastConnectionAttemptAt: null,
-  mfaRequestedAt: null,
-  updatedAt: new Date("2026-01-02T00:00:00.000Z"),
-  userId: user.id,
-} satisfies VerisureCredentialRow;
-
-const credentialSummary = {
-  alias: credentialRow.alias,
-  connectionStatus: credentialRow.connectionStatus,
-  createdAt: credentialRow.createdAt.toISOString(),
-  defaultGiid: credentialRow.defaultGiid,
-  email: user.email,
-  id: credentialRow.id,
-  updatedAt: credentialRow.updatedAt.toISOString(),
-} satisfies CredentialSummary;
-
-const installation = {
-  alias: "Home",
-  giid: "giid-1",
-} satisfies InstallationSummary;
-
-const apiToken = {
-  allowedGiids: [installation.giid],
-  createdAt: new Date("2026-01-03T00:00:00.000Z"),
-  credentialId: credentialRow.id,
-  displayPrefix: "vs_abc123…",
-  expiresAt: null,
-  id: "token-1",
-  lastUsedAt: null,
-  revokedAt: null,
-  scopes: [Server.ShortcutAlarmReadScope],
-  tokenHash: "hash",
-  updatedAt: new Date("2026-01-03T00:00:00.000Z"),
-  userId: user.id,
-};
 
 interface TestOptions {
   readonly session?: Option.Option<Server.AuthSession>;
@@ -129,7 +80,7 @@ describe("dashboard RPC handlers", () => {
       Effect.gen(function* () {
         const client = yield* makeClient;
         return yield* client["Alarm.GetArmState"]({
-          credentialId: credentialRow.id,
+          credentialId: testCredentialRow.id,
           giid: "missing-giid",
         }).pipe(Effect.result);
       }),
@@ -152,41 +103,41 @@ describe("dashboard RPC handlers", () => {
         const client = yield* makeClient;
         const credentials = yield* client["Credential.ListCredentials"]();
         const alarmState = yield* client["Alarm.GetArmState"]({
-          credentialId: credentialRow.id,
-          giid: installation.giid,
+          credentialId: testCredentialRow.id,
+          giid: testInstallation.giid,
         });
         const climate = yield* client["Device.ListClimate"]({
-          credentialId: credentialRow.id,
-          giid: installation.giid,
+          credentialId: testCredentialRow.id,
+          giid: testInstallation.giid,
         });
         const shortcut = yield* client["Shortcut.ExportShortcut"]({
-          credentialId: credentialRow.id,
-          giid: installation.giid,
+          credentialId: testCredentialRow.id,
+          giid: testInstallation.giid,
           template: "toggle-full",
         });
         const tokens = yield* client["Shortcut.ListApiTokens"]({
-          credentialId: credentialRow.id,
+          credentialId: testCredentialRow.id,
         });
         return { alarmState, climate, credentials, shortcut, tokens };
       })
     );
 
-    expect(result.credentials).toStrictEqual([credentialSummary]);
+    expect(result.credentials).toStrictEqual([testCredentialSummary]);
     expect(result.alarmState).toMatchObject({
-      name: "cred-1:giid-1",
+      name: `${testCredentialRow.id}:${testInstallation.giid}`,
       type: "DISARMED",
     });
     expect(result.climate).toStrictEqual([]);
     expect(result.shortcut).toMatchObject({
       bearerToken: "vs_plaintext",
-      credentialId: credentialRow.id,
+      credentialId: testCredentialRow.id,
       template: "toggle-full",
     });
     expect(result.tokens).toStrictEqual([
       {
-        allowedGiids: [installation.giid],
+        allowedGiids: [testInstallation.giid],
         createdAt: "2026-01-03T00:00:00.000Z",
-        credentialId: credentialRow.id,
+        credentialId: testCredentialRow.id,
         displayPrefix: "vs_abc123…",
         id: "token-1",
         scopes: [Server.ShortcutAlarmReadScope],
@@ -195,15 +146,16 @@ describe("dashboard RPC handlers", () => {
   });
 });
 
-const runRpc = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
+const runRpc = <A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    Layer.Success<ReturnType<typeof testLayer>> | Scope.Scope
+  >,
   options: TestOptions = {}
 ) =>
   Effect.runPromise(
-    effect.pipe(
-      Effect.provide(testLayer(options)),
-      Effect.scoped
-    ) as Effect.Effect<A, E, never>
+    effect.pipe(Effect.provide(testLayer(options)), Effect.scoped)
   );
 
 const makeClient = RpcTest.makeClient(Rpcs);
@@ -216,21 +168,32 @@ const testLayer = (options: TestOptions) =>
 
 const testServices = (options: TestOptions) =>
   Layer.mergeAll(
-    Layer.succeed(RuntimeContext, {
-      Type: "TestRuntime",
-      env: {},
-      get: <T>() => Effect.succeed(undefined as T | undefined),
-      id: "test-runtime",
-      set: (id) => Effect.succeed(id),
+    RuntimeContextTestLayer,
+    Server.BetterAuthService.Test({
+      session: options.session ?? Option.some(testAuthSession),
     }),
-    Layer.succeed(
-      Server.BetterAuthService,
-      Server.BetterAuthService.of({
-        auth: Effect.die("auth instance not used in RPC tests"),
-        fetch: Effect.die("auth fetch not used in RPC tests"),
-        getSession: () => Effect.succeed(options.session ?? authSession),
-      })
-    ),
+    Server.CredentialService.Test({
+      credential: testCredentialSummary,
+      installations: [testInstallation],
+    }),
+    Server.InstallationService.Test({
+      credential: testCredentialSummary,
+      installations: [testInstallation],
+    }),
+    Server.AlarmService.Test({
+      armState: {
+        name: `${testCredentialRow.id}:${testInstallation.giid}`,
+        type: "DISARMED",
+      },
+    }),
+    Server.DeviceService.Test(),
+    Server.ApiTokenService.Test({ tokens: [testApiToken] }),
+    Server.ShortcutExportService.Test({ apiToken: testApiToken }),
+    scopeMiddlewareDependencies(options)
+  );
+
+const scopeMiddlewareDependencies = (options: TestOptions) =>
+  Layer.mergeAll(
     Layer.succeed(
       Server.CredentialRepository,
       Server.CredentialRepository.of({
@@ -238,7 +201,9 @@ const testServices = (options: TestOptions) =>
         delete: () => Effect.die("CredentialRepository.delete not expected"),
         getById: () => Effect.die("CredentialRepository.getById not expected"),
         getOwnedById: () =>
-          Effect.succeed(options.ownedCredential ?? Option.some(credentialRow)),
+          Effect.succeed(
+            options.ownedCredential ?? Option.some(testCredentialRow)
+          ),
         listForUser: () =>
           Effect.die("CredentialRepository.listForUser not expected"),
         setConnectionStatus: () =>
@@ -255,12 +220,12 @@ const testServices = (options: TestOptions) =>
       Server.CredentialCrypto.of({
         decryptCredential: (row) =>
           Effect.succeed({
-            email: Redacted.make(user.email),
+            email: Redacted.make(testUser.email),
             id: row.id,
             password: Redacted.make("password"),
             userId: row.userId,
           }),
-        decryptString: () => Effect.succeed(user.email),
+        decryptString: () => Effect.succeed(testUser.email),
         encryptCredential: () =>
           Effect.succeed({
             encryptedEmail: "encrypted-email",
@@ -278,116 +243,13 @@ const testServices = (options: TestOptions) =>
         doorWindows: () =>
           Effect.die("VerisureRequests.doorWindows not expected"),
         fetchAllInstallations: () =>
-          Effect.succeed(options.installations ?? [installation]),
+          Effect.succeed(options.installations ?? [testInstallation]),
         setAlarmMode: () =>
           Effect.die("VerisureRequests.setAlarmMode not expected"),
         smartLocks: () =>
           Effect.die("VerisureRequests.smartLocks not expected"),
         smartPlugs: () =>
           Effect.die("VerisureRequests.smartPlugs not expected"),
-      })
-    ),
-    Layer.succeed(
-      Server.CredentialService,
-      Server.CredentialService.of({
-        checkConnection: Effect.succeed([installation]),
-        create: () => Effect.succeed(credentialSummary),
-        delete: Server.CurrentCredential.pipe(Effect.asVoid),
-        list: Server.CurrentUser.pipe(Effect.as([credentialSummary])),
-        logout: Effect.void,
-        requestMfa: Server.CurrentCredential.pipe(
-          Effect.map((credential) => ({
-            credentialId: credential.id,
-            status: "mfa_requested" as const,
-          }))
-        ),
-        validateMfa: () =>
-          Effect.succeed({
-            credential: credentialSummary,
-            installations: [installation],
-          }),
-      })
-    ),
-    Layer.succeed(
-      Server.InstallationService,
-      Server.InstallationService.of({
-        getDefault: Server.CurrentCredential.pipe(
-          Effect.map((credential) => credential.defaultGiid ?? undefined)
-        ),
-        list: Server.CurrentCredential.pipe(Effect.as([installation])),
-        setDefault: (giid) =>
-          Server.CurrentCredential.pipe(
-            Effect.as({
-              ...credentialSummary,
-              ...(giid === null ? {} : { defaultGiid: giid }),
-            })
-          ),
-      })
-    ),
-    Layer.succeed(
-      Server.AlarmService,
-      Server.AlarmService.of({
-        getArmState: Effect.gen(function* () {
-          const credential = yield* Server.CurrentCredential;
-          const currentInstallation = yield* Server.CurrentInstallation;
-          return {
-            name: `${credential.id}:${currentInstallation.giid}`,
-            type: "DISARMED",
-          };
-        }),
-        setMode: (input) =>
-          Server.CurrentInstallation.pipe(
-            Effect.map((currentInstallation) => ({
-              accepted: true,
-              giid: currentInstallation.giid,
-              requestedMode: input.mode,
-            }))
-          ),
-        toggleFull: () =>
-          Server.CurrentInstallation.pipe(
-            Effect.map((currentInstallation) => ({
-              accepted: true,
-              giid: currentInstallation.giid,
-              requestedMode: "ARMED_AWAY" as const,
-            }))
-          ),
-      })
-    ),
-    Layer.succeed(
-      Server.DeviceService,
-      Server.DeviceService.of({
-        listClimate: Server.CurrentInstallation.pipe(Effect.as([])),
-        listDoorWindows: Server.CurrentInstallation.pipe(Effect.as([])),
-        listSmartLocks: Server.CurrentInstallation.pipe(Effect.as([])),
-        listSmartPlugs: Server.CurrentInstallation.pipe(Effect.as([])),
-      })
-    ),
-    Layer.succeed(
-      Server.ApiTokenService,
-      Server.ApiTokenService.of({
-        authenticate: () =>
-          Effect.die("ApiTokenService.authenticate not expected"),
-        create: () => Effect.die("ApiTokenService.create not expected"),
-        hashPlaintextToken: () =>
-          Effect.die("ApiTokenService.hashPlaintextToken not expected"),
-        list: () => Effect.succeed([apiToken]),
-        revoke: () => Effect.void,
-      })
-    ),
-    Layer.succeed(
-      Server.ShortcutExportService,
-      Server.ShortcutExportService.of({
-        exportShortcut: (payload) =>
-          Effect.succeed({
-            apiToken,
-            apiUrl: "https://verisure.utopy.sh/api/v1",
-            bearerToken: "vs_plaintext",
-            credentialId: payload.credentialId,
-            giid: payload.giid,
-            instructions: ["guided fallback"],
-            shortcutName: "Verisure Toggle Full Alarm",
-            template: payload.template,
-          }),
       })
     )
   );

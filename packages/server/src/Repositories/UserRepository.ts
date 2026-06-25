@@ -18,6 +18,17 @@ export class UserRepository extends Context.Service<
   UserRepository,
   UserRepositoryShape
 >()("@verisure/server/UserRepository") {
+  static readonly Test = (users: readonly UserRow[]) =>
+    Layer.succeed(
+      UserRepository,
+      UserRepository.of({
+        getById: (id) =>
+          Effect.succeed(
+            Option.fromNullishOr(users.find((user) => user.id === id))
+          ),
+      })
+    );
+
   static readonly Default = Layer.effect(
     UserRepository,
     Effect.gen(function* () {

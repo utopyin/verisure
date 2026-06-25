@@ -10,8 +10,8 @@ import * as Layer from "effect/Layer";
 
 import type { CurrentCredential } from "../Security/RequestContext";
 import { CurrentInstallation } from "../Security/RequestContext";
-import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
+import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { ServiceError } from "./ServiceError";
 
 export type DeviceServiceError = ServiceError | VerisureRequestsError;
@@ -43,6 +43,30 @@ export class DeviceService extends Context.Service<
   DeviceService,
   DeviceServiceShape
 >()("@verisure/server/DeviceService") {
+  static readonly Test = (
+    options: {
+      readonly climate?: readonly ClimateSensorStatus[];
+      readonly doorWindows?: readonly DoorWindowSensorStatus[];
+      readonly smartLocks?: readonly SmartLockStatus[];
+      readonly smartPlugs?: readonly SmartPlugStatus[];
+    } = {}
+  ) =>
+    Layer.succeed(
+      DeviceService,
+      DeviceService.of({
+        listClimate: CurrentInstallation.pipe(Effect.as(options.climate ?? [])),
+        listDoorWindows: CurrentInstallation.pipe(
+          Effect.as(options.doorWindows ?? [])
+        ),
+        listSmartLocks: CurrentInstallation.pipe(
+          Effect.as(options.smartLocks ?? [])
+        ),
+        listSmartPlugs: CurrentInstallation.pipe(
+          Effect.as(options.smartPlugs ?? [])
+        ),
+      })
+    );
+
   static readonly Live = Layer.effect(
     DeviceService,
     Effect.gen(function* () {

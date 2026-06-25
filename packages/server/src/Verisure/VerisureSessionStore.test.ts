@@ -1,30 +1,21 @@
-import { it, describe, expect } from "@effect/vitest";
-import type { VerisureCredentialRow } from "@verisure/db/schema";
+import { describe, expect, it } from "@effect/vitest";
+import { testCredentialRow } from "@verisure/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import { CurrentCredential } from "../Security/RequestContext";
-import { VerisureSessionStore } from "./VerisureSessionStore";
 import type { SessionMfaState, SessionSnapshot } from "./VerisureSessionStore";
+import { VerisureSessionStore } from "./VerisureSessionStore";
 
 const credential = {
-  alias: "Home",
-  connectedAt: null,
-  connectionStatus: "unchecked",
-  connectionStatusMessage: null,
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  ...testCredentialRow,
+  connectionStatus: "unchecked" as const,
   defaultGiid: null,
   encryptedEmail: "email",
   encryptedPassword: "password",
-  encryptedPin: null,
-  id: "credential-1",
-  lastConnectionAttemptAt: null,
-  mfaRequestedAt: null,
-  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-  userId: "user-1",
-} satisfies VerisureCredentialRow;
+};
 
 const snapshot = {
   authenticatedAt: 1000,
@@ -100,11 +91,11 @@ describe(VerisureSessionStore, () => {
   );
 });
 
-const provideStore = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provide(
-    effect,
-    Layer.mergeAll(
-      VerisureSessionStore.InMemory,
-      Layer.succeed(CurrentCredential, credential)
-    )
-  );
+const storeLayer = Layer.mergeAll(
+  VerisureSessionStore.InMemory,
+  Layer.succeed(CurrentCredential, credential)
+);
+
+const provideStore = <A, E>(
+  effect: Effect.Effect<A, E, Layer.Success<typeof storeLayer>>
+) => Effect.provide(effect, storeLayer);

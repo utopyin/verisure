@@ -28,6 +28,7 @@
         "@verisure/domain": "workspace:*",
         "@verisure/rpc-contract": "workspace:*",
         "@verisure/server": "workspace:*",
+        "@verisure/test": "workspace:*",
         "alchemy": "link:alchemy",
         "effect": "catalog:",
       },
@@ -103,6 +104,7 @@
       "devDependencies": {
         "@effect/platform-browser": "catalog:",
         "@effect/vitest": "catalog:",
+        "@verisure/test": "workspace:*",
         "vitest": "catalog:",
       },
     },
@@ -110,6 +112,16 @@
       "name": "@verisure/shared",
       "devDependencies": {
         "@effect/vitest": "catalog:",
+      },
+    },
+    "packages/test": {
+      "name": "@verisure/test",
+      "dependencies": {
+        "@verisure/db": "workspace:*",
+        "@verisure/domain": "workspace:*",
+        "@verisure/interface": "workspace:*",
+        "alchemy": "link:alchemy",
+        "effect": "catalog:",
       },
     },
   },
@@ -419,6 +431,8 @@
     "@verisure/server": ["@verisure/server@workspace:packages/server"],
 
     "@verisure/shared": ["@verisure/shared@workspace:packages/shared"],
+
+    "@verisure/test": ["@verisure/test@workspace:packages/test"],
 
     "@verisure/web": ["@verisure/web@workspace:apps/web"],
 
