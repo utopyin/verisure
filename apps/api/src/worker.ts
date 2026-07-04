@@ -10,6 +10,7 @@ import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import { ApiMounts } from "./Http/App";
+import { ShortcutRestHttp } from "./Http/RestApi";
 import { DashboardRpcHttp } from "./Http/RpcMount";
 import { VerisureSessionObjectLive } from "./SessionObject";
 import { VerisureSessionStoreLive } from "./SessionStoreLive";
@@ -48,6 +49,7 @@ export default Cloudflare.Worker(
   Effect.gen(function* () {
     const auth = yield* Server.BetterAuthService;
     const dashboardRpcHttp = yield* DashboardRpcHttp;
+    const shortcutRestHttp = yield* ShortcutRestHttp;
 
     return {
       fetch: Effect.gen(function* () {
@@ -87,7 +89,7 @@ export default Cloudflare.Worker(
         }
 
         if (pathname.startsWith("/api/v1/")) {
-          return yield* routePlaceholder("shortcut-rest");
+          return yield* shortcutRestHttp;
         }
 
         return yield* HttpServerResponse.json(
@@ -98,9 +100,3 @@ export default Cloudflare.Worker(
     };
   }).pipe(Effect.provide(ApiWorkerLayer))
 );
-
-const routePlaceholder = (name: string) =>
-  HttpServerResponse.json(
-    { route: name, status: "not-implemented" },
-    { status: 501 }
-  );
