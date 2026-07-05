@@ -2,7 +2,6 @@ import * as Domain from "@verisure/domain";
 import * as RpcContract from "@verisure/rpc-contract";
 import * as Server from "@verisure/server";
 import { PlatformError } from "effect/PlatformError";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export type VerisureSafeUpstreamError =
   | Domain.AuthenticationError
@@ -25,18 +24,6 @@ export type ApplicationError =
   | Server.ServiceError
   | Server.VerisureSessionStoreError
   | VerisureSafeUpstreamError;
-
-export interface RestErrorBody {
-  readonly error: {
-    readonly code: string;
-    readonly message: string;
-  };
-}
-
-export interface SafeHttpError {
-  readonly status: number;
-  readonly body: RestErrorBody;
-}
 
 export const toDashboardRpcError = (
   error: ApplicationError
@@ -99,82 +86,6 @@ export const toDashboardRpcError = (
 
   return absurd(error);
 };
-
-export const toSafeHttpError = (
-  error: RpcContract.DashboardRpcError
-): SafeHttpError => {
-  switch (error._tag) {
-    case "Unauthorized": {
-      return restError(401, "unauthorized", error.message);
-    }
-    case "Forbidden": {
-      return restError(403, "forbidden", error.message);
-    }
-    case "CredentialNotFound": {
-      return restError(404, "credential_not_found", error.message);
-    }
-    case "InstallationNotFound": {
-      return restError(404, "installation_not_found", error.message);
-    }
-    case "InvalidInput": {
-      return restError(400, "invalid_input", error.message);
-    }
-    case "VerisureUpstreamError": {
-      let kind = 502;
-      if (
-        error.kind === "AuthenticationError" ||
-        error.kind === "CredentialsRejected"
-      ) {
-        kind = 401;
-      }
-      if (error.kind === "MFARequired") {
-        kind = 409;
-      }
-      if (error.kind === "RateLimitError") {
-        kind = 429;
-      }
-      if (
-        error.statusCode !== undefined &&
-        error.statusCode >= 400 &&
-        error.statusCode < 600
-      ) {
-        kind = error.statusCode;
-      }
-
-      return restError(
-        kind,
-        error.kind.replaceAll(/[A-Z]/gu, (letter, index) =>
-          index === 0 ? letter.toLowerCase() : `_${letter.toLowerCase()}`
-        ),
-        error.message
-      );
-    }
-    default: {
-      return absurd(error);
-    }
-  }
-};
-
-export const toHttpServerResponse = (error: RpcContract.DashboardRpcError) => {
-  const mapped = toSafeHttpError(error);
-  return HttpServerResponse.json(mapped.body, { status: mapped.status });
-};
-
-export const applicationErrorToHttpServerResponse = (error: ApplicationError) =>
-  toHttpServerResponse(toDashboardRpcError(error));
-
-export const unauthorized = (
-  message = "Unauthorized"
-): RpcContract.DashboardRpcError => new RpcContract.Unauthorized({ message });
-
-const restError = (
-  status: number,
-  code: string,
-  message: string
-): SafeHttpError => ({
-  body: { error: { code, message } },
-  status,
-});
 
 const isVerisureUpstreamError = (
   error: ApplicationError

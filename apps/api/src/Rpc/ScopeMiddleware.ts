@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
 
-import { toDashboardRpcError } from "../Http/ErrorMapper";
+import { toDashboardRpcError } from "./ErrorMapper";
 
 export class CredentialScopeMiddleware extends RpcMiddleware.Service<
   CredentialScopeMiddleware,

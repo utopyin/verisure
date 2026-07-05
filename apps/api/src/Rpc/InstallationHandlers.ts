@@ -2,8 +2,8 @@ import * as RpcContract from "@verisure/rpc-contract";
 import * as Server from "@verisure/server";
 import * as Effect from "effect/Effect";
 
-import { toDashboardRpcError } from "../Http/ErrorMapper";
 import { AuthMiddleware } from "./AuthMiddleware";
+import { toDashboardRpcError } from "./ErrorMapper";
 import { CredentialScopeMiddleware } from "./ScopeMiddleware";
 
 export const Rpcs = RpcContract.InstallationRpcs.middleware(

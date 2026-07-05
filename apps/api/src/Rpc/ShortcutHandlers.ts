@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 
-import { toDashboardRpcError } from "../Http/ErrorMapper";
 import { AuthMiddleware } from "./AuthMiddleware";
+import { toDashboardRpcError } from "./ErrorMapper";
 
 export const Rpcs = RpcContract.ShortcutRpcs.middleware(AuthMiddleware);
 

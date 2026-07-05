@@ -1,9 +1,9 @@
 import * as Domain from "@verisure/domain";
 import { describe, expect, test } from "vitest";
 
-import { toDashboardRpcError, toSafeHttpError } from "./ErrorMapper";
+import { toDashboardRpcError } from "./ErrorMapper";
 
-describe("safe error mapping", () => {
+describe("dashboard RPC error mapping", () => {
   test("redacts sensitive upstream details from API-facing errors", () => {
     const responseError = toDashboardRpcError(
       new Domain.ResponseError({
@@ -25,22 +25,23 @@ describe("safe error mapping", () => {
     });
     expect(JSON.stringify(responseError)).not.toContain("session-cookie");
 
-    expect(toSafeHttpError(requestError)).toStrictEqual({
-      body: {
-        error: { code: "request_error", message: "Failed to reach Verisure" },
-      },
-      status: 502,
+    expect(requestError).toMatchObject({
+      _tag: "VerisureUpstreamError",
+      kind: "RequestError",
+      message: "Failed to reach Verisure",
     });
   });
 
-  test("derives REST status and stable error codes from RPC errors", () => {
+  test("preserves safe upstream status metadata on RPC errors", () => {
     const rpcError = toDashboardRpcError(
       new Domain.RateLimitError({ message: "too many", statusCode: 429 })
     );
 
-    expect(toSafeHttpError(rpcError)).toStrictEqual({
-      body: { error: { code: "rate_limit_error", message: "too many" } },
-      status: 429,
+    expect(rpcError).toMatchObject({
+      _tag: "VerisureUpstreamError",
+      kind: "RateLimitError",
+      message: "too many",
+      statusCode: 429,
     });
   });
 });
