@@ -16,7 +16,7 @@
     "@verisure/rpc-contract": "workspace:*",
     "@verisure/server": "workspace:*",
     "@verisure/test": "workspace:*",
-    "alchemy": "link:alchemy",
+    "alchemy": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {

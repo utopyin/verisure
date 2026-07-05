@@ -15,7 +15,7 @@ const DrizzleSchema = Drizzle.Schema("AppSchema", {
 export const D1Database = Effect.gen(function* () {
   const schema = yield* DrizzleSchema;
 
-  return yield* Cloudflare.D1Database("AppDb", {
+  return yield* Cloudflare.D1.Database("AppDb", {
     migrationsDir: schema.out,
     migrationsTable: "drizzle_migrations",
   });
@@ -24,7 +24,7 @@ export const D1Database = Effect.gen(function* () {
 const D1SqlClientLive = Layer.unwrap(
   Effect.gen(function* () {
     const database = yield* D1Database;
-    const connect = yield* Cloudflare.D1Connection;
+    const connect = yield* Cloudflare.D1.QueryDatabase;
     const connection = yield* connect(database);
     const db = yield* connection.raw;
 

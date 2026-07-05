@@ -12,7 +12,7 @@
     "@verisure/db": "workspace:*",
     "@verisure/domain": "workspace:*",
     "@verisure/interface": "workspace:*",
-    "alchemy": "link:alchemy",
+    "alchemy": "catalog:",
     "effect": "catalog:"
   }
 }

@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@verisure/rpc-contract": "workspace:*",
-    "alchemy": "link:alchemy",
+    "alchemy": "catalog:",
     "effect": "catalog:",
     "vite": "catalog:"
   }

@@ -24,7 +24,7 @@ export default Alchemy.Stack(
     const apiRouteId = context.dev
       ? undefined
       : yield* Effect.gen(function* () {
-          const zone = yield* Cloudflare.Zone("UtopyZone", {
+          const zone = yield* Cloudflare.Zone.Zone("UtopyZone", {
             name: "utopy.sh",
           }).pipe(adopt(true));
           const apiRoute = yield* Workers.WorkerRoute("ApiRoute", {

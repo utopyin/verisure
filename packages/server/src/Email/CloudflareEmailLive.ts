@@ -6,14 +6,14 @@ import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 import { EmailError, EmailService } from "./EmailService";
 import type { EmailServiceShape } from "./EmailService";
 
-export const Email = Cloudflare.SendEmail("Email");
+export const Email = Cloudflare.Email.SendEmail("Email");
 
 export const CloudflareEmailNoDeps = Layer.effect(
   EmailService,
   Effect.gen(function* () {
     const config = yield* RuntimeConfig;
     const sender = yield* Email;
-    const client = yield* Cloudflare.SendEmail.bind(sender);
+    const client = yield* Cloudflare.Email.Send(sender);
 
     const send: EmailServiceShape["send"] = Effect.fn("EmailService.send")(
       (input) =>
@@ -42,5 +42,5 @@ export const CloudflareEmailNoDeps = Layer.effect(
 );
 
 export const CloudflareEmailLive = CloudflareEmailNoDeps.pipe(
-  Layer.provide(Cloudflare.SendEmailBindingLive)
+  Layer.provide(Cloudflare.Email.SendBinding)
 );

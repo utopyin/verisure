@@ -2,6 +2,7 @@ import type {
   SessionMfaState,
   SessionSnapshot,
 } from "@verisure/server/Verisure";
+import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
@@ -16,18 +17,35 @@ interface AcquireLockInput {
   readonly now: number;
 }
 
+// These methods are RuntimeContext-colored because each implementation uses DurableObjectState.storage
 interface VerisureSessionObjectApi {
-  readonly getSnapshot: () => Effect.Effect<SessionSnapshot | null>;
-  readonly putSnapshot: (snapshot: SessionSnapshot) => Effect.Effect<void>;
-  readonly clearSnapshot: () => Effect.Effect<void>;
-  readonly getMfaState: () => Effect.Effect<SessionMfaState | null>;
-  readonly putMfaState: (mfa: SessionMfaState) => Effect.Effect<void>;
-  readonly clearMfaState: () => Effect.Effect<void>;
-  readonly acquireLock: (input: AcquireLockInput) => Effect.Effect<boolean>;
-  readonly releaseLock: (ownerId: string) => Effect.Effect<boolean>;
+  readonly getSnapshot: () => Effect.Effect<
+    SessionSnapshot | null,
+    never,
+    RuntimeContext
+  >;
+  readonly putSnapshot: (
+    snapshot: SessionSnapshot
+  ) => Effect.Effect<void, never, RuntimeContext>;
+  readonly clearSnapshot: () => Effect.Effect<void, never, RuntimeContext>;
+  readonly getMfaState: () => Effect.Effect<
+    SessionMfaState | null,
+    never,
+    RuntimeContext
+  >;
+  readonly putMfaState: (
+    mfa: SessionMfaState
+  ) => Effect.Effect<void, never, RuntimeContext>;
+  readonly clearMfaState: () => Effect.Effect<void, never, RuntimeContext>;
+  readonly acquireLock: (
+    input: AcquireLockInput
+  ) => Effect.Effect<boolean, never, RuntimeContext>;
+  readonly releaseLock: (
+    ownerId: string
+  ) => Effect.Effect<boolean, never, RuntimeContext>;
 }
 
-export class VerisureSessionObject extends Cloudflare.DurableObjectNamespace<
+export class VerisureSessionObject extends Cloudflare.DurableObject<
   VerisureSessionObject,
   VerisureSessionObjectApi
 >()("VerisureSessionObject") {}

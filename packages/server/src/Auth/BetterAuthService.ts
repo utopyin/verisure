@@ -86,7 +86,7 @@ export class BetterAuthService extends Context.Service<
       const config = yield* RuntimeConfig;
       const email = yield* EmailService;
       const database = yield* D1Database;
-      const connection = yield* Cloudflare.D1Connection.bind(database);
+      const connection = yield* Cloudflare.D1.QueryDatabase(database);
 
       const getBetterAuth = yield* Effect.gen(function* () {
         const d1 = yield* connection.raw;

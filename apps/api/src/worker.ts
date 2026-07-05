@@ -10,7 +10,7 @@ export default Cloudflare.Worker(
   "ApiWorker",
   {
     compatibility: { flags: ["nodejs_compat"] },
-    main: import.meta.filename,
+    main: import.meta.url,
     name: ApiWorkerName,
     observability: {
       enabled: true,

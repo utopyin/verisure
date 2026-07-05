@@ -17,7 +17,7 @@
     "@verisure/graphql-client": "workspace:*",
     "@verisure/interface": "workspace:*",
     "@verisure/shared": "workspace:*",
-    "alchemy": "link:alchemy",
+    "alchemy": "catalog:",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"

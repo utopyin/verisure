@@ -6,9 +6,9 @@ import * as Layer from "effect/Layer";
 import { VerisureSessionObjectLive } from "../SessionObject";
 
 export const InfrastructureLayer = Layer.mergeAll(
-  Cloudflare.KVNamespaceBindingLive,
-  Cloudflare.RateLimitBindingLive,
-  Cloudflare.D1ConnectionLive,
+  Cloudflare.KV.ReadWriteNamespaceBinding,
+  Cloudflare.Workers.RateLimitBinding,
+  Cloudflare.D1.QueryDatabaseBinding,
   VerisureSessionObjectLive,
   Server.RuntimeConfig.Live,
   BrowserCryptoLayer

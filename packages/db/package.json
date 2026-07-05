@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@effect/sql-d1": "catalog:",
-    "alchemy": "link:alchemy",
+    "alchemy": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"
   }
