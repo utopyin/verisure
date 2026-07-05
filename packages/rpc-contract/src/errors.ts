@@ -31,17 +31,10 @@ export class InvalidInput extends Schema.ErrorClass<InvalidInput>(
   message: Schema.String,
 }) {}
 
-export class DeviceReadUnavailable extends Schema.ErrorClass<DeviceReadUnavailable>(
-  "DeviceReadUnavailable"
+export class ServiceUnavailable extends Schema.ErrorClass<ServiceUnavailable>(
+  "ServiceUnavailable"
 )({
-  _tag: Schema.tag("DeviceReadUnavailable"),
-  message: Schema.String,
-}) {}
-
-export class AlarmUnavailable extends Schema.ErrorClass<AlarmUnavailable>(
-  "AlarmUnavailable"
-)({
-  _tag: Schema.tag("AlarmUnavailable"),
+  _tag: Schema.tag("ServiceUnavailable"),
   message: Schema.String,
 }) {}
 
@@ -52,27 +45,6 @@ export class AlarmCodeRequired extends Schema.ErrorClass<AlarmCodeRequired>(
   message: Schema.String,
 }) {}
 
-export class CredentialUnavailable extends Schema.ErrorClass<CredentialUnavailable>(
-  "CredentialUnavailable"
-)({
-  _tag: Schema.tag("CredentialUnavailable"),
-  message: Schema.String,
-}) {}
-
-export class InstallationUnavailable extends Schema.ErrorClass<InstallationUnavailable>(
-  "InstallationUnavailable"
-)({
-  _tag: Schema.tag("InstallationUnavailable"),
-  message: Schema.String,
-}) {}
-
-export class ShortcutUnavailable extends Schema.ErrorClass<ShortcutUnavailable>(
-  "ShortcutUnavailable"
-)({
-  _tag: Schema.tag("ShortcutUnavailable"),
-  message: Schema.String,
-}) {}
-
 export class ApiTokenNotFound extends Schema.ErrorClass<ApiTokenNotFound>(
   "ApiTokenNotFound"
 )({
@@ -80,9 +52,12 @@ export class ApiTokenNotFound extends Schema.ErrorClass<ApiTokenNotFound>(
   message: Schema.String,
 }) {}
 
-export const ScopedRpcError = Schema.Union([
-  Unauthorized,
+export const CredentialScopeError = Schema.Union([
   CredentialNotFound,
+  InvalidInput,
+]);
+
+export const InstallationScopeError = Schema.Union([
   InstallationNotFound,
   InvalidInput,
 ]);

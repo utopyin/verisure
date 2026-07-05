@@ -30,7 +30,7 @@ export const credentialHandlers = Effect.gen(function* () {
         .pipe(
           Effect.catchTag("ServiceUnavailable", (error) =>
             Effect.fail(
-              new RpcContract.CredentialUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             )
           )
         ),
@@ -38,7 +38,7 @@ export const credentialHandlers = Effect.gen(function* () {
       credential.delete.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.CredentialUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -46,7 +46,7 @@ export const credentialHandlers = Effect.gen(function* () {
       credential.list.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.CredentialUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -54,7 +54,7 @@ export const credentialHandlers = Effect.gen(function* () {
       credential.requestMfa.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.CredentialUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -64,7 +64,7 @@ export const credentialHandlers = Effect.gen(function* () {
         .pipe(
           Effect.catchTag("ServiceUnavailable", (error) =>
             Effect.fail(
-              new RpcContract.CredentialUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             )
           )
         ),

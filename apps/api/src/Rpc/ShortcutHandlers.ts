@@ -24,38 +24,24 @@ export const shortcutHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.ShortcutUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         }),
         Effect.flatMap((payload) =>
-          decodeShortcutExportPayload(payload).pipe(
-            Effect.mapError(
-              () =>
-                new RpcContract.ShortcutUnavailable({
-                  message: "Invalid shortcut export",
-                })
-            )
-          )
+          decodeShortcutExportPayload(payload).pipe(Effect.orDie)
         )
       ),
     "Shortcut.ListApiTokens": (payload) =>
       tokens.list(payload).pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.ShortcutUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         ),
         Effect.flatMap((tokens) =>
           decodeShortcutApiTokenSummaries(
             tokens.map(toShortcutApiTokenSummary)
-          ).pipe(
-            Effect.mapError(
-              () =>
-                new RpcContract.ShortcutUnavailable({
-                  message: "Invalid API token list",
-                })
-            )
-          )
+          ).pipe(Effect.orDie)
         )
       ),
     "Shortcut.RevokeApiToken": (payload) =>
@@ -67,7 +53,7 @@ export const shortcutHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.ShortcutUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),

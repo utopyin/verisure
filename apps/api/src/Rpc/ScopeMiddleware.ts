@@ -13,7 +13,7 @@ export class CredentialScopeMiddleware extends RpcMiddleware.Service<
     readonly requires: Server.CurrentUser;
   }
 >()("@verisure/api/CredentialScopeMiddleware", {
-  error: RpcContract.ScopedRpcError,
+  error: RpcContract.CredentialScopeError,
 }) {}
 
 export class InstallationScopeMiddleware extends RpcMiddleware.Service<
@@ -23,7 +23,7 @@ export class InstallationScopeMiddleware extends RpcMiddleware.Service<
     readonly requires: Server.CurrentCredential;
   }
 >()("@verisure/api/InstallationScopeMiddleware", {
-  error: RpcContract.ScopedRpcError,
+  error: RpcContract.InstallationScopeError,
 }) {}
 
 export const CredentialScopeMiddlewareLive = Layer.effect(
@@ -55,12 +55,7 @@ export const CredentialScopeMiddlewareLive = Layer.effect(
           return credential.value;
         }).pipe(
           Effect.catchTags({
-            RepositoryError: () =>
-              Effect.fail(
-                new RpcContract.InvalidInput({
-                  message: "Unable to load credential scope",
-                })
-              ),
+            RepositoryError: (error) => Effect.die(error),
             ScopeError: (error) =>
               Effect.fail(
                 new RpcContract.CredentialNotFound({
@@ -119,15 +114,10 @@ export const InstallationScopeMiddlewareLive = Layer.effect(
               })
             )
           ),
-          Effect.mapError((error) =>
+          Effect.catch((error) =>
             error instanceof RpcContract.InstallationNotFound
-              ? error
-              : new RpcContract.InvalidInput({
-                  message:
-                    error._tag === "CredentialCryptoError"
-                      ? "Credential material is invalid"
-                      : "Unable to load installation scope",
-                })
+              ? Effect.fail(error)
+              : Effect.die(error)
           )
         );
 

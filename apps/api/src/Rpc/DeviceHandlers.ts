@@ -22,7 +22,7 @@ export const deviceHandlers = Effect.gen(function* () {
       device.listClimate.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.DeviceReadUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -30,7 +30,7 @@ export const deviceHandlers = Effect.gen(function* () {
       device.listDoorWindows.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.DeviceReadUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -38,7 +38,7 @@ export const deviceHandlers = Effect.gen(function* () {
       device.listSmartLocks.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.DeviceReadUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -46,7 +46,7 @@ export const deviceHandlers = Effect.gen(function* () {
       device.listSmartPlugs.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.DeviceReadUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),

@@ -17,7 +17,7 @@ export const installationHandlers = Effect.gen(function* () {
       installation.list.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.InstallationUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -33,7 +33,7 @@ export const installationHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.InstallationUnavailable({
+              new RpcContract.ServiceUnavailable({
                 message: error.message,
               })
             ),

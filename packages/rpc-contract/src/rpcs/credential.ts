@@ -2,32 +2,20 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import {
-  CredentialNotFound,
-  CredentialUnavailable,
-  InvalidInput,
-  Unauthorized,
-} from "../errors";
+import { ServiceUnavailable } from "../errors";
 import {
   CredentialIdPayload,
   CredentialSummary,
   InstallationSummary,
 } from "./shared";
 
-const CredentialRpcError = Schema.Union([
-  Unauthorized,
-  CredentialNotFound,
-  InvalidInput,
-  CredentialUnavailable,
-]);
-
 export const CredentialRpcs = RpcGroup.make(
   Rpc.make("ListCredentials", {
-    error: Schema.Union([Unauthorized, CredentialUnavailable]),
+    error: ServiceUnavailable,
     success: Schema.Array(CredentialSummary),
   }),
   Rpc.make("CreateCredential", {
-    error: Schema.Union([Unauthorized, CredentialUnavailable]),
+    error: ServiceUnavailable,
     payload: Schema.Struct({
       alias: Schema.String,
       email: Schema.String,
@@ -37,11 +25,11 @@ export const CredentialRpcs = RpcGroup.make(
     success: CredentialSummary,
   }),
   Rpc.make("DeleteCredential", {
-    error: CredentialRpcError,
+    error: ServiceUnavailable,
     payload: CredentialIdPayload,
   }),
   Rpc.make("RequestCredentialMfa", {
-    error: CredentialRpcError,
+    error: ServiceUnavailable,
     payload: CredentialIdPayload,
     success: Schema.Struct({
       credentialId: Schema.String,
@@ -50,7 +38,7 @@ export const CredentialRpcs = RpcGroup.make(
     }),
   }),
   Rpc.make("ValidateCredentialMfa", {
-    error: CredentialRpcError,
+    error: ServiceUnavailable,
     payload: Schema.Struct({
       code: Schema.String,
       credentialId: Schema.String,

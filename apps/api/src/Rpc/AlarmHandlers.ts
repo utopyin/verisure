@@ -27,7 +27,7 @@ export const alarmHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.AlarmUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),
@@ -40,7 +40,7 @@ export const alarmHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.AlarmUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),
@@ -53,7 +53,7 @@ export const alarmHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.AlarmUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),
@@ -61,7 +61,7 @@ export const alarmHandlers = Effect.gen(function* () {
       alarm.getArmState.pipe(
         Effect.catchTag("ServiceUnavailable", (error) =>
           Effect.fail(
-            new RpcContract.AlarmUnavailable({ message: error.message })
+            new RpcContract.ServiceUnavailable({ message: error.message })
           )
         )
       ),
@@ -74,7 +74,7 @@ export const alarmHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.AlarmUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),
@@ -87,7 +87,7 @@ export const alarmHandlers = Effect.gen(function* () {
             ),
           ServiceUnavailable: (error) =>
             Effect.fail(
-              new RpcContract.AlarmUnavailable({ message: error.message })
+              new RpcContract.ServiceUnavailable({ message: error.message })
             ),
         })
       ),

@@ -2,32 +2,10 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import {
-  AlarmCodeRequired,
-  AlarmUnavailable,
-  CredentialNotFound,
-  InstallationNotFound,
-  InvalidInput,
-  Unauthorized,
-} from "../errors";
+import { AlarmCodeRequired, ServiceUnavailable } from "../errors";
 import { AlarmMode, AlarmStatusPayload } from "./shared";
 
-const AlarmReadError = Schema.Union([
-  Unauthorized,
-  CredentialNotFound,
-  InstallationNotFound,
-  InvalidInput,
-  AlarmUnavailable,
-]);
-
-const AlarmCommandError = Schema.Union([
-  Unauthorized,
-  CredentialNotFound,
-  InstallationNotFound,
-  InvalidInput,
-  AlarmUnavailable,
-  AlarmCodeRequired,
-]);
+const AlarmCommandError = Schema.Union([ServiceUnavailable, AlarmCodeRequired]);
 
 const AlarmMutationResult = Schema.Struct({
   accepted: Schema.Boolean,
@@ -44,7 +22,7 @@ const AlarmCommandPayload = Schema.Struct({
 
 export const AlarmRpcs = RpcGroup.make(
   Rpc.make("GetArmState", {
-    error: AlarmReadError,
+    error: ServiceUnavailable,
     payload: AlarmStatusPayload,
     success: Schema.Struct({
       changedVia: Schema.optionalKey(Schema.String),

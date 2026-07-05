@@ -24,12 +24,7 @@ export const AuthMiddlewareLive = Layer.effect(
       Effect.gen(function* () {
         const session = yield* auth
           .getSession(new Headers(options.headers))
-          .pipe(
-            Effect.provide(runtimeContext),
-            Effect.mapError(
-              () => new RpcContract.Unauthorized({ message: "Unauthorized" })
-            )
-          );
+          .pipe(Effect.provide(runtimeContext), Effect.orDie);
 
         if (Option.isNone(session)) {
           return yield* new RpcContract.Unauthorized({

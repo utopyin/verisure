@@ -15,26 +15,15 @@ export const authHandlers = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* auth
           .getSession(new Headers(options.headers))
-          .pipe(
-            Effect.mapError(
-              () => new RpcContract.Unauthorized({ message: "Unauthorized" })
-            )
-          );
+          .pipe(Effect.orDie);
         if (Option.isNone(session)) {
-          return yield* new RpcContract.Unauthorized({
-            message: "Unauthorized",
-          });
+          return yield* Effect.die("Authenticated session disappeared");
         }
         return {
           expiresAt: session.value.expiresAt.toISOString(),
           user: session.value.user,
         };
       }),
-    "Auth.Logout": () =>
-      Effect.fail(
-        new RpcContract.InvalidInput({
-          message: "Dashboard logout is not implemented yet",
-        })
-      ),
+    "Auth.Logout": () => Effect.die("Dashboard logout is not implemented yet"),
   });
 });

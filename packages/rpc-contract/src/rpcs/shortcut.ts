@@ -5,17 +5,10 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import {
   ApiTokenNotFound,
   CredentialNotFound,
-  ShortcutUnavailable,
-  Unauthorized,
+  ServiceUnavailable,
 } from "../errors";
 
 const ShortcutTemplate = Schema.Literals(["toggle-full", "choose-mode"]);
-
-const ShortcutRpcError = Schema.Union([
-  Unauthorized,
-  CredentialNotFound,
-  ShortcutUnavailable,
-]);
 
 export const ShortcutExportPayload = Schema.Struct({
   apiUrl: Schema.String,
@@ -42,7 +35,7 @@ export const ShortcutApiTokenSummary = Schema.Struct({
 
 export const ShortcutRpcs = RpcGroup.make(
   Rpc.make("ExportShortcut", {
-    error: ShortcutRpcError,
+    error: Schema.Union([CredentialNotFound, ServiceUnavailable]),
     payload: Schema.Struct({
       credentialId: Schema.String,
       giid: Schema.optionalKey(Schema.String),
@@ -51,14 +44,14 @@ export const ShortcutRpcs = RpcGroup.make(
     success: ShortcutExportPayload,
   }),
   Rpc.make("ListApiTokens", {
-    error: Schema.Union([Unauthorized, ShortcutUnavailable]),
+    error: ServiceUnavailable,
     payload: Schema.Struct({
       credentialId: Schema.optionalKey(Schema.String),
     }),
     success: Schema.Array(ShortcutApiTokenSummary),
   }),
   Rpc.make("RevokeApiToken", {
-    error: Schema.Union([Unauthorized, ApiTokenNotFound, ShortcutUnavailable]),
+    error: Schema.Union([ApiTokenNotFound, ServiceUnavailable]),
     payload: Schema.Struct({
       tokenId: Schema.String,
     }),
