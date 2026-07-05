@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@effect/platform-browser": "catalog:",
+    "@verisure/contract": "workspace:*",
     "@verisure/db": "workspace:*",
     "@verisure/domain": "workspace:*",
-    "@verisure/rpc-contract": "workspace:*",
     "@verisure/server": "workspace:*",
     "@verisure/test": "workspace:*",
     "alchemy": "catalog:",

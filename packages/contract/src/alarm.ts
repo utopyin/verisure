@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { AlarmCodeRequired, ServiceUnavailable } from "../errors";
+import { AlarmCodeRequired, ServiceUnavailable } from "./errors";
 import { AlarmMode, AlarmStatusPayload } from "./shared";
 
 const AlarmCommandError = Schema.Union([ServiceUnavailable, AlarmCodeRequired]);

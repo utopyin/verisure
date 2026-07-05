@@ -6,7 +6,7 @@ import {
   ApiTokenNotFound,
   CredentialNotFound,
   ServiceUnavailable,
-} from "../errors";
+} from "./errors";
 
 const ShortcutTemplate = Schema.Literals(["toggle-full", "choose-mode"]);
 

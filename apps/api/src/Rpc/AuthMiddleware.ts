@@ -1,4 +1,4 @@
-import * as RpcContract from "@verisure/rpc-contract";
+import * as RpcContract from "@verisure/contract";
 import * as Server from "@verisure/server";
 import type { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";

@@ -1,6 +1,6 @@
+import * as RpcContract from "@verisure/contract";
 import type { VerisureCredentialRow } from "@verisure/db/schema";
 import type { InstallationSummary } from "@verisure/domain";
-import * as RpcContract from "@verisure/rpc-contract";
 import * as Server from "@verisure/server";
 import {
   RuntimeContextTestLayer,

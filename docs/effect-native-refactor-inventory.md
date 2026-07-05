@@ -741,7 +741,7 @@ HTTP/RPC middleware can then translate those semantic errors to transport-specif
 
 ### Files
 
-- `packages/rpc-contract/src/errors.ts`
+- `packages/contract/src/errors.ts`
 - `apps/api/src/Rpc/ScopeMiddleware.ts`
 
 ### Current smell
@@ -844,12 +844,12 @@ Do not classify repository/crypto/upstream failures as `InvalidInput`.
 
 ### Files
 
-- `packages/rpc-contract/src/rpcs/alarm.ts`
-- `packages/rpc-contract/src/rpcs/device.ts`
-- `packages/rpc-contract/src/rpcs/credential.ts`
-- `packages/rpc-contract/src/rpcs/installation.ts`
-- `packages/rpc-contract/src/rpcs/shortcut.ts`
-- `packages/rpc-contract/src/rpcs/auth.ts`
+- `packages/contract/src/alarm.ts`
+- `packages/contract/src/device.ts`
+- `packages/contract/src/credential.ts`
+- `packages/contract/src/installation.ts`
+- `packages/contract/src/shortcut.ts`
+- `packages/contract/src/auth.ts`
 
 ### Current smell
 
@@ -913,7 +913,7 @@ If clients need a pre-composed authenticated contract type, export a composed co
 
 ### File
 
-- `packages/rpc-contract/src/errors.ts`
+- `packages/contract/src/errors.ts`
 
 ### Current smell
 

@@ -102,8 +102,8 @@ Infrastructure bindings used by the API layer:
     │   └── src/{dto,cookies,errors}.ts
     ├── graphql-client/                     # pure GraphQL operation builder helpers
     ├── interface/                          # shared interface/entity shapes
-    ├── rpc-contract/                       # Effect RPC contracts and RPC error schemas
-    │   └── src/{errors,rpcs,rpcs/*}.ts
+    ├── contract/                           # Effect RPC contracts and RPC error schemas
+    │   └── src/{errors,rpcs,auth,credential,installation,alarm,device,shortcut,shared}.ts
     ├── server/                             # transport-free application services
     │   └── src/
     │       ├── Auth/BetterAuthService.ts
@@ -123,7 +123,7 @@ Deleted/obsolete architecture names: `Http/App.ts`, `Http/BetterAuthMount.ts`, `
 
 ```text
 apps/web ────────────────┐
-                         ├── packages/rpc-contract ─── packages/domain
+                         ├── packages/contract ─── packages/domain
 apps/api ────────────────┘             ▲
         │                              │
         ├── packages/server ───────────┤
@@ -139,7 +139,7 @@ packages/domain ─── Effect Schema + pure helpers only
 Rules:
 
 - `packages/domain` must stay pure: no RPC, HTTP, Cloudflare, Better Auth, D1, or application services.
-- `packages/rpc-contract` declares schemas and expected RPC errors only; it must not import server/db/Cloudflare/Better Auth/TanStack.
+- `packages/contract` declares schemas and expected RPC errors only; it must not import server/db/Cloudflare/Better Auth/TanStack.
 - `packages/server` exposes transport-free services. It may depend on db/domain/interface/shared/graphql-client, but not on HTTP/RPC adapter errors.
 - `apps/api` is the adapter layer. It maps service errors to HTTP/RPC contract errors.
 - `apps/web` must use RPC contracts/client code, not server internals.
@@ -237,7 +237,7 @@ Shortcut HTTP errors:
 
 ## Dashboard RPC API
 
-The base RPC contract lives in `packages/rpc-contract/src/rpcs/*`. Runtime middleware is attached in `apps/api/src/Rpc/*Handlers.ts`.
+The base RPC contract lives in `packages/contract/src/{auth,credential,installation,alarm,device,shortcut}.ts`. Runtime middleware is attached in `apps/api/src/Rpc/*Handlers.ts`.
 
 RPC groups:
 
@@ -309,7 +309,7 @@ packages/server/Services
 
 apps/api HTTP/RPC adapters
 ├── HttpApiError.* and ShortcutMfaRequired for REST
-└── rpc-contract errors for dashboard RPC
+└── `@verisure/contract` errors for dashboard RPC
 ```
 
 Rules:

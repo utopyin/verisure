@@ -29,9 +29,9 @@
       "name": "@verisure/api",
       "dependencies": {
         "@effect/platform-browser": "catalog:",
+        "@verisure/contract": "workspace:*",
         "@verisure/db": "workspace:*",
         "@verisure/domain": "workspace:*",
-        "@verisure/rpc-contract": "workspace:*",
         "@verisure/server": "workspace:*",
         "@verisure/test": "workspace:*",
         "alchemy": "catalog:",
@@ -47,6 +47,15 @@
         "alchemy": "catalog:",
         "effect": "catalog:",
         "vite": "catalog:",
+      },
+    },
+    "packages/contract": {
+      "name": "@verisure/contract",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/vitest": "catalog:",
       },
     },
     "packages/db": {
@@ -80,15 +89,6 @@
         "@verisure/db": "workspace:*",
         "@verisure/domain": "workspace:*",
         "effect": "catalog:",
-      },
-    },
-    "packages/rpc-contract": {
-      "name": "@verisure/rpc-contract",
-      "dependencies": {
-        "effect": "catalog:",
-      },
-      "devDependencies": {
-        "@effect/vitest": "catalog:",
       },
     },
     "packages/server": {
@@ -644,6 +644,8 @@
 
     "@verisure/api": ["@verisure/api@workspace:apps/api"],
 
+    "@verisure/contract": ["@verisure/contract@workspace:packages/contract"],
+
     "@verisure/db": ["@verisure/db@workspace:packages/db"],
 
     "@verisure/domain": ["@verisure/domain@workspace:packages/domain"],
@@ -651,8 +653,6 @@
     "@verisure/graphql-client": ["@verisure/graphql-client@workspace:packages/graphql-client"],
 
     "@verisure/interface": ["@verisure/interface@workspace:packages/interface"],
-
-    "@verisure/rpc-contract": ["@verisure/rpc-contract@workspace:packages/rpc-contract"],
 
     "@verisure/server": ["@verisure/server@workspace:packages/server"],
 

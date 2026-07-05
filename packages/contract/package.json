@@ -1,5 +1,5 @@
 {
-  "name": "@verisure/rpc-contract",
+  "name": "@verisure/contract",
   "private": true,
   "type": "module",
   "exports": {

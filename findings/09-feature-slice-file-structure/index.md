@@ -33,13 +33,13 @@ apps/api/src/Rpc/ScopeMiddleware.ts
 Contracts are elsewhere:
 
 ```txt
-packages/rpc-contract/src/rpcs.ts
-packages/rpc-contract/src/errors.ts
+packages/contract/src/rpcs.ts
+packages/contract/src/errors.ts
 ```
 
 This is reasonable for RPC sharing, but feature flow is scattered. For example, alarm behavior spans:
 
-- `packages/rpc-contract/src/rpcs.ts` — alarm schema
+- `packages/contract/src/rpcs.ts` — alarm schema
 - `apps/api/src/Rpc/AlarmHandlers.ts` — dashboard RPC handlers
 - `apps/api/src/Http/RestApi.ts` — shortcut REST alarm endpoints
 - `packages/server/src/Services/AlarmService.ts` — application service
@@ -75,9 +75,9 @@ apps/api/src/Http/AppLayer.ts
 Or, if keeping current package names:
 
 ```txt
-packages/rpc-contract/src/alarm.ts
-packages/rpc-contract/src/credential.ts
-packages/rpc-contract/src/errors.ts
+packages/contract/src/alarm.ts
+packages/contract/src/credential.ts
+packages/contract/src/errors.ts
 apps/api/src/Rpc/alarm/handlers.ts
 apps/api/src/Rpc/alarm/index.ts
 ```

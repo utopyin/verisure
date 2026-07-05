@@ -29,5 +29,5 @@
 ## what is next
 
 - Coordinate with `04-http-api-schema-first` and `10-http-rpc-error-boundaries` to attach public HTTP status semantics to contract/API error schemas instead of relying on central mapping only.
-- Consider converting `packages/rpc-contract/src/errors.ts` from manual `Schema.ErrorClass` + `_tag` fields to `Schema.TaggedErrorClass` during the HTTP/RPC contract pass if that improves consistency.
+- Consider converting `packages/contract/src/errors.ts` from manual `Schema.ErrorClass` + `_tag` fields to `Schema.TaggedErrorClass` during the HTTP/RPC contract pass if that improves consistency.
 - Start `03-error-control-flow`; typed schema errors preserve `_tag` handling for `catchTag`/`catchTags` cleanup.
