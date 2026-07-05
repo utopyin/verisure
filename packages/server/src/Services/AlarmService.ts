@@ -16,8 +16,6 @@ import {
 import { VerisureRequests } from "../Verisure/VerisureRequests";
 import { AlarmCodeRequired, ServiceUnavailable } from "./ServiceError";
 
-export type AlarmCommandError = AlarmCodeRequired | ServiceUnavailable;
-
 export interface AlarmServiceShape {
   readonly getArmState: Effect.Effect<
     ArmState,
@@ -29,14 +27,14 @@ export interface AlarmServiceShape {
     readonly code?: string;
   }) => Effect.Effect<
     AlarmMutationResult,
-    AlarmCommandError,
+    AlarmCodeRequired | ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
   readonly toggleFull: (
     code?: string
   ) => Effect.Effect<
     AlarmMutationResult,
-    AlarmCommandError,
+    AlarmCodeRequired | ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
 }

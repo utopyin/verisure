@@ -11,8 +11,6 @@ import { CurrentCredential } from "../Security/RequestContext";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
 import { CredentialNotFound, ServiceUnavailable } from "./ServiceError";
 
-export type InstallationServiceError = CredentialNotFound | ServiceUnavailable;
-
 export interface InstallationServiceShape {
   readonly list: Effect.Effect<
     readonly InstallationSummary[],
@@ -23,7 +21,7 @@ export interface InstallationServiceShape {
     giid: string | null
   ) => Effect.Effect<
     CredentialSummary,
-    InstallationServiceError,
+    CredentialNotFound | ServiceUnavailable,
     CurrentCredential
   >;
   readonly getDefault: Effect.Effect<

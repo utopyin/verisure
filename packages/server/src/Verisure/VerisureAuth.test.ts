@@ -3,9 +3,11 @@ import type { ConnectionStatus } from "@verisure/domain";
 import {
   AuthenticationError,
   classifyGraphQLResponse,
+  ensureVerisureDomainError,
   GraphQLError,
   RequestError,
   ResponseError,
+  VerisureDomainError,
 } from "@verisure/domain";
 import { serializeCookieHeader } from "@verisure/shared/cookies";
 import { testCredentialRow } from "@verisure/test";
@@ -20,7 +22,11 @@ import { CredentialRepository } from "../Repositories/CredentialRepository";
 import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential } from "../Security/RequestContext";
 import { VerisureAuth } from "./VerisureAuth";
-import { VerisureRequests } from "./VerisureRequests";
+import {
+  VerisureRequests,
+  VerisureRequestsError,
+  VerisureRequestsUnavailable,
+} from "./VerisureRequests";
 import type { SessionMfaState, SessionSnapshot } from "./VerisureSessionStore";
 import { VerisureSessionStore } from "./VerisureSessionStore";
 import { VerisureTransport } from "./VerisureTransport";
@@ -288,7 +294,12 @@ describe(VerisureRequests, () => {
         harness.provideRequestsWithSnapshot(expiredSnapshot)
       );
 
-      expect(error).toBeInstanceOf(GraphQLError);
+      expect(error).toBeInstanceOf(VerisureRequestsError);
+      expect(error.reason).toBeInstanceOf(VerisureRequestsUnavailable);
+      expect(error.reason.cause).toBeInstanceOf(VerisureDomainError);
+      expect((error.reason.cause as VerisureDomainError).reason).toBeInstanceOf(
+        GraphQLError
+      );
       expect(harness.calls[0]?.headers.cookie).toContain("vid=old");
     })
   );
@@ -336,7 +347,7 @@ const makeHarness = (
         return HttpClientResponse.fromWeb(request, next);
       }
       return yield* next;
-    });
+    }).pipe(Effect.mapError(ensureVerisureDomainError));
 
   const transport = Layer.succeed(
     VerisureTransport,
@@ -399,7 +410,7 @@ const makeHarness = (
                 })
             )
           );
-        }),
+        }).pipe(Effect.mapError(ensureVerisureDomainError)),
       preferredBaseUrl: Effect.succeed("https://automation01.test"),
       request,
     })

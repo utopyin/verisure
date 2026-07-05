@@ -83,17 +83,35 @@ export class GraphQLError extends Schema.TaggedErrorClass<GraphQLError>()(
   }
 ) {}
 
-export type VerisureDomainError =
-  | RequestError
-  | AuthenticationError
-  | MFARequired
-  | CookieReadError
-  | CredentialsRejected
-  | LoginError
-  | RateLimitError
-  | LogoutError
-  | ResponseError
-  | GraphQLError;
+export const VerisureDomainErrorReason = Schema.Union([
+  RequestError,
+  AuthenticationError,
+  MFARequired,
+  CookieReadError,
+  CredentialsRejected,
+  LoginError,
+  RateLimitError,
+  LogoutError,
+  ResponseError,
+  GraphQLError,
+]);
+
+export type VerisureDomainErrorReason = Schema.Schema.Type<
+  typeof VerisureDomainErrorReason
+>;
+
+export class VerisureDomainError extends Schema.TaggedErrorClass<VerisureDomainError>()(
+  "VerisureDomainError",
+  { reason: VerisureDomainErrorReason }
+) {}
+
+export const verisureDomainError = (reason: VerisureDomainErrorReason) =>
+  new VerisureDomainError({ reason });
+
+export const ensureVerisureDomainError = (
+  error: VerisureDomainError | VerisureDomainErrorReason
+): VerisureDomainError =>
+  error instanceof VerisureDomainError ? error : verisureDomainError(error);
 
 export const responseSignalsRateLimit = (text: string): boolean => {
   const lower = text.toLowerCase();

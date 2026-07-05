@@ -3,11 +3,17 @@ import {
   CookieReadError,
   LoginError,
   MFARequired,
-  RateLimitError,
   RequestError,
   ResponseError,
+  VerisureDomainError,
 } from "@verisure/domain";
-import type { ConnectionStatus, VerisureDomainError } from "@verisure/domain";
+import type {
+  ConnectionStatus,
+  CredentialsRejected,
+  GraphQLError,
+  LogoutError,
+  RateLimitError,
+} from "@verisure/domain";
 import {
   mergeCookies,
   parseSetCookieHeaders,
@@ -44,8 +50,38 @@ const ValidSessionSkewMs = 15 * 1000;
 const MfaTypes = ["phone", "email"] as const;
 const RefreshCookieNames = new Set(["vid", "vs-refresh"]);
 
-export type VerisureAuthError =
+export class VerisureAuthMfaRequired extends Schema.TaggedErrorClass<VerisureAuthMfaRequired>()(
+  "VerisureAuthMfaRequired",
+  { message: Schema.String }
+) {}
+
+export class VerisureAuthUnavailable extends Schema.TaggedErrorClass<VerisureAuthUnavailable>()(
+  "VerisureAuthUnavailable",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
+
+export class VerisureAuthError extends Schema.TaggedErrorClass<VerisureAuthError>()(
+  "VerisureAuthError",
+  {
+    reason: Schema.Union([VerisureAuthMfaRequired, VerisureAuthUnavailable]),
+  }
+) {}
+
+type VerisureAuthInternalError =
   | VerisureDomainError
+  | AuthenticationError
+  | CookieReadError
+  | CredentialsRejected
+  | GraphQLError
+  | LoginError
+  | LogoutError
+  | MFARequired
+  | RateLimitError
+  | RequestError
+  | ResponseError
   | CredentialCryptoError
   | RepositoryError
   | VerisureSessionStoreError;
@@ -261,7 +297,9 @@ export class VerisureAuth extends Context.Service<
         return yield* saveConnectedSnapshot(next);
       });
 
-      const recoverTrustLoginFailure = (trustError: VerisureAuthError) => {
+      const recoverTrustLoginFailure = (
+        trustError: VerisureAuthInternalError
+      ) => {
         if (!canTryBasicLogin(trustError)) {
           return Effect.fail(trustError);
         }
@@ -270,7 +308,7 @@ export class VerisureAuth extends Context.Service<
 
       const recoverRefreshFailure = (
         snapshot: SessionSnapshot,
-        refreshError: VerisureAuthError
+        refreshError: VerisureAuthInternalError
       ) => {
         if (!canTryTrustLogin(refreshError)) {
           return Effect.fail(refreshError);
@@ -301,11 +339,19 @@ export class VerisureAuth extends Context.Service<
       }).pipe(Effect.withSpan("VerisureAuth.currentValidSnapshot"));
 
       const updateStatusAfterError = (error: VerisureAuthError) =>
-        updateStatusForError(error, setStatus).pipe(Effect.ignore);
+        updateStatusForAuthError(error, setStatus).pipe(Effect.ignore);
+
+      const toPublicAuthError = authError("Verisure session operation failed");
 
       const withStatusUpdates = Effect.fn("VerisureAuth.withStatusUpdates")(
-        <A, E extends VerisureAuthError, R>(effect: Effect.Effect<A, E, R>) =>
-          effect.pipe(Effect.tapError(updateStatusAfterError))
+        <A, E extends VerisureAuthInternalError, R>(
+          effect: Effect.Effect<A, E, R>
+        ) =>
+          effect.pipe(
+            sessions.withCredentialLock,
+            Effect.mapError(toPublicAuthError),
+            Effect.tapError(updateStatusAfterError)
+          )
       );
 
       const ensureSession = Effect.gen(function* () {
@@ -320,11 +366,7 @@ export class VerisureAuth extends Context.Service<
         }
 
         return yield* loginWithBasicAuth();
-      }).pipe(
-        Effect.withSpan("VerisureAuth.ensureSession"),
-        withStatusUpdates,
-        sessions.withCredentialLock
-      );
+      }).pipe(Effect.withSpan("VerisureAuth.ensureSession"), withStatusUpdates);
 
       const requestMfa = Effect.gen(function* () {
         const decrypted = yield* decryptedCredential;
@@ -363,11 +405,7 @@ export class VerisureAuth extends Context.Service<
         yield* setStatus("mfa_required", "Verisure MFA code requested", {
           mfaRequestedAt: new Date(requestedAt),
         });
-      }).pipe(
-        Effect.withSpan("VerisureAuth.requestMfa"),
-        withStatusUpdates,
-        sessions.withCredentialLock
-      );
+      }).pipe(Effect.withSpan("VerisureAuth.requestMfa"), withStatusUpdates);
 
       const validateMfaOperation = Effect.fn("VerisureAuth.validateMfa")(
         function* (token: string) {
@@ -416,10 +454,7 @@ export class VerisureAuth extends Context.Service<
       );
 
       const validateMfa: VerisureAuthShape["validateMfa"] = (token) =>
-        validateMfaOperation(token).pipe(
-          withStatusUpdates,
-          sessions.withCredentialLock
-        );
+        validateMfaOperation(token).pipe(withStatusUpdates);
 
       const clearLogoutState = Effect.gen(function* () {
         yield* sessions.clearSnapshot;
@@ -462,12 +497,13 @@ export class VerisureAuth extends Context.Service<
             })
           )
         ),
-        sessions.withCredentialLock
+        sessions.withCredentialLock,
+        Effect.mapError(authError("Unable to log out of Verisure"))
       );
 
       return VerisureAuth.of({
         ensureSession,
-        login: loginWithBasicAuth().pipe(sessions.withCredentialLock),
+        login: loginWithBasicAuth().pipe(withStatusUpdates),
         logout,
         requestMfa,
         validateMfa,
@@ -588,13 +624,39 @@ const cookieToSessionCookie = (cookie: Cookie): SessionCookie => {
   };
 };
 
-const canTryTrustLogin = (error: VerisureAuthError): boolean =>
-  error instanceof AuthenticationError || error instanceof CookieReadError;
+const canTryTrustLogin = (error: VerisureAuthInternalError): boolean =>
+  isRecoverableSessionError(error);
 
-const canTryBasicLogin = (error: VerisureAuthError): boolean =>
-  error instanceof AuthenticationError || error instanceof CookieReadError;
+const canTryBasicLogin = (error: VerisureAuthInternalError): boolean =>
+  isRecoverableSessionError(error);
 
-const updateStatusForError = (
+const isRecoverableSessionError = (error: VerisureAuthInternalError) => {
+  if (error instanceof VerisureDomainError) {
+    return (
+      error.reason instanceof AuthenticationError ||
+      error.reason instanceof CookieReadError
+    );
+  }
+  return (
+    error instanceof AuthenticationError || error instanceof CookieReadError
+  );
+};
+
+const authError =
+  (message: string) =>
+  (error: VerisureAuthInternalError): VerisureAuthError => {
+    const cause = error instanceof VerisureDomainError ? error.reason : error;
+    if (cause instanceof MFARequired) {
+      return new VerisureAuthError({
+        reason: new VerisureAuthMfaRequired({ message: cause.message }),
+      });
+    }
+    return new VerisureAuthError({
+      reason: new VerisureAuthUnavailable({ cause, message }),
+    });
+  };
+
+const updateStatusForAuthError = (
   error: VerisureAuthError,
   setStatus: (
     status: ConnectionStatus,
@@ -605,19 +667,10 @@ const updateStatusForError = (
     }
   ) => Effect.Effect<void, RepositoryError, CurrentCredential>
 ) => {
-  if (error instanceof MFARequired) {
-    return setStatus("mfa_required", error.message, {
+  if (error.reason instanceof VerisureAuthMfaRequired) {
+    return setStatus("mfa_required", error.reason.message, {
       mfaRequestedAt: new Date(),
     });
   }
-  if (error instanceof AuthenticationError) {
-    return setStatus("auth_failed", error.message, { connectedAt: null });
-  }
-  if (error instanceof RateLimitError) {
-    return setStatus("rate_limited", error.message);
-  }
-  if (error instanceof LoginError) {
-    return setStatus("auth_failed", error.message, { connectedAt: null });
-  }
-  return setStatus("error", "Verisure session operation failed");
+  return setStatus("error", error.reason.message);
 };

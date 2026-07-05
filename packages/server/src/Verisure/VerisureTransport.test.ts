@@ -4,6 +4,7 @@ import {
   RateLimitError,
   RequestError,
   ResponseError,
+  VerisureDomainError,
 } from "@verisure/domain";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -121,7 +122,8 @@ describe(VerisureTransport, () => {
         HttpClientRequest.get("/auth/token")
       ).pipe(provideTransport);
 
-      expect(error).toBeInstanceOf(AuthenticationError);
+      expect(error).toBeInstanceOf(VerisureDomainError);
+      expect(error.reason).toBeInstanceOf(AuthenticationError);
       expect(calls).toHaveLength(1);
     })
   );
@@ -136,7 +138,8 @@ describe(VerisureTransport, () => {
         HttpClientRequest.get("/auth/token")
       ).pipe(provideTransport);
 
-      expect(error).toBeInstanceOf(RateLimitError);
+      expect(error).toBeInstanceOf(VerisureDomainError);
+      expect(error.reason).toBeInstanceOf(RateLimitError);
     })
   );
 
@@ -153,8 +156,9 @@ describe(VerisureTransport, () => {
           HttpClientRequest.get("/auth/token")
         ).pipe(provideTransport);
 
-        expect(error).toBeInstanceOf(ResponseError);
-        expect(error.message).toContain("bad gateway");
+        expect(error).toBeInstanceOf(VerisureDomainError);
+        expect(error.reason).toBeInstanceOf(ResponseError);
+        expect(error.reason.message).toContain("bad gateway");
       })
   );
 
@@ -171,8 +175,9 @@ describe(VerisureTransport, () => {
           HttpClientRequest.get("/auth/token")
         ).pipe(provideTransport);
 
-        expect(error).toBeInstanceOf(RequestError);
-        expect(error.message).toBe("second network failure");
+        expect(error).toBeInstanceOf(VerisureDomainError);
+        expect(error.reason).toBeInstanceOf(RequestError);
+        expect(error.reason.message).toBe("second network failure");
       })
   );
 });

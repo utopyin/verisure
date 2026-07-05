@@ -1,11 +1,13 @@
 import {
   RequestError,
   ResponseError,
+  VerisureDomainError,
   classifyGraphQLResponse,
+  ensureVerisureDomainError,
   classifyHttpError,
   responseSignalsRateLimit,
 } from "@verisure/domain";
-import type { GraphQLError, VerisureDomainError } from "@verisure/domain";
+import type { GraphQLError } from "@verisure/domain";
 import type { GraphQLOperation } from "@verisure/graphql-client";
 import { serializeCookieHeader } from "@verisure/shared/cookies";
 import * as Context from "effect/Context";
@@ -32,10 +34,11 @@ const DEFAULT_BASE_URLS = [
 ] as const;
 
 const canFailoverBaseUrl = (error: VerisureDomainError): boolean => {
-  if (error._tag === "RequestError") {
+  const { reason } = error;
+  if (reason._tag === "RequestError") {
     return true;
   }
-  return error._tag === "ResponseError" && error.statusCode >= 500;
+  return reason._tag === "ResponseError" && reason.statusCode >= 500;
 };
 
 export interface VerisureTransportOptions {
@@ -73,55 +76,54 @@ export class VerisureTransport extends Context.Service<
         const rememberPreferredBaseUrl = (baseUrl: string) =>
           Ref.set(preferredBaseUrl, baseUrl);
 
-        const executeAgainstBaseUrl = Effect.fn(
-          "VerisureTransport.executeAgainstBaseUrl"
-        )(function* (
+        const executeAgainstBaseUrl = (
           input: HttpClientRequest.HttpClientRequest,
           baseUrl: string
-        ) {
-          const httpRequest = prepareRequest(input, applicationId, baseUrl);
-          const httpResponse = yield* httpClient
-            .execute(httpRequest)
-            .pipe(Effect.mapError(httpClientErrorToRequestError));
-          const text = yield* httpResponse.text.pipe(
-            Effect.mapError(httpClientErrorToRequestError)
-          );
+        ) =>
+          Effect.gen(function* () {
+            const httpRequest = prepareRequest(input, applicationId, baseUrl);
+            const httpResponse = yield* httpClient
+              .execute(httpRequest)
+              .pipe(Effect.mapError(httpClientErrorToRequestError));
+            const text = yield* httpResponse.text.pipe(
+              Effect.mapError(httpClientErrorToRequestError)
+            );
 
-          if (httpResponse.status >= 500) {
-            return yield* new ResponseError({
-              message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
-              statusCode: httpResponse.status,
-              text,
-            });
-          }
+            if (httpResponse.status >= 500) {
+              return yield* new ResponseError({
+                message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
+                statusCode: httpResponse.status,
+                text,
+              });
+            }
 
-          if (httpResponse.status >= 400) {
-            return yield* classifyHttpError(httpResponse.status, text);
-          }
+            if (httpResponse.status >= 400) {
+              return yield* classifyHttpError(httpResponse.status, text);
+            }
 
-          if (httpResponse.status < 200 || httpResponse.status >= 300) {
-            return yield* new ResponseError({
-              message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
-              statusCode: httpResponse.status,
-              text,
-            });
-          }
+            if (httpResponse.status < 200 || httpResponse.status >= 300) {
+              return yield* new ResponseError({
+                message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
+                statusCode: httpResponse.status,
+                text,
+              });
+            }
 
-          if (responseSignalsRateLimit(text)) {
-            return yield* classifyHttpError(429, text);
-          }
+            if (responseSignalsRateLimit(text)) {
+              return yield* classifyHttpError(429, text);
+            }
 
-          if (text.includes("SYS_00004")) {
-            return yield* new ResponseError({
-              message: `Invalid response, status code: 502 - Data: ${text}`,
-              statusCode: 502,
-              text,
-            });
-          }
+            if (text.includes("SYS_00004")) {
+              return yield* new ResponseError({
+                message: `Invalid response, status code: 502 - Data: ${text}`,
+                statusCode: 502,
+                text,
+              });
+            }
 
-          yield* rememberPreferredBaseUrl(baseUrl);
-          return httpResponse;
-        });
+            yield* rememberPreferredBaseUrl(baseUrl);
+            return httpResponse;
+          }).pipe(Effect.mapError(ensureVerisureDomainError));
 
         const tryBaseUrls = Effect.fn("VerisureTransport.tryBaseUrls")(
           function* (
@@ -138,8 +140,10 @@ export class VerisureTransport extends Context.Service<
           > {
             const baseUrl = orderedBaseUrls[index];
             if (baseUrl === undefined) {
-              return yield* new RequestError({
-                message: "Verisure request did not run",
+              return yield* new VerisureDomainError({
+                reason: new RequestError({
+                  message: "Verisure request did not run",
+                }),
               });
             }
 
@@ -216,7 +220,7 @@ export class VerisureTransport extends Context.Service<
                   })
               )
             );
-          });
+          }).pipe(Effect.mapError(ensureVerisureDomainError));
 
         return VerisureTransport.of({
           executeGraphQL,

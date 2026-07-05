@@ -7,7 +7,6 @@ import type {
   InstallationSummary,
   SmartLockStatus,
   SmartPlugStatus,
-  VerisureDomainError,
 } from "@verisure/domain";
 import * as Domain from "@verisure/domain";
 import type { GraphQLOperation } from "@verisure/graphql-client";
@@ -22,11 +21,31 @@ import * as SchemaGetter from "effect/SchemaGetter";
 
 import type { CurrentCredential } from "../Security/RequestContext";
 import { fetchAllInstallationsOperation } from "./FetchAllInstallationsOperation";
-import type { VerisureAuthError } from "./VerisureAuth";
-import { VerisureAuth } from "./VerisureAuth";
+import { VerisureAuth, VerisureAuthMfaRequired } from "./VerisureAuth";
 import { VerisureTransport } from "./VerisureTransport";
 
-export type VerisureRequestsError = VerisureAuthError | VerisureDomainError;
+export class VerisureRequestsMfaRequired extends Schema.TaggedErrorClass<VerisureRequestsMfaRequired>()(
+  "VerisureRequestsMfaRequired",
+  { message: Schema.String }
+) {}
+
+export class VerisureRequestsUnavailable extends Schema.TaggedErrorClass<VerisureRequestsUnavailable>()(
+  "VerisureRequestsUnavailable",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
+
+export class VerisureRequestsError extends Schema.TaggedErrorClass<VerisureRequestsError>()(
+  "VerisureRequestsError",
+  {
+    reason: Schema.Union([
+      VerisureRequestsMfaRequired,
+      VerisureRequestsUnavailable,
+    ]),
+  }
+) {}
 
 export interface VerisureRequestsShape {
   readonly fetchAllInstallations: (input: {
@@ -149,13 +168,55 @@ export class VerisureRequests extends Context.Service<
       ) =>
         Effect.gen(function* () {
           const builtOperation = yield* operation.pipe(
-            Effect.mapError(operationInputError)
+            Effect.mapError(
+              (cause) =>
+                new VerisureRequestsError({
+                  reason: new VerisureRequestsUnavailable({
+                    cause,
+                    message: "Failed to build Verisure GraphQL request",
+                  }),
+                })
+            )
           );
-          const session = yield* auth.ensureSession;
-          return yield* transport.executeGraphQL({
-            cookies: session.cookies,
-            operation: builtOperation,
-          });
+          const session = yield* auth.ensureSession.pipe(
+            Effect.mapError((error) => {
+              if (error.reason instanceof VerisureAuthMfaRequired) {
+                return new VerisureRequestsError({
+                  reason: new VerisureRequestsMfaRequired({
+                    message: error.reason.message,
+                  }),
+                });
+              }
+              return new VerisureRequestsError({
+                reason: new VerisureRequestsUnavailable({
+                  cause: error,
+                  message: "Unable to authenticate Verisure request",
+                }),
+              });
+            })
+          );
+          return yield* transport
+            .executeGraphQL({
+              cookies: session.cookies,
+              operation: builtOperation,
+            })
+            .pipe(
+              Effect.mapError((error) => {
+                if (error.reason instanceof Domain.MFARequired) {
+                  return new VerisureRequestsError({
+                    reason: new VerisureRequestsMfaRequired({
+                      message: error.reason.message,
+                    }),
+                  });
+                }
+                return new VerisureRequestsError({
+                  reason: new VerisureRequestsUnavailable({
+                    cause: error,
+                    message: "Unable to execute Verisure GraphQL request",
+                  }),
+                });
+              })
+            );
         });
 
       return VerisureRequests.of({
@@ -598,13 +659,6 @@ const alarmMutationResult = (input: {
     ...optionalObjectField("transactionId", input.result.transactionId),
   };
 };
-
-const operationInputError = (cause: Schema.SchemaError) =>
-  new Domain.ResponseError({
-    message: "Failed to build Verisure GraphQL request",
-    statusCode: 0,
-    text: cause.message,
-  });
 
 const optionalObjectField = <K extends string, V>(
   key: K,
