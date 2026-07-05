@@ -1,13 +1,8 @@
 import * as Server from "@verisure/server";
 import * as Effect from "effect/Effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi";
 
 import { ShortcutApi } from "./ShortcutApi";
-import {
-  ShortcutInvalidInputError,
-  ShortcutServiceUnavailableError,
-} from "./ShortcutErrors";
-import { provideShortcutAlarmScope } from "./ShortcutMiddleware";
 
 export const ShortcutApiHandlers = HttpApiBuilder.group(
   ShortcutApi,
@@ -16,52 +11,28 @@ export const ShortcutApiHandlers = HttpApiBuilder.group(
     const alarm = yield* Server.AlarmService;
 
     return handlers
-      .handle("status", ({ query }) =>
+      .handle("status", () =>
         alarm.getArmState.pipe(
-          provideShortcutAlarmScope({
-            giid: query.giid,
-            requiredScopes: [Server.ShortcutAlarmReadScope],
-          }),
-          Effect.catchTag("ServiceUnavailable", (error) =>
-            Effect.fail(
-              new ShortcutServiceUnavailableError({ message: error.message })
-            )
+          Effect.catchTag("ServiceUnavailable", () =>
+            Effect.fail(new HttpApiError.ServiceUnavailable())
           )
         )
       )
       .handle("toggleFull", ({ payload }) =>
         alarm.toggleFull(payload.code).pipe(
-          provideShortcutAlarmScope({
-            giid: payload.giid,
-            requiredScopes: [Server.ShortcutAlarmWriteScope],
-          }),
           Effect.catchTags({
-            AlarmCodeRequired: (error) =>
-              Effect.fail(
-                new ShortcutInvalidInputError({ message: error.message })
-              ),
-            ServiceUnavailable: (error) =>
-              Effect.fail(
-                new ShortcutServiceUnavailableError({ message: error.message })
-              ),
+            AlarmCodeRequired: () => Effect.fail(new HttpApiError.BadRequest()),
+            ServiceUnavailable: () =>
+              Effect.fail(new HttpApiError.ServiceUnavailable()),
           })
         )
       )
       .handle("setMode", ({ payload }) =>
         alarm.setMode({ code: payload.code, mode: payload.mode }).pipe(
-          provideShortcutAlarmScope({
-            giid: payload.giid,
-            requiredScopes: [Server.ShortcutAlarmWriteScope],
-          }),
           Effect.catchTags({
-            AlarmCodeRequired: (error) =>
-              Effect.fail(
-                new ShortcutInvalidInputError({ message: error.message })
-              ),
-            ServiceUnavailable: (error) =>
-              Effect.fail(
-                new ShortcutServiceUnavailableError({ message: error.message })
-              ),
+            AlarmCodeRequired: () => Effect.fail(new HttpApiError.BadRequest()),
+            ServiceUnavailable: () =>
+              Effect.fail(new HttpApiError.ServiceUnavailable()),
           })
         )
       );

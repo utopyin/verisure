@@ -20,95 +20,39 @@ import { ShortcutRestHttp } from "./RestApi";
 describe("Shortcut REST API", () => {
   test("rejects missing bearer tokens", async () => {
     const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=giid-1")
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status")
     );
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({
-      _tag: "ShortcutUnauthorizedError",
-      message: "Missing bearer token",
-    });
+    await expect(response.text()).resolves.toBe("");
   });
 
   test("rejects invalid bearer tokens", async () => {
     const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
         headers: { authorization: "Bearer invalid" },
       })
     );
 
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toMatchObject({
-      _tag: "ShortcutUnauthorizedError",
-      message: "Invalid API token",
-    });
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  test("rejects empty bearer credentials", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
+        headers: { authorization: "Bearer " },
+      })
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.text()).resolves.toBe("");
   });
 
   test("validates route payloads", async () => {
     const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status", {
-        headers: { authorization: "Bearer valid" },
-      })
-    );
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      _tag: "ShortcutInvalidInputError",
-    });
-  });
-
-  test("enforces token GIID restrictions before touching Verisure", async () => {
-    const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=other-giid", {
-        headers: { authorization: "Bearer valid" },
-      })
-    );
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({
-      _tag: "ShortcutForbiddenError",
-      message: "API token is not allowed to access this installation",
-    });
-  });
-
-  test("verifies installation ownership for token-backed requests", async () => {
-    const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
-        headers: { authorization: "Bearer valid" },
-      }),
-      { installations: [] }
-    );
-
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toMatchObject({
-      _tag: "ShortcutInstallationNotFoundError",
-    });
-  });
-
-  test("maps REST storage failures to service unavailable", async () => {
-    const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
-        headers: { authorization: "Bearer valid" },
-      }),
-      { failAuthenticationStorage: true }
-    );
-
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toStrictEqual({
-      _tag: "ShortcutServiceUnavailableError",
-      message: "Service storage is unavailable",
-    });
-  });
-
-  test("serves status and mutation routes with request-scoped services", async () => {
-    const status = await runRest(
-      new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
-        headers: { authorization: "Bearer valid" },
-      })
-    );
-    const toggle = await runRest(
-      new Request("http://api.local/api/v1/alarm/toggle-full", {
-        body: JSON.stringify({ giid: "giid-1" }),
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/mode", {
+        body: JSON.stringify({ mode: "not-a-mode" }),
         headers: {
           authorization: "Bearer valid",
           "content-type": "application/json",
@@ -116,9 +60,93 @@ describe("Shortcut REST API", () => {
         method: "POST",
       })
     );
+
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  test("enforces token GIID restrictions before touching Verisure", async () => {
+    const calls: string[] = [];
+    const response = await runRest(
+      new Request(
+        "http://api.local/api/v1/installations/other-giid/alarm/status",
+        { headers: { authorization: "Bearer valid" } }
+      ),
+      { requestCalls: calls }
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toStrictEqual([]);
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  test("verifies installation ownership for token-backed requests", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
+        headers: { authorization: "Bearer valid" },
+      }),
+      { installations: [] }
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  test("maps REST storage failures to service unavailable", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
+        headers: { authorization: "Bearer valid" },
+      }),
+      { failAuthenticationStorage: true }
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  test("surfaces Verisure MFA as the remaining product-specific response", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
+        headers: { authorization: "Bearer valid" },
+      }),
+      {
+        requestFailure: new Server.VerisureRequestsError({
+          reason: new Server.VerisureRequestsMfaRequired({
+            message: "MFA required",
+          }),
+        }),
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      _tag: "ShortcutMfaRequired",
+      message: "MFA required",
+    });
+  });
+
+  test("serves status and mutation routes with request-scoped services", async () => {
+    const status = await runRest(
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/status", {
+        headers: { authorization: "Bearer valid" },
+      })
+    );
+    const toggle = await runRest(
+      new Request(
+        "http://api.local/api/v1/installations/giid-1/alarm/toggle-full",
+        {
+          body: JSON.stringify({}),
+          headers: {
+            authorization: "Bearer valid",
+            "content-type": "application/json",
+          },
+          method: "POST",
+        }
+      )
+    );
     const mode = await runRest(
-      new Request("http://api.local/api/v1/alarm/mode", {
-        body: JSON.stringify({ giid: "giid-1", mode: "ARMED_HOME" }),
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/mode", {
+        body: JSON.stringify({ mode: "ARMED_HOME" }),
         headers: {
           authorization: "Bearer valid",
           "content-type": "application/json",
@@ -144,10 +172,10 @@ describe("Shortcut REST API", () => {
     });
   });
 
-  test("maps unsupported content types to invalid input", async () => {
+  test("returns the standard unsupported content-type response", async () => {
     const response = await runRest(
-      new Request("http://api.local/api/v1/alarm/mode", {
-        body: "giid=giid-1&mode=DISARMED",
+      new Request("http://api.local/api/v1/installations/giid-1/alarm/mode", {
+        body: "mode=DISARMED",
         headers: {
           authorization: "Bearer valid",
           "content-type": "application/x-www-form-urlencoded",
@@ -156,10 +184,10 @@ describe("Shortcut REST API", () => {
       })
     );
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toStrictEqual({
-      message: "Unsupported content type",
-    });
+    expect(response.status).toBe(415);
+    await expect(response.text()).resolves.toContain(
+      "Unsupported content-type"
+    );
   });
 });
 
@@ -168,6 +196,8 @@ const runRest = (
   options: {
     readonly failAuthenticationStorage?: boolean;
     readonly installations?: readonly (typeof testInstallation)[];
+    readonly requestCalls?: string[];
+    readonly requestFailure?: Server.VerisureRequestsError;
   } = {}
 ) =>
   Effect.runPromise(
@@ -190,6 +220,8 @@ const testLayer = (
   options: {
     readonly failAuthenticationStorage?: boolean;
     readonly installations?: readonly (typeof testInstallation)[];
+    readonly requestCalls?: string[];
+    readonly requestFailure?: Server.VerisureRequestsError;
   } = {}
 ) =>
   Layer.mergeAll(
@@ -197,7 +229,7 @@ const testLayer = (
     Layer.succeed(
       Server.ApiTokenService,
       Server.ApiTokenService.of({
-        authenticate: ({ giid, plaintextToken, requiredScopes }) => {
+        authenticate: ({ plaintextToken }) => {
           if (options.failAuthenticationStorage === true) {
             return Effect.fail(
               new Server.ServiceUnavailable({
@@ -211,31 +243,11 @@ const testLayer = (
               new Server.ApiTokenUnauthorized({ message: "Invalid API token" })
             );
           }
-          const missingScope = (requiredScopes ?? []).find(
-            (scope) =>
-              ![
-                Server.ShortcutAlarmReadScope,
-                Server.ShortcutAlarmWriteScope,
-              ].includes(scope as never)
-          );
-          if (missingScope !== undefined) {
-            return Effect.fail(
-              new Server.ApiTokenForbidden({
-                message: `API token is missing required scope: ${missingScope}`,
-              })
-            );
-          }
-          if (giid !== undefined && giid !== testInstallation.giid) {
-            return Effect.fail(
-              new Server.ApiTokenForbidden({
-                message: "API token is not allowed to access this installation",
-              })
-            );
-          }
           return Effect.succeed({
             credential: testCredentialRow,
             token: {
               ...testApiToken,
+              allowedGiids: [testInstallation.giid],
               scopes: [
                 Server.ShortcutAlarmReadScope,
                 Server.ShortcutAlarmWriteScope,
@@ -283,8 +295,12 @@ const testLayer = (
         climate: () => Effect.die("VerisureRequests.climate not expected"),
         doorWindows: () =>
           Effect.die("VerisureRequests.doorWindows not expected"),
-        fetchAllInstallations: () =>
-          Effect.succeed(options.installations ?? [testInstallation]),
+        fetchAllInstallations: () => {
+          options.requestCalls?.push("fetchAllInstallations");
+          return options.requestFailure === undefined
+            ? Effect.succeed(options.installations ?? [testInstallation])
+            : Effect.fail(options.requestFailure);
+        },
         setAlarmMode: () =>
           Effect.die("VerisureRequests.setAlarmMode not expected"),
         smartLocks: () =>

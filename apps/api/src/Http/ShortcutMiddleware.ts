@@ -1,35 +1,33 @@
-import * as Domain from "@verisure/domain";
 import * as Server from "@verisure/server";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
-import * as OpenApi from "effect/unstable/httpapi/OpenApi";
-
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import {
-  ShortcutForbiddenError,
-  ShortcutInstallationNotFoundError,
-  ShortcutInvalidInputError,
-  ShortcutMfaRequiredError,
-  ShortcutRateLimitError,
-  ShortcutServiceUnavailableError,
-  ShortcutUnauthorizedError,
-  ShortcutVerisureUpstreamError,
-} from "./ShortcutErrors";
+  HttpApiError,
+  HttpApiMiddleware,
+  HttpApiSecurity,
+  OpenApi,
+} from "effect/unstable/httpapi";
+
+import { ShortcutMfaRequired } from "./ShortcutErrors";
 
 class ShortcutBearerToken extends Context.Service<
   ShortcutBearerToken,
   { readonly value: string }
 >()("@verisure/api/Http/ShortcutBearerToken") {}
 
+class ShortcutAuthenticatedToken extends Context.Service<
+  ShortcutAuthenticatedToken,
+  Server.AuthenticatedApiToken
+>()("@verisure/api/Http/ShortcutAuthenticatedToken") {}
+
 export class ShortcutAuthorization extends HttpApiMiddleware.Service<
   ShortcutAuthorization,
   { readonly provides: ShortcutBearerToken }
 >()("@verisure/api/Http/ShortcutAuthorization", {
-  error: ShortcutUnauthorizedError,
+  error: HttpApiError.UnauthorizedNoContent,
   security: {
     bearer: HttpApiSecurity.bearer.pipe(
       HttpApiSecurity.annotate(
@@ -40,169 +38,222 @@ export class ShortcutAuthorization extends HttpApiMiddleware.Service<
   },
 }) {}
 
-export class ShortcutSchemaErrorHandler extends HttpApiMiddleware.Service<ShortcutSchemaErrorHandler>()(
-  "@verisure/api/Http/ShortcutSchemaErrorHandler",
+export class ShortcutApiTokenPrincipal extends HttpApiMiddleware.Service<
+  ShortcutApiTokenPrincipal,
   {
-    error: ShortcutInvalidInputError,
+    readonly provides:
+      | Server.CurrentUser
+      | Server.CurrentCredential
+      | ShortcutAuthenticatedToken;
+    readonly requires: ShortcutBearerToken;
   }
-) {}
+>()("@verisure/api/Http/ShortcutApiTokenPrincipal", {
+  error: [HttpApiError.UnauthorizedNoContent, HttpApiError.ForbiddenNoContent],
+}) {}
+
+export class ShortcutAlarmReadAccess extends HttpApiMiddleware.Service<
+  ShortcutAlarmReadAccess,
+  {
+    readonly provides: Server.CurrentInstallation;
+    readonly requires: Server.CurrentCredential | ShortcutAuthenticatedToken;
+  }
+>()("@verisure/api/Http/ShortcutAlarmReadAccess", {
+  error: [
+    HttpApiError.BadRequestNoContent,
+    HttpApiError.ForbiddenNoContent,
+    HttpApiError.NotFoundNoContent,
+    ShortcutMfaRequired,
+    HttpApiError.ServiceUnavailableNoContent,
+  ],
+}) {}
+
+export class ShortcutAlarmWriteAccess extends HttpApiMiddleware.Service<
+  ShortcutAlarmWriteAccess,
+  {
+    readonly provides: Server.CurrentInstallation;
+    readonly requires: Server.CurrentCredential | ShortcutAuthenticatedToken;
+  }
+>()("@verisure/api/Http/ShortcutAlarmWriteAccess", {
+  error: [
+    HttpApiError.BadRequestNoContent,
+    HttpApiError.ForbiddenNoContent,
+    HttpApiError.NotFoundNoContent,
+    ShortcutMfaRequired,
+    HttpApiError.ServiceUnavailableNoContent,
+  ],
+}) {}
 
 const ShortcutAuthorizationLive = Layer.succeed(ShortcutAuthorization, {
-  bearer: (effect, { credential }) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const token = yield* decodeBearerToken(
-        request.headers.authorization,
-        Redacted.value(credential)
-      );
+  bearer: (effect, { credential }) => {
+    const token = Redacted.value(credential);
 
-      return yield* Effect.provideService(
-        effect,
-        ShortcutBearerToken,
-        ShortcutBearerToken.of({ value: token })
-      );
-    }),
+    if (token.length === 0) {
+      return Effect.fail(new HttpApiError.Unauthorized());
+    }
+
+    return Effect.provideService(
+      effect,
+      ShortcutBearerToken,
+      ShortcutBearerToken.of({ value: token })
+    );
+  },
 });
 
-const ShortcutSchemaErrorHandlerLive =
-  HttpApiMiddleware.layerSchemaErrorTransform(ShortcutSchemaErrorHandler, () =>
-    Effect.fail(
-      new ShortcutInvalidInputError({ message: "Invalid request payload" })
-    )
-  );
+const ShortcutApiTokenPrincipalLive = Layer.effect(
+  ShortcutApiTokenPrincipal,
+  Effect.gen(function* () {
+    const apiTokens = yield* Server.ApiTokenService;
 
-export const ShortcutMiddlewareLive = Layer.mergeAll(
-  ShortcutAuthorizationLive,
-  ShortcutSchemaErrorHandlerLive
-);
+    return ShortcutApiTokenPrincipal.of((effect) =>
+      Effect.gen(function* () {
+        const bearerToken = yield* ShortcutBearerToken;
+        const authenticated = yield* apiTokens
+          .authenticate({ plaintextToken: bearerToken.value })
+          .pipe(
+            Effect.catchTags({
+              ApiTokenForbidden: () =>
+                Effect.fail(new HttpApiError.Forbidden()),
+              ApiTokenUnauthorized: () =>
+                Effect.fail(new HttpApiError.Unauthorized()),
+              ServiceUnavailable: () =>
+                Effect.die(new HttpApiError.ServiceUnavailable()),
+            })
+          );
 
-const decodeBearerToken = (
-  authorization: string | undefined,
-  credential: string
-) => {
-  if (authorization === undefined) {
-    return Effect.fail(
-      new ShortcutUnauthorizedError({ message: "Missing bearer token" })
-    );
-  }
-
-  if (!/^Bearer\s+.+$/iu.test(authorization) || credential.length === 0) {
-    return Effect.fail(
-      new ShortcutUnauthorizedError({ message: "Invalid authorization header" })
-    );
-  }
-
-  return Effect.succeed(credential);
-};
-
-type ShortcutScopeError =
-  | ShortcutForbiddenError
-  | ShortcutInstallationNotFoundError
-  | ShortcutInvalidInputError
-  | ShortcutMfaRequiredError
-  | ShortcutRateLimitError
-  | ShortcutServiceUnavailableError
-  | ShortcutUnauthorizedError
-  | ShortcutVerisureUpstreamError;
-
-export const provideShortcutAlarmScope =
-  (input: {
-    readonly giid: string;
-    readonly requiredScopes: readonly string[];
-  }) =>
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>
-  ): Effect.Effect<
-    A,
-    E | ShortcutScopeError,
-    | Exclude<
-        Exclude<Exclude<R, Server.CurrentUser>, Server.CurrentCredential>,
-        Server.CurrentInstallation
-      >
-    | Server.ApiTokenService
-    | Server.CredentialCrypto
-    | Server.VerisureRequests
-    | ShortcutBearerToken
-  > =>
-    Effect.gen(function* () {
-      const apiTokens = yield* Server.ApiTokenService;
-      const crypto = yield* Server.CredentialCrypto;
-      const requests = yield* Server.VerisureRequests;
-      const bearerToken = yield* ShortcutBearerToken;
-
-      const authenticated = yield* apiTokens
-        .authenticate({
-          giid: input.giid,
-          plaintextToken: bearerToken.value,
-          requiredScopes: input.requiredScopes,
-        })
-        .pipe(
-          Effect.mapError((error): ShortcutScopeError => {
-            if (error instanceof Server.ApiTokenForbidden) {
-              return new ShortcutForbiddenError({ message: error.message });
-            }
-            if (error instanceof Server.ApiTokenUnauthorized) {
-              return new ShortcutUnauthorizedError({ message: error.message });
-            }
-            return new ShortcutServiceUnavailableError({
-              message: error.message,
-            });
-          })
-        );
-
-      const decrypted = yield* crypto
-        .decryptCredential(authenticated.credential)
-        .pipe(
-          Effect.catchTag("CredentialCryptoError", () =>
-            Effect.fail(
-              new ShortcutInvalidInputError({
-                message: "Credential material is invalid",
-              })
-            )
-          )
-        );
-
-      const installations = yield* requests
-        .fetchAllInstallations({ email: Redacted.value(decrypted.email) })
-        .pipe(
+        return yield* effect.pipe(
+          Effect.provideService(Server.CurrentUser, authenticated.user),
           Effect.provideService(
             Server.CurrentCredential,
             authenticated.credential
           ),
-          Effect.mapError((error): ShortcutScopeError => {
-            if (
-              error instanceof Domain.AuthenticationError ||
-              error instanceof Domain.CredentialsRejected
-            ) {
-              return new ShortcutUnauthorizedError({ message: error.message });
-            }
-            if (error instanceof Domain.MFARequired) {
-              return new ShortcutMfaRequiredError({ message: error.message });
-            }
-            if (error instanceof Domain.RateLimitError) {
-              return new ShortcutRateLimitError({ message: error.message });
-            }
-            return new ShortcutVerisureUpstreamError({
-              message: "Unable to verify installation access",
-            });
-          })
+          Effect.provideService(
+            ShortcutAuthenticatedToken,
+            ShortcutAuthenticatedToken.of(authenticated)
+          )
         );
+      })
+    );
+  })
+);
 
-      if (
-        !installations.some((installation) => installation.giid === input.giid)
-      ) {
-        return yield* new ShortcutInstallationNotFoundError({
-          giid: input.giid,
-          message: "Installation not found",
-        });
-      }
+const ShortcutAlarmReadAccessLive = Layer.effect(
+  ShortcutAlarmReadAccess,
+  Effect.gen(function* () {
+    const crypto = yield* Server.CredentialCrypto;
+    const requests = yield* Server.VerisureRequests;
+    return ShortcutAlarmReadAccess.of((effect) =>
+      Effect.gen(function* () {
+        const scope = Server.ShortcutAlarmReadScope;
+        const giid = yield* routeGiid;
+        const authenticated = yield* ShortcutAuthenticatedToken;
 
-      return yield* effect.pipe(
-        Effect.provideService(Server.CurrentUser, authenticated.user),
-        Effect.provideService(
-          Server.CurrentCredential,
-          authenticated.credential
-        ),
-        Effect.provideService(Server.CurrentInstallation, { giid: input.giid })
-      );
-    });
+        if (!authenticated.token.scopes.includes(scope)) {
+          return yield* new HttpApiError.Forbidden();
+        }
+        if (
+          authenticated.token.allowedGiids !== undefined &&
+          !authenticated.token.allowedGiids.includes(giid)
+        ) {
+          return yield* new HttpApiError.Forbidden();
+        }
+
+        const decrypted = yield* crypto
+          .decryptCredential(authenticated.credential)
+          .pipe(Effect.catchTag("CredentialCryptoError", Effect.die));
+
+        const installations = yield* requests
+          .fetchAllInstallations({ email: Redacted.value(decrypted.email) })
+          .pipe(
+            Effect.provideService(
+              Server.CurrentCredential,
+              authenticated.credential
+            ),
+            Effect.mapError(mapVerisureRequestsError)
+          );
+
+        if (!installations.some((installation) => installation.giid === giid)) {
+          return yield* new HttpApiError.NotFound();
+        }
+
+        return yield* Effect.provideService(
+          effect,
+          Server.CurrentInstallation,
+          { giid }
+        );
+      })
+    );
+  })
+);
+
+const ShortcutAlarmWriteAccessLive = Layer.effect(
+  ShortcutAlarmWriteAccess,
+  Effect.gen(function* () {
+    const crypto = yield* Server.CredentialCrypto;
+    const requests = yield* Server.VerisureRequests;
+    return ShortcutAlarmWriteAccess.of((effect) =>
+      Effect.gen(function* () {
+        const scope = Server.ShortcutAlarmWriteScope;
+        const giid = yield* routeGiid;
+        const authenticated = yield* ShortcutAuthenticatedToken;
+
+        if (!authenticated.token.scopes.includes(scope)) {
+          return yield* new HttpApiError.Forbidden();
+        }
+        if (
+          authenticated.token.allowedGiids !== undefined &&
+          !authenticated.token.allowedGiids.includes(giid)
+        ) {
+          return yield* new HttpApiError.Forbidden();
+        }
+
+        const decrypted = yield* crypto
+          .decryptCredential(authenticated.credential)
+          .pipe(Effect.catchTag("CredentialCryptoError", Effect.die));
+
+        const installations = yield* requests
+          .fetchAllInstallations({ email: Redacted.value(decrypted.email) })
+          .pipe(
+            Effect.provideService(
+              Server.CurrentCredential,
+              authenticated.credential
+            ),
+            Effect.mapError(mapVerisureRequestsError)
+          );
+
+        if (!installations.some((installation) => installation.giid === giid)) {
+          return yield* new HttpApiError.NotFound();
+        }
+
+        return yield* Effect.provideService(
+          effect,
+          Server.CurrentInstallation,
+          { giid }
+        );
+      })
+    );
+  })
+);
+
+export const ShortcutMiddlewareLive = Layer.mergeAll(
+  ShortcutAuthorizationLive,
+  ShortcutApiTokenPrincipalLive,
+  ShortcutAlarmReadAccessLive,
+  ShortcutAlarmWriteAccessLive
+);
+
+const routeGiid = HttpRouter.params.pipe(
+  Effect.flatMap((params) => {
+    const { giid } = params;
+    return giid === undefined || giid.length === 0
+      ? Effect.fail(new HttpApiError.BadRequest())
+      : Effect.succeed(giid);
+  })
+);
+
+const mapVerisureRequestsError = (error: Server.VerisureRequestsError) => {
+  if (error.reason instanceof Server.VerisureRequestsMfaRequired) {
+    return new ShortcutMfaRequired({ message: error.reason.message });
+  }
+
+  return new HttpApiError.ServiceUnavailable();
+};

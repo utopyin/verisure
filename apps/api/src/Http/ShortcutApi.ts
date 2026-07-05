@@ -3,50 +3,62 @@ import * as Schema from "effect/Schema";
 import {
   HttpApi,
   HttpApiEndpoint,
+  HttpApiError,
   HttpApiGroup,
   OpenApi,
 } from "effect/unstable/httpapi";
 
-import { ShortcutRestErrorSchemas } from "./ShortcutErrors";
 import {
+  ShortcutAlarmReadAccess,
+  ShortcutAlarmWriteAccess,
+  ShortcutApiTokenPrincipal,
   ShortcutAuthorization,
-  ShortcutSchemaErrorHandler,
 } from "./ShortcutMiddleware";
 
-const GiidQuery = Schema.Struct({ giid: Schema.NonEmptyString });
+const GiidParams = Schema.Struct({ giid: Schema.NonEmptyString });
 
 const ToggleFullPayload = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
-  giid: Schema.NonEmptyString,
 });
 
 const SetModePayload = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
-  giid: Schema.NonEmptyString,
   mode: Domain.AlarmModeSchema,
 });
 
 class ShortcutAlarmApiGroup extends HttpApiGroup.make("alarm")
   .add(
-    HttpApiEndpoint.get("status", "/status", {
-      error: ShortcutRestErrorSchemas,
-      query: GiidQuery,
+    HttpApiEndpoint.get("status", "/installations/:giid/alarm/status", {
+      error: HttpApiError.ServiceUnavailableNoContent,
+      params: GiidParams,
       success: Domain.ArmStateSchema,
-    }),
-    HttpApiEndpoint.post("toggleFull", "/toggle-full", {
-      error: ShortcutRestErrorSchemas,
-      payload: ToggleFullPayload,
-      success: Domain.AlarmMutationResultSchema,
-    }),
-    HttpApiEndpoint.post("setMode", "/mode", {
-      error: ShortcutRestErrorSchemas,
+    }).middleware(ShortcutAlarmReadAccess),
+    HttpApiEndpoint.post(
+      "toggleFull",
+      "/installations/:giid/alarm/toggle-full",
+      {
+        error: [
+          HttpApiError.BadRequestNoContent,
+          HttpApiError.ServiceUnavailableNoContent,
+        ],
+        params: GiidParams,
+        payload: ToggleFullPayload,
+        success: Domain.AlarmMutationResultSchema,
+      }
+    ).middleware(ShortcutAlarmWriteAccess),
+    HttpApiEndpoint.post("setMode", "/installations/:giid/alarm/mode", {
+      error: [
+        HttpApiError.BadRequestNoContent,
+        HttpApiError.ServiceUnavailableNoContent,
+      ],
+      params: GiidParams,
       payload: SetModePayload,
       success: Domain.AlarmMutationResultSchema,
-    })
+    }).middleware(ShortcutAlarmWriteAccess)
   )
+  .middleware(ShortcutApiTokenPrincipal)
   .middleware(ShortcutAuthorization)
-  .middleware(ShortcutSchemaErrorHandler)
-  .prefix("/api/v1/alarm")
+  .prefix("/api/v1")
   .annotateMerge(
     OpenApi.annotations({
       description: "Shortcut alarm endpoints",
