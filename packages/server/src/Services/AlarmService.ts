@@ -93,41 +93,43 @@ export class AlarmService extends Context.Service<
       const getArmState = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.armState({ giid });
+      }).pipe(Effect.withSpan("AlarmService.getArmState"));
+
+      const resolveCode = Effect.fn("AlarmService.resolveCode")(function* (
+        code?: string
+      ) {
+        if (code !== undefined && code.length > 0) {
+          return code;
+        }
+        const credential = yield* CurrentCredential;
+        const decrypted = yield* crypto.decryptCredential(credential);
+        if (decrypted.pin === undefined) {
+          return yield* new ServiceError({
+            message: "Alarm code is required for this credential",
+          });
+        }
+        return Redacted.value(decrypted.pin);
       });
 
-      const resolveCode = (code?: string) =>
-        Effect.gen(function* () {
-          if (code !== undefined && code.length > 0) {
-            return code;
-          }
-          const credential = yield* CurrentCredential;
-          const decrypted = yield* crypto.decryptCredential(credential);
-          if (decrypted.pin === undefined) {
-            return yield* new ServiceError({
-              message: "Alarm code is required for this credential",
-            });
-          }
-          return Redacted.value(decrypted.pin);
+      const setMode: AlarmServiceShape["setMode"] = Effect.fn(
+        "AlarmService.setMode"
+      )(function* (input) {
+        const giid = yield* currentGiid;
+        const code = yield* resolveCode(input.code);
+        return yield* requests.setAlarmMode({
+          code,
+          giid,
+          mode: input.mode,
         });
+      });
 
-      const setMode: AlarmServiceShape["setMode"] = (input) =>
-        Effect.gen(function* () {
-          const giid = yield* currentGiid;
-          const code = yield* resolveCode(input.code);
-          return yield* requests.setAlarmMode({
-            code,
-            giid,
-            mode: input.mode,
-          });
-        });
-
-      const toggleFull: AlarmServiceShape["toggleFull"] = (code) =>
-        Effect.gen(function* () {
-          const current = yield* getArmState;
-          const mode =
-            current.type === "ARMED_AWAY" ? "DISARMED" : "ARMED_AWAY";
-          return yield* setMode({ code, mode });
-        });
+      const toggleFull: AlarmServiceShape["toggleFull"] = Effect.fn(
+        "AlarmService.toggleFull"
+      )(function* (code) {
+        const current = yield* getArmState;
+        const mode = current.type === "ARMED_AWAY" ? "DISARMED" : "ARMED_AWAY";
+        return yield* setMode({ code, mode });
+      });
 
       return AlarmService.of({
         getArmState,

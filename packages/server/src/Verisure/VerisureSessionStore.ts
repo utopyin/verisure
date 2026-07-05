@@ -81,33 +81,33 @@ export class VerisureSessionStore extends Context.Service<
 
       const currentCredentialId = Effect.map(CurrentCredential, ({ id }) => id);
 
-      const getLock = (credentialId: string) =>
-        Effect.gen(function* () {
-          const semaphore = yield* TxSemaphore.make(1);
-          return yield* Ref.modify(locks, (map) => {
-            const existing = map.get(credentialId);
-            if (existing !== undefined) {
-              return [existing, map];
-            }
-            return [semaphore, new Map([...map, [credentialId, semaphore]])];
-          });
+      const getLock = Effect.fn("VerisureSessionStore.getLock")(function* (
+        credentialId: string
+      ) {
+        const semaphore = yield* TxSemaphore.make(1);
+        return yield* Ref.modify(locks, (map) => {
+          const existing = map.get(credentialId);
+          if (existing !== undefined) {
+            return [existing, map];
+          }
+          return [semaphore, new Map([...map, [credentialId, semaphore]])];
         });
+      });
 
       const getSnapshot = Effect.gen(function* () {
         const credentialId = yield* currentCredentialId;
         const map = yield* Ref.get(snapshots);
         return Option.fromNullishOr(map.get(credentialId));
-      });
+      }).pipe(Effect.withSpan("VerisureSessionStore.getSnapshot"));
 
-      const putSnapshot: VerisureSessionStoreShape["putSnapshot"] = (
-        snapshot
-      ) =>
-        Effect.gen(function* () {
-          const credentialId = yield* currentCredentialId;
-          yield* Ref.update(snapshots, (map) =>
-            new Map(map).set(credentialId, snapshot)
-          );
-        });
+      const putSnapshot: VerisureSessionStoreShape["putSnapshot"] = Effect.fn(
+        "VerisureSessionStore.putSnapshot"
+      )(function* (snapshot) {
+        const credentialId = yield* currentCredentialId;
+        yield* Ref.update(snapshots, (map) =>
+          new Map(map).set(credentialId, snapshot)
+        );
+      });
 
       const clearSnapshot = Effect.gen(function* () {
         const credentialId = yield* currentCredentialId;
@@ -116,22 +116,23 @@ export class VerisureSessionStore extends Context.Service<
           next.delete(credentialId);
           return next;
         });
-      });
+      }).pipe(Effect.withSpan("VerisureSessionStore.clearSnapshot"));
 
       const getMfaState = Effect.gen(function* () {
         const credentialId = yield* currentCredentialId;
         const map = yield* Ref.get(mfaStates);
         return Option.fromNullishOr(map.get(credentialId));
-      });
+      }).pipe(Effect.withSpan("VerisureSessionStore.getMfaState"));
 
-      const putMfaState: VerisureSessionStoreShape["putMfaState"] = (mfa) =>
-        Effect.gen(function* () {
-          const credentialId = yield* currentCredentialId;
-          yield* Ref.update(
-            mfaStates,
-            (map) => new Map([...map, [credentialId, mfa]])
-          );
-        });
+      const putMfaState: VerisureSessionStoreShape["putMfaState"] = Effect.fn(
+        "VerisureSessionStore.putMfaState"
+      )(function* (mfa) {
+        const credentialId = yield* currentCredentialId;
+        yield* Ref.update(
+          mfaStates,
+          (map) => new Map([...map, [credentialId, mfa]])
+        );
+      });
 
       const clearMfaState = Effect.gen(function* () {
         const credentialId = yield* currentCredentialId;
@@ -140,15 +141,16 @@ export class VerisureSessionStore extends Context.Service<
           next.delete(credentialId);
           return next;
         });
-      });
+      }).pipe(Effect.withSpan("VerisureSessionStore.clearMfaState"));
 
       const withCredentialLock: VerisureSessionStoreShape["withCredentialLock"] =
-        (effect) =>
-          Effect.gen(function* () {
+        Effect.fn("VerisureSessionStore.withCredentialLock")(
+          function* (effect) {
             const credentialId = yield* currentCredentialId;
             const semaphore = yield* getLock(credentialId);
             return yield* effect.pipe(TxSemaphore.withPermit(semaphore));
-          });
+          }
+        );
 
       return VerisureSessionStore.of({
         clearMfaState,

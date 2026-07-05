@@ -78,22 +78,22 @@ export class DeviceService extends Context.Service<
       const listDoorWindows = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.doorWindows({ giid });
-      });
+      }).pipe(Effect.withSpan("DeviceService.listDoorWindows"));
 
       const listClimate = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.climate({ giid });
-      });
+      }).pipe(Effect.withSpan("DeviceService.listClimate"));
 
       const listSmartLocks = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.smartLocks({ giid });
-      });
+      }).pipe(Effect.withSpan("DeviceService.listSmartLocks"));
 
       const listSmartPlugs = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.smartPlugs({ giid });
-      });
+      }).pipe(Effect.withSpan("DeviceService.listSmartPlugs"));
 
       return DeviceService.of({
         listClimate,

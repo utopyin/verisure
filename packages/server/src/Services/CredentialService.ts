@@ -147,24 +147,25 @@ export class CredentialService extends Context.Service<
         const user = yield* CurrentUser;
         const rows = yield* repository.listForUser(user.id);
         return yield* Effect.forEach(rows, summarize);
-      });
+      }).pipe(Effect.withSpan("CredentialService.list"));
 
-      const create: CredentialServiceShape["create"] = (input) =>
-        Effect.gen(function* () {
-          const user = yield* CurrentUser;
-          const encrypted = yield* crypto.encryptCredential(input);
-          const now = new Date();
-          const row = yield* repository.create({
-            alias: input.alias,
-            encryptedEmail: encrypted.encryptedEmail,
-            encryptedPassword: encrypted.encryptedPassword,
-            encryptedPin: encrypted.encryptedPin,
-            id: yield* platformCrypto.randomUUIDv4,
-            now,
-            userId: user.id,
-          });
-          return credentialSummary(row, input.email);
+      const create: CredentialServiceShape["create"] = Effect.fn(
+        "CredentialService.create"
+      )(function* (input) {
+        const user = yield* CurrentUser;
+        const encrypted = yield* crypto.encryptCredential(input);
+        const now = new Date();
+        const row = yield* repository.create({
+          alias: input.alias,
+          encryptedEmail: encrypted.encryptedEmail,
+          encryptedPassword: encrypted.encryptedPassword,
+          encryptedPin: encrypted.encryptedPin,
+          id: yield* platformCrypto.randomUUIDv4,
+          now,
+          userId: user.id,
         });
+        return credentialSummary(row, input.email);
+      });
 
       const deleteCredential = Effect.gen(function* () {
         const credential = yield* CurrentCredential;
@@ -172,7 +173,7 @@ export class CredentialService extends Context.Service<
           id: credential.id,
           userId: credential.userId,
         });
-      });
+      }).pipe(Effect.withSpan("CredentialService.delete"));
 
       const listScopedInstallations = Effect.gen(function* () {
         yield* auth.ensureSession;
@@ -181,7 +182,7 @@ export class CredentialService extends Context.Service<
         return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
-      });
+      }).pipe(Effect.withSpan("CredentialService.listScopedInstallations"));
 
       const checkConnection = listScopedInstallations;
 
@@ -192,16 +193,17 @@ export class CredentialService extends Context.Service<
           credentialId: credential.id,
           status: "mfa_requested" as const,
         };
-      });
+      }).pipe(Effect.withSpan("CredentialService.requestMfa"));
 
-      const validateMfa: CredentialServiceShape["validateMfa"] = (code) =>
-        Effect.gen(function* () {
-          yield* auth.validateMfa(code);
-          const installations = yield* listScopedInstallations;
-          const current = yield* CurrentCredential;
-          const credential = yield* summarize(current);
-          return { credential, installations };
-        });
+      const validateMfa: CredentialServiceShape["validateMfa"] = Effect.fn(
+        "CredentialService.validateMfa"
+      )(function* (code) {
+        yield* auth.validateMfa(code);
+        const installations = yield* listScopedInstallations;
+        const current = yield* CurrentCredential;
+        const credential = yield* summarize(current);
+        return { credential, installations };
+      });
 
       const { logout } = auth;
 

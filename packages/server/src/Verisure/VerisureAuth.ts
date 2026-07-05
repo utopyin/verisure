@@ -85,33 +85,32 @@ export class VerisureAuth extends Context.Service<
       const sessions = yield* VerisureSessionStore;
       const transport = yield* VerisureTransport;
 
-      const setStatus = (
+      const setStatus = Effect.fn("VerisureAuth.setStatus")(function* (
         status: ConnectionStatus,
         message?: string | null,
         extra?: {
           readonly connectedAt?: Date | null;
           readonly mfaRequestedAt?: Date | null;
         }
-      ) =>
-        Effect.gen(function* () {
-          const credential = yield* CurrentCredential;
-          const now = new Date();
-          yield* credentials.setConnectionStatus({
-            attemptedAt: now,
-            connectedAt: extra?.connectedAt,
-            id: credential.id,
-            message,
-            mfaRequestedAt: extra?.mfaRequestedAt,
-            now,
-            status,
-            userId: credential.userId,
-          });
+      ) {
+        const credential = yield* CurrentCredential;
+        const now = new Date();
+        yield* credentials.setConnectionStatus({
+          attemptedAt: now,
+          connectedAt: extra?.connectedAt,
+          id: credential.id,
+          message,
+          mfaRequestedAt: extra?.mfaRequestedAt,
+          now,
+          status,
+          userId: credential.userId,
         });
+      });
 
       const decryptedCredential = Effect.gen(function* () {
         const credential = yield* CurrentCredential;
         return yield* crypto.decryptCredential(credential);
-      });
+      }).pipe(Effect.withSpan("VerisureAuth.decryptedCredential"));
 
       const { preferredBaseUrl } = transport;
 
@@ -134,16 +133,17 @@ export class VerisureAuth extends Context.Service<
         );
       };
 
-      const saveConnectedSnapshot = (snapshot: SessionSnapshot) =>
-        Effect.gen(function* () {
-          yield* sessions.putSnapshot(snapshot);
-          yield* sessions.clearMfaState;
-          yield* setStatus("connected", null, {
-            connectedAt: new Date(snapshot.authenticatedAt),
-            mfaRequestedAt: null,
-          });
-          return snapshot;
+      const saveConnectedSnapshot = Effect.fn(
+        "VerisureAuth.saveConnectedSnapshot"
+      )(function* (snapshot: SessionSnapshot) {
+        yield* sessions.putSnapshot(snapshot);
+        yield* sessions.clearMfaState;
+        yield* setStatus("connected", null, {
+          connectedAt: new Date(snapshot.authenticatedAt),
+          mfaRequestedAt: null,
         });
+        return snapshot;
+      });
 
       const loginRequest = (
         email: Redacted.Redacted,
@@ -156,50 +156,51 @@ export class VerisureAuth extends Context.Service<
           }).pipe(HttpClientRequest.basicAuth(email, password))
         );
 
-      const verifySession = (
+      const verifySession = Effect.fn("VerisureAuth.verifySession")(function* (
         email: string,
         cookies: readonly SessionCookie[]
-      ) =>
-        Effect.gen(function* () {
-          const operation = yield* fetchAllInstallationsOperation({
-            email,
-          }).pipe(Effect.mapError(graphQLOperationInputError));
-          yield* transport.executeGraphQL({
-            cookies,
-            operation,
-          });
+      ) {
+        const operation = yield* fetchAllInstallationsOperation({
+          email,
+        }).pipe(Effect.mapError(graphQLOperationInputError));
+        yield* transport.executeGraphQL({
+          cookies,
+          operation,
         });
-
-      const loginWithBasicAuth = Effect.gen(function* () {
-        const decrypted = yield* decryptedCredential;
-        const response = yield* loginRequest(
-          decrypted.email,
-          decrypted.password
-        );
-        const text = yield* responseText(response);
-        const cookies = yield* responseCookies(response);
-
-        if (text.includes("stepUpToken")) {
-          yield* sessions.putMfaState({ cookies, requestedAt: Date.now() });
-          const requestedAt = new Date();
-          yield* setStatus(
-            "mfa_required",
-            "Verisure requires multifactor authentication",
-            { mfaRequestedAt: requestedAt }
-          );
-          return yield* new MFARequired({
-            message: "Verisure requires multifactor authentication",
-            statusCode: response.status,
-          });
-        }
-
-        yield* verifySession(Redacted.value(decrypted.email), cookies);
-        const snapshot = yield* makeSnapshot({ cookies });
-        return yield* saveConnectedSnapshot(snapshot);
       });
 
-      const refreshSession = (snapshot: SessionSnapshot) =>
-        Effect.gen(function* () {
+      const loginWithBasicAuth = Effect.fn("VerisureAuth.loginWithBasicAuth")(
+        function* () {
+          const decrypted = yield* decryptedCredential;
+          const response = yield* loginRequest(
+            decrypted.email,
+            decrypted.password
+          );
+          const text = yield* responseText(response);
+          const cookies = yield* responseCookies(response);
+
+          if (text.includes("stepUpToken")) {
+            yield* sessions.putMfaState({ cookies, requestedAt: Date.now() });
+            const requestedAt = new Date();
+            yield* setStatus(
+              "mfa_required",
+              "Verisure requires multifactor authentication",
+              { mfaRequestedAt: requestedAt }
+            );
+            return yield* new MFARequired({
+              message: "Verisure requires multifactor authentication",
+              statusCode: response.status,
+            });
+          }
+
+          yield* verifySession(Redacted.value(decrypted.email), cookies);
+          const snapshot = yield* makeSnapshot({ cookies });
+          return yield* saveConnectedSnapshot(snapshot);
+        }
+      );
+
+      const refreshSession = Effect.fn("VerisureAuth.refreshSession")(
+        function* (snapshot: SessionSnapshot) {
           const refreshCookies = snapshot.cookies.filter((cookie) =>
             RefreshCookieNames.has(cookie.name)
           );
@@ -221,64 +222,67 @@ export class VerisureAuth extends Context.Service<
             Date.now()
           );
           return yield* saveConnectedSnapshot(refreshed);
-        });
+        }
+      );
 
-      const loginWithTrustCookie = (snapshot: SessionSnapshot) =>
-        Effect.gen(function* () {
-          const trustCookies = snapshot.cookies.filter((cookie) =>
-            cookie.name.includes("vs-trust")
-          );
-          if (trustCookies.length === 0) {
-            return yield* new CookieReadError({
-              message: "Verisure session snapshot has no trust cookie",
-            });
-          }
-
-          const decrypted = yield* decryptedCredential;
-          const response = yield* loginRequest(
-            decrypted.email,
-            decrypted.password,
-            trustCookies
-          );
-          const text = yield* responseText(response);
-          if (text.includes("stepUpToken")) {
-            return yield* new MFARequired({
-              message: "Verisure requires multifactor authentication",
-              statusCode: response.status,
-            });
-          }
-          const cookies = mergeSessionCookies(
-            snapshot.cookies,
-            yield* responseCookies(response)
-          );
-          yield* verifySession(Redacted.value(decrypted.email), cookies);
-          const next = yield* makeSnapshot({
-            cookies,
-            trustToken: snapshot.trustToken,
+      const loginWithTrustCookie = Effect.fn(
+        "VerisureAuth.loginWithTrustCookie"
+      )(function* (snapshot: SessionSnapshot) {
+        const trustCookies = snapshot.cookies.filter((cookie) =>
+          cookie.name.includes("vs-trust")
+        );
+        if (trustCookies.length === 0) {
+          return yield* new CookieReadError({
+            message: "Verisure session snapshot has no trust cookie",
           });
-          return yield* saveConnectedSnapshot(next);
+        }
+
+        const decrypted = yield* decryptedCredential;
+        const response = yield* loginRequest(
+          decrypted.email,
+          decrypted.password,
+          trustCookies
+        );
+        const text = yield* responseText(response);
+        if (text.includes("stepUpToken")) {
+          return yield* new MFARequired({
+            message: "Verisure requires multifactor authentication",
+            statusCode: response.status,
+          });
+        }
+        const cookies = mergeSessionCookies(
+          snapshot.cookies,
+          yield* responseCookies(response)
+        );
+        yield* verifySession(Redacted.value(decrypted.email), cookies);
+        const next = yield* makeSnapshot({
+          cookies,
+          trustToken: snapshot.trustToken,
         });
+        return yield* saveConnectedSnapshot(next);
+      });
 
-      const recoverExpiredSnapshot = (snapshot: SessionSnapshot) =>
-        Effect.gen(function* () {
-          const refreshed = yield* Effect.result(refreshSession(snapshot));
-          if (Result.isSuccess(refreshed)) {
-            return refreshed.success;
-          }
-          if (!canTryTrustLogin(refreshed.failure)) {
-            return yield* refreshed.failure;
-          }
+      const recoverExpiredSnapshot = Effect.fn(
+        "VerisureAuth.recoverExpiredSnapshot"
+      )(function* (snapshot: SessionSnapshot) {
+        const refreshed = yield* Effect.result(refreshSession(snapshot));
+        if (Result.isSuccess(refreshed)) {
+          return refreshed.success;
+        }
+        if (!canTryTrustLogin(refreshed.failure)) {
+          return yield* refreshed.failure;
+        }
 
-          const trusted = yield* Effect.result(loginWithTrustCookie(snapshot));
-          if (Result.isSuccess(trusted)) {
-            return trusted.success;
-          }
-          if (!canTryBasicLogin(trusted.failure)) {
-            return yield* trusted.failure;
-          }
+        const trusted = yield* Effect.result(loginWithTrustCookie(snapshot));
+        if (Result.isSuccess(trusted)) {
+          return trusted.success;
+        }
+        if (!canTryBasicLogin(trusted.failure)) {
+          return yield* trusted.failure;
+        }
 
-          return yield* loginWithBasicAuth;
-        });
+        return yield* loginWithBasicAuth();
+      });
 
       const currentValidSnapshot = Effect.gen(function* () {
         const snapshot = yield* sessions.getSnapshot;
@@ -286,12 +290,12 @@ export class VerisureAuth extends Context.Service<
           return Option.some(snapshot.value);
         }
         return Option.none<SessionSnapshot>();
-      });
+      }).pipe(Effect.withSpan("VerisureAuth.currentValidSnapshot"));
 
-      const withStatusUpdates = <A, E extends VerisureAuthError, R>(
-        effect: Effect.Effect<A, E, R>
-      ) =>
-        Effect.gen(function* () {
+      const withStatusUpdates = Effect.fn("VerisureAuth.withStatusUpdates")(
+        function* <A, E extends VerisureAuthError, R>(
+          effect: Effect.Effect<A, E, R>
+        ) {
           const result = yield* Effect.result(effect);
           if (Result.isSuccess(result)) {
             return result.success;
@@ -300,7 +304,8 @@ export class VerisureAuth extends Context.Service<
             Effect.ignore
           );
           return yield* result.failure;
-        });
+        }
+      );
 
       const ensureSession = Effect.gen(function* () {
         const valid = yield* currentValidSnapshot;
@@ -313,8 +318,12 @@ export class VerisureAuth extends Context.Service<
           return yield* recoverExpiredSnapshot(snapshot.value);
         }
 
-        return yield* loginWithBasicAuth;
-      }).pipe(withStatusUpdates, sessions.withCredentialLock);
+        return yield* loginWithBasicAuth();
+      }).pipe(
+        Effect.withSpan("VerisureAuth.ensureSession"),
+        withStatusUpdates,
+        sessions.withCredentialLock
+      );
 
       const requestMfa = Effect.gen(function* () {
         const decrypted = yield* decryptedCredential;
@@ -358,10 +367,14 @@ export class VerisureAuth extends Context.Service<
           lastError = attempt.failure;
         }
         return yield* lastError;
-      }).pipe(withStatusUpdates, sessions.withCredentialLock);
+      }).pipe(
+        Effect.withSpan("VerisureAuth.requestMfa"),
+        withStatusUpdates,
+        sessions.withCredentialLock
+      );
 
-      const validateMfa: VerisureAuthShape["validateMfa"] = (token) =>
-        Effect.gen(function* () {
+      const validateMfaOperation = Effect.fn("VerisureAuth.validateMfa")(
+        function* (token: string) {
           const mfa = yield* sessions.getMfaState;
           if (Option.isNone(mfa)) {
             return yield* new CookieReadError({
@@ -403,7 +416,14 @@ export class VerisureAuth extends Context.Service<
             trustToken,
           });
           return yield* saveConnectedSnapshot(snapshot);
-        }).pipe(withStatusUpdates, sessions.withCredentialLock);
+        }
+      );
+
+      const validateMfa: VerisureAuthShape["validateMfa"] = (token) =>
+        validateMfaOperation(token).pipe(
+          withStatusUpdates,
+          sessions.withCredentialLock
+        );
 
       const clearLogoutState = Effect.gen(function* () {
         yield* sessions.clearSnapshot;
@@ -412,7 +432,7 @@ export class VerisureAuth extends Context.Service<
           connectedAt: null,
           mfaRequestedAt: null,
         });
-      });
+      }).pipe(Effect.withSpan("VerisureAuth.clearLogoutState"));
 
       const logout = Effect.gen(function* () {
         const snapshot = yield* sessions.getSnapshot;
@@ -437,6 +457,7 @@ export class VerisureAuth extends Context.Service<
           );
         }
       }).pipe(
+        Effect.withSpan("VerisureAuth.logout"),
         Effect.ensuring(
           clearLogoutState.pipe(
             Effect.ignore({
@@ -450,7 +471,7 @@ export class VerisureAuth extends Context.Service<
 
       return VerisureAuth.of({
         ensureSession,
-        login: loginWithBasicAuth.pipe(sessions.withCredentialLock),
+        login: loginWithBasicAuth().pipe(sessions.withCredentialLock),
         logout,
         requestMfa,
         validateMfa,

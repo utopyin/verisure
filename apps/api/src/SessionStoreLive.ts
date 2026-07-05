@@ -36,70 +36,74 @@ export const VerisureSessionStoreLive = Layer.effect(
       namespace.getByName(id)
     );
 
-    const acquire = (ownerId: string) =>
-      Effect.gen(function* () {
-        while (true) {
-          const stub = yield* getStub;
-          const acquired = yield* wrap(
-            stub.acquireLock({
-              now: Date.now(),
-              ownerId,
-              ttlMs: LockTtlMs,
-            })
-          );
-          if (acquired) {
-            return ownerId;
-          }
-          yield* Effect.sleep(LockRetryMs);
-        }
-      });
-
-    const withCredentialLock: WithCredentialLock = (effect) =>
-      Effect.gen(function* () {
+    const acquire = Effect.fn("VerisureSessionStoreLive.acquire")(function* (
+      ownerId: string
+    ) {
+      while (true) {
         const stub = yield* getStub;
-        const ownerId = crypto.randomUUID();
-        yield* acquire(ownerId);
-        return yield* effect.pipe(
-          Effect.ensuring(
-            wrap(stub.releaseLock(ownerId)).pipe(
-              Effect.ignore({
-                log: true,
-                message: "Failed to release Verisure session lock",
-              })
-            )
-          )
+        const acquired = yield* wrap(
+          stub.acquireLock({
+            now: Date.now(),
+            ownerId,
+            ttlMs: LockTtlMs,
+          })
         );
-      });
+        if (acquired) {
+          return ownerId;
+        }
+        yield* Effect.sleep(LockRetryMs);
+      }
+    });
+
+    const withCredentialLock: WithCredentialLock = Effect.fn(
+      "VerisureSessionStoreLive.withCredentialLock"
+    )(function* (effect) {
+      const stub = yield* getStub;
+      const ownerId = crypto.randomUUID();
+      yield* acquire(ownerId);
+      return yield* effect.pipe(
+        Effect.ensuring(
+          wrap(stub.releaseLock(ownerId)).pipe(
+            Effect.ignore({
+              log: true,
+              message: "Failed to release Verisure session lock",
+            })
+          )
+        )
+      );
+    });
 
     return VerisureSessionStore.of({
       clearMfaState: Effect.gen(function* () {
         const stub = yield* getStub;
         yield* wrap(stub.clearMfaState());
-      }),
+      }).pipe(Effect.withSpan("VerisureSessionStoreLive.clearMfaState")),
       clearSnapshot: Effect.gen(function* () {
         const stub = yield* getStub;
         yield* wrap(stub.clearSnapshot());
-      }),
+      }).pipe(Effect.withSpan("VerisureSessionStoreLive.clearSnapshot")),
       getMfaState: Effect.gen(function* () {
         const stub = yield* getStub;
         const mfa = yield* wrap(stub.getMfaState());
         return Option.fromNullishOr(mfa);
-      }),
+      }).pipe(Effect.withSpan("VerisureSessionStoreLive.getMfaState")),
       getSnapshot: Effect.gen(function* () {
         const stub = yield* getStub;
         const snapshot = yield* wrap(stub.getSnapshot());
         return Option.fromNullishOr(snapshot);
-      }),
-      putMfaState: (mfa) =>
-        Effect.gen(function* () {
+      }).pipe(Effect.withSpan("VerisureSessionStoreLive.getSnapshot")),
+      putMfaState: Effect.fn("VerisureSessionStoreLive.putMfaState")(
+        function* (mfa) {
           const stub = yield* getStub;
           yield* wrap(stub.putMfaState(mfa));
-        }),
-      putSnapshot: (snapshot) =>
-        Effect.gen(function* () {
+        }
+      ),
+      putSnapshot: Effect.fn("VerisureSessionStoreLive.putSnapshot")(
+        function* (snapshot) {
           const stub = yield* getStub;
           yield* wrap(stub.putSnapshot(snapshot));
-        }),
+        }
+      ),
       withCredentialLock,
     });
   })

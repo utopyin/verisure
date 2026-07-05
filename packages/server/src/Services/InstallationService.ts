@@ -87,28 +87,26 @@ export class InstallationService extends Context.Service<
         return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
-      });
+      }).pipe(Effect.withSpan("InstallationService.list"));
 
-      const setDefault: InstallationServiceShape["setDefault"] = (giid) =>
-        Effect.gen(function* () {
-          const credential = yield* CurrentCredential;
-          const updated = yield* repository.setDefaultInstallation({
-            giid,
-            id: credential.id,
-            now: new Date(),
-            userId: credential.userId,
-          });
-          if (Option.isNone(updated)) {
-            return yield* new ServiceError({
-              message:
-                "Credential not found while setting default installation",
-            });
-          }
-          const email = yield* crypto.decryptString(
-            updated.value.encryptedEmail
-          );
-          return credentialSummary(updated.value, email);
+      const setDefault: InstallationServiceShape["setDefault"] = Effect.fn(
+        "InstallationService.setDefault"
+      )(function* (giid) {
+        const credential = yield* CurrentCredential;
+        const updated = yield* repository.setDefaultInstallation({
+          giid,
+          id: credential.id,
+          now: new Date(),
+          userId: credential.userId,
         });
+        if (Option.isNone(updated)) {
+          return yield* new ServiceError({
+            message: "Credential not found while setting default installation",
+          });
+        }
+        const email = yield* crypto.decryptString(updated.value.encryptedEmail);
+        return credentialSummary(updated.value, email);
+      });
 
       const getDefault = CurrentCredential.pipe(
         Effect.map((credential) => credential.defaultGiid ?? undefined)
