@@ -33,3 +33,5 @@
 - Finding 03 has refactored production `Effect.result`/mutable `lastError` control flow in Verisure transport/auth into typed Effect fallback composition.
 - Finding 05 has split infrastructure-facing layers into implementation (`layerNoDeps`/`NoDeps`) and provided (`layer`/`Live`/`Configured`) variants.
 - Finding 08 has split the API worker composition root into named infrastructure, persistence, application, and HTTP route layers, leaving `worker.ts` as a thin Cloudflare adapter.
+- Finding 06 has an ADR accepting the current Drizzle effectful adapter only as a temporary migration bridge with explicit future regression-test requirements.
+- Finding 09 has split the shared RPC contract into feature modules while keeping the existing compatibility exports and `DashboardRpcs` merge order.

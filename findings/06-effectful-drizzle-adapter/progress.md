@@ -11,9 +11,11 @@
 - Reviewed `packages/db/src/drizzle.ts`.
 - Compared with Effect wrapping/service examples.
 - Documented risks and possible alternatives.
+- Added `docs/adr/0001-drizzle-effectful-adapter.md`, accepting the current prototype-patching/currentContext adapter only as a temporary migration bridge.
+- Recorded ADR requirements for regression coverage before any replacement: SQL error mapping, fiber context propagation, concurrent/nested query isolation, and unchanged repository service APIs.
 
 ## what is next
 
-- Treat this as a design spike before implementation.
-- If changing it, migrate repositories incrementally behind their existing service APIs.
-- Dependencies: independent, but easier after `05-layer-composition-naming` clarifies database layer boundaries.
+- Do not change DB production code as part of this documentation-only slice.
+- Before replacing the adapter, add the ADR-required regression tests and migrate query boundaries incrementally behind existing repository/service APIs.
+- Prefer explicit repository or database-service query wrappers for the future migration.
