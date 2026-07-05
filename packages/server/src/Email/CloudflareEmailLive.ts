@@ -8,7 +8,7 @@ import type { EmailServiceShape } from "./EmailService";
 
 export const Email = Cloudflare.SendEmail("Email");
 
-export const CloudflareEmailLive = Layer.effect(
+export const CloudflareEmailNoDeps = Layer.effect(
   EmailService,
   Effect.gen(function* () {
     const config = yield* RuntimeConfig;
@@ -39,4 +39,8 @@ export const CloudflareEmailLive = Layer.effect(
 
     return EmailService.of({ send });
   })
-).pipe(Layer.provide(Cloudflare.SendEmailBindingLive));
+);
+
+export const CloudflareEmailLive = CloudflareEmailNoDeps.pipe(
+  Layer.provide(Cloudflare.SendEmailBindingLive)
+);

@@ -31,3 +31,4 @@
 - Finding 01 has been implemented for representative production boundaries.
 - Finding 02 has migrated domain/server boundary errors from `Data.TaggedError` to `Schema.TaggedErrorClass`.
 - Finding 03 has refactored production `Effect.result`/mutable `lastError` control flow in Verisure transport/auth into typed Effect fallback composition.
+- Finding 05 has split infrastructure-facing layers into implementation (`layerNoDeps`/`NoDeps`) and provided (`layer`/`Live`/`Configured`) variants.

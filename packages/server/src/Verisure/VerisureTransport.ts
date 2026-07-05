@@ -61,7 +61,7 @@ export class VerisureTransport extends Context.Service<
   VerisureTransport,
   VerisureTransportShape
 >()("@verisure/server/VerisureTransport") {
-  static readonly layer = (options: VerisureTransportOptions = {}) =>
+  static readonly layerNoDeps = (options: VerisureTransportOptions = {}) =>
     Layer.effect(
       VerisureTransport,
       Effect.gen(function* () {
@@ -224,9 +224,12 @@ export class VerisureTransport extends Context.Service<
           request,
         });
       })
-    ).pipe(Layer.provide(FetchHttpClient.layer));
+    );
 
-  static readonly Live = Layer.unwrap(
+  static readonly layer = (options: VerisureTransportOptions = {}) =>
+    this.layerNoDeps(options).pipe(Layer.provide(FetchHttpClient.layer));
+
+  static readonly Configured = Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* RuntimeConfig;
       return VerisureTransport.layer({
@@ -235,6 +238,8 @@ export class VerisureTransport extends Context.Service<
       });
     })
   );
+
+  static readonly Live = this.Configured;
 }
 
 const cookieHeader = (cookies: readonly SessionCookie[]) =>

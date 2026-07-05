@@ -80,7 +80,7 @@ export class BetterAuthService extends Context.Service<
       })
     );
 
-  static readonly Live = Layer.effect(
+  static readonly layerNoDeps = Layer.effect(
     BetterAuthService,
     Effect.gen(function* () {
       const config = yield* RuntimeConfig;
@@ -172,7 +172,9 @@ export class BetterAuthService extends Context.Service<
 
       return BetterAuthService.of({ auth: getBetterAuth, fetch, getSession });
     })
-  ).pipe(Layer.provide(EmailLive));
+  );
+
+  static readonly Live = this.layerNoDeps.pipe(Layer.provide(EmailLive));
 }
 
 const renderMagicLinkEmail = (input: {

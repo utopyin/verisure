@@ -138,7 +138,7 @@ export class VerisureRequests extends Context.Service<
     );
   };
 
-  static readonly layer = Layer.effect(
+  static readonly layerNoDeps = Layer.effect(
     VerisureRequests,
     Effect.gen(function* () {
       const auth = yield* VerisureAuth;
@@ -171,6 +171,8 @@ export class VerisureRequests extends Context.Service<
       });
     })
   );
+
+  static readonly layer = this.layerNoDeps;
 
   static readonly Live = this.layer.pipe(
     Layer.provideMerge(
