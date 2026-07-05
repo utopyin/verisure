@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -10,8 +11,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const DevicePostureRuleTypeId = "Cloudflare.Devices.PostureRule" as const;
-type DevicePostureRuleTypeId = typeof DevicePostureRuleTypeId;
+const TypeId = "Cloudflare.Devices.PostureRule" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The type of device posture rule, e.g. `os_version`, `firewall`,
@@ -100,7 +101,7 @@ export type DevicePostureRuleAttributes = {
 };
 
 export type DevicePostureRule = Resource<
-  DevicePostureRuleTypeId,
+  TypeId,
   DevicePostureRuleProps,
   DevicePostureRuleAttributes,
   never,
@@ -116,11 +117,13 @@ export type DevicePostureRule = Resource<
  *
  * Everything except `type` is mutable in place (full PUT). Changing
  * `type` replaces the rule.
- *
+ * @resource
+ * @product Devices
+ * @category Cloudflare One (Zero Trust)
  * @section Infrastructure-free checks
  * @example Require a minimum Windows version
  * ```typescript
- * const rule = yield* Cloudflare.DevicePostureRule("WindowsOsVersion", {
+ * const rule = yield* Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
  *   type: "os_version",
  *   description: "Require Windows 10.0.19045+",
  *   match: [{ platform: "windows" }],
@@ -135,7 +138,7 @@ export type DevicePostureRule = Resource<
  *
  * @example Require the OS firewall to be enabled
  * ```typescript
- * yield* Cloudflare.DevicePostureRule("Firewall", {
+ * yield* Cloudflare.Devices.DevicePostureRule("Firewall", {
  *   type: "firewall",
  *   match: [{ platform: "windows" }, { platform: "mac" }],
  *   input: { enabled: true, operatingSystem: "windows" },
@@ -144,7 +147,7 @@ export type DevicePostureRule = Resource<
  *
  * @example Require disk encryption on all drives
  * ```typescript
- * yield* Cloudflare.DevicePostureRule("DiskEncryption", {
+ * yield* Cloudflare.Devices.DevicePostureRule("DiskEncryption", {
  *   type: "disk_encryption",
  *   match: [{ platform: "mac" }],
  *   input: { requireAll: true },
@@ -153,9 +156,7 @@ export type DevicePostureRule = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/identity/devices/
  */
-export const DevicePostureRule = Resource<DevicePostureRule>(
-  DevicePostureRuleTypeId,
-);
+export const DevicePostureRule = Resource<DevicePostureRule>(TypeId);
 
 /**
  * Returns true if the given value is a DevicePostureRule resource.
@@ -163,12 +164,27 @@ export const DevicePostureRule = Resource<DevicePostureRule>(
 export const isDevicePostureRule = (
   value: unknown,
 ): value is DevicePostureRule =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === DevicePostureRuleTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const DevicePostureRuleProvider = () =>
   Provider.succeed(DevicePostureRule, {
     stables: ["postureRuleId", "accountId", "type"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection: exhaustively paginate the device
+      // posture rules list and hydrate each into the `read` shape.
+      return yield* zeroTrust.listDevicePostures.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).map((rule) => toAttributes(rule, accountId)),
+          ),
+        ),
+        // Account lacks the Zero Trust / device posture entitlement.
+        Effect.catchTag("Forbidden", () => Effect.succeed([])),
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -269,7 +285,8 @@ export const DevicePostureRuleProvider = () =>
 type ObservedRule =
   | zeroTrust.GetDevicePostureResponse
   | zeroTrust.CreateDevicePostureResponse
-  | zeroTrust.UpdateDevicePostureResponse;
+  | zeroTrust.UpdateDevicePostureResponse
+  | zeroTrust.ListDevicePosturesResponse["result"][number];
 
 /**
  * Read a posture rule by id, mapping "gone" (`PostureRuleNotFound`,

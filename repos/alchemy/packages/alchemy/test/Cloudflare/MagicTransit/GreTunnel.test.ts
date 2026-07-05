@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import { expect } from "@effect/vitest";
@@ -97,6 +98,48 @@ test.provider(
   { timeout: 120_000 },
 );
 
+// `list()` enumerates every GRE tunnel in the account. On an unentitled
+// account the underlying `listGreTunnels` rejects with the typed
+// `MagicTransitNotOnboarded` / `Forbidden` tags, which the provider maps to
+// `[]` — so the read-only assertion is safe to run unconditionally. On an
+// entitled account (CLOUDFLARE_TEST_MAGIC_TRANSIT=1) we deploy a tunnel and
+// assert it shows up in the exhaustively-enumerated result.
+test.provider(
+  "list enumerates the deployed GRE tunnels",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicTransit.GreTunnel,
+      );
+
+      if (!entitled) {
+        // Unentitled: list() swallows the typed entitlement tag and yields [].
+        const all = yield* provider.list();
+        expect(Array.isArray(all)).toBe(true);
+        return;
+      }
+
+      const tunnel = yield* stack.deploy(
+        Cloudflare.MagicTransit.GreTunnel("ListGre", {
+          name: "alch-gre-list",
+          cloudflareGreEndpoint: cfEndpoint,
+          customerGreEndpoint: "198.51.100.20",
+          interfaceAddress: "10.213.20.20/31",
+        }),
+      );
+
+      const all = yield* provider.list();
+      expect(all.some((t) => t.tunnelId === tunnel.tunnelId)).toBe(true);
+      expect(all.some((t) => t.name === "alch-gre-list")).toBe(true);
+
+      yield* stack.destroy();
+      yield* expectGone(tunnel.accountId, tunnel.tunnelId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "creates a GRE tunnel, updates mutable props in place, and destroys it",
   (stack) =>
@@ -106,7 +149,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const tunnel = yield* stack.deploy(
-        Cloudflare.GreTunnel("Gre", {
+        Cloudflare.MagicTransit.GreTunnel("Gre", {
           name: "alch-gre-test1",
           cloudflareGreEndpoint: cfEndpoint,
           customerGreEndpoint: "198.51.100.10",
@@ -131,7 +174,7 @@ test.provider.skipIf(!entitled)(
 
       // Update mutable props in place — same tunnelId.
       const updated = yield* stack.deploy(
-        Cloudflare.GreTunnel("Gre", {
+        Cloudflare.MagicTransit.GreTunnel("Gre", {
           name: "alch-gre-test1",
           cloudflareGreEndpoint: cfEndpoint,
           customerGreEndpoint: "198.51.100.10",
@@ -149,7 +192,7 @@ test.provider.skipIf(!entitled)(
 
       // The tunnel name is its routing identity — changing it replaces.
       const replaced = yield* stack.deploy(
-        Cloudflare.GreTunnel("Gre", {
+        Cloudflare.MagicTransit.GreTunnel("Gre", {
           name: "alch-gre-test2",
           cloudflareGreEndpoint: cfEndpoint,
           customerGreEndpoint: "198.51.100.10",

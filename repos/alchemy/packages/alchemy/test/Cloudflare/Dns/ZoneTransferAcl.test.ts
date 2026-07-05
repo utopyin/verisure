@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -52,7 +53,7 @@ test.provider(
       yield* stack.destroy();
 
       const created = yield* stack.deploy(
-        Cloudflare.ZoneTransferAcl("TestAcl", {
+        Cloudflare.DNS.ZoneTransferAcl("TestAcl", {
           name: "alchemy-dnszt-acl-test",
           // Cloudflare normalizes the range to its network address —
           // use one that is already normalized for stable diffs.
@@ -71,7 +72,7 @@ test.provider(
 
       // Update both mutable fields in place — same physical ACL.
       const updated = yield* stack.deploy(
-        Cloudflare.ZoneTransferAcl("TestAcl", {
+        Cloudflare.DNS.ZoneTransferAcl("TestAcl", {
           name: "alchemy-dnszt-acl-test-renamed",
           ipRange: "198.51.100.0/28",
         }),
@@ -102,7 +103,7 @@ test.provider(
       yield* stack.destroy();
 
       const created = yield* stack.deploy(
-        Cloudflare.ZoneTransferAcl("DefaultNameAcl", {
+        Cloudflare.DNS.ZoneTransferAcl("DefaultNameAcl", {
           ipRange: "203.0.113.0/28",
         }),
       );
@@ -112,6 +113,37 @@ test.provider(
 
       yield* stack.destroy();
       yield* expectGone(accountId, created.aclId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+test.provider(
+  "list enumerates the deployed zone transfer ACLs",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.DNS.ZoneTransferAcl("ListAcl", {
+          name: "alchemy-dnszt-acl-list",
+          ipRange: "192.0.2.64/28",
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DNS.ZoneTransferAcl,
+      );
+      const all = yield* provider.list();
+
+      // Exhaustively-paginated result contains the deployed ACL, in the
+      // exact `read` Attributes shape.
+      const found = all.find((a) => a.aclId === deployed.aclId);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(deployed.accountId);
+      expect(found?.name).toEqual("alchemy-dnszt-acl-list");
+      expect(found?.ipRange).toEqual("192.0.2.64/28");
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

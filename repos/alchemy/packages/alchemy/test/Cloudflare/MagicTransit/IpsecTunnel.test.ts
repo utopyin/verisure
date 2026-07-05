@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import { expect } from "@effect/vitest";
@@ -90,6 +91,47 @@ test.provider(
   { timeout: 120_000 },
 );
 
+test.provider(
+  "list enumerates account IPsec tunnels (read-only [] when unentitled)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicTransit.IpsecTunnel,
+      );
+
+      if (!entitled) {
+        // Unentitled accounts can't enumerate tunnels — list() swallows the
+        // typed MagicTransitNotOnboarded/Forbidden gate and returns [].
+        const all = yield* provider.list();
+        expect(Array.isArray(all)).toBe(true);
+        return;
+      }
+
+      const tunnel = yield* stack.deploy(
+        Cloudflare.MagicTransit.IpsecTunnel("ListIpsec", {
+          name: "alch-ipsec-list1",
+          cloudflareEndpoint: cfEndpoint,
+          interfaceAddress: "10.213.12.10/31",
+          psk: Redacted.make("alchemy-test-psk-list"),
+        }),
+      );
+
+      const all = yield* provider.list();
+      expect(all.some((t) => t.tunnelId === tunnel.tunnelId)).toBe(true);
+      const found = all.find((t) => t.tunnelId === tunnel.tunnelId)!;
+      expect(found.name).toEqual("alch-ipsec-list1");
+      expect(found.accountId).toEqual(tunnel.accountId);
+      // PSK is write-only — list never reads it back.
+      expect(found.psk).toBeUndefined();
+
+      yield* stack.destroy();
+      yield* expectGone(tunnel.accountId, tunnel.tunnelId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "creates an IPsec tunnel, updates mutable props in place, and destroys it",
   (stack) =>
@@ -99,7 +141,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const tunnel = yield* stack.deploy(
-        Cloudflare.IpsecTunnel("Ipsec", {
+        Cloudflare.MagicTransit.IpsecTunnel("Ipsec", {
           name: "alch-ipsec-test1",
           cloudflareEndpoint: cfEndpoint,
           customerEndpoint: "198.51.100.20",
@@ -127,7 +169,7 @@ test.provider.skipIf(!entitled)(
 
       // Update mutable props in place — same tunnelId.
       const updated = yield* stack.deploy(
-        Cloudflare.IpsecTunnel("Ipsec", {
+        Cloudflare.MagicTransit.IpsecTunnel("Ipsec", {
           name: "alch-ipsec-test1",
           cloudflareEndpoint: cfEndpoint,
           customerEndpoint: "198.51.100.20",
@@ -144,7 +186,7 @@ test.provider.skipIf(!entitled)(
 
       // The tunnel name is unique routing identity — changing it replaces.
       const replaced = yield* stack.deploy(
-        Cloudflare.IpsecTunnel("Ipsec", {
+        Cloudflare.MagicTransit.IpsecTunnel("Ipsec", {
           name: "alch-ipsec-test2",
           cloudflareEndpoint: cfEndpoint,
           interfaceAddress: "10.213.11.10/31",

@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as flagship from "@distilled.cloud/cloudflare/flagship";
 import { expect } from "@effect/vitest";
@@ -16,6 +17,8 @@ const logLevel = Effect.provideService(
 );
 
 class AppStillExists extends Data.TaggedError("AppStillExists") {}
+
+class AppNotListedYet extends Data.TaggedError("AppNotListedYet") {}
 
 // A deleted app surfaces as `FlagshipAppNotFound` — that's the success
 // condition here.
@@ -39,7 +42,7 @@ test.provider("create, update, delete a Flagship app", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        const app = yield* Cloudflare.FlagshipApp("App", {
+        const app = yield* Cloudflare.Flagship.App("App", {
           name: "alchemy-test-flagship-app",
         });
         return { app };
@@ -60,7 +63,7 @@ test.provider("create, update, delete a Flagship app", (stack) =>
     // Rename in place — same app id.
     const renamed = yield* stack.deploy(
       Effect.gen(function* () {
-        const app = yield* Cloudflare.FlagshipApp("App", {
+        const app = yield* Cloudflare.Flagship.App("App", {
           name: "alchemy-test-flagship-app-v2",
         });
         return { app };
@@ -78,7 +81,7 @@ test.provider("create, update, delete a Flagship app", (stack) =>
     // Redeploying identical props is a no-op (still the same app).
     const noop = yield* stack.deploy(
       Effect.gen(function* () {
-        const app = yield* Cloudflare.FlagshipApp("App", {
+        const app = yield* Cloudflare.Flagship.App("App", {
           name: "alchemy-test-flagship-app-v2",
         });
         return { app };
@@ -100,7 +103,7 @@ test.provider("recreates an app after out-of-band delete", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        const app = yield* Cloudflare.FlagshipApp("HealApp", {
+        const app = yield* Cloudflare.Flagship.App("HealApp", {
           name: "alchemy-test-flagship-heal",
         });
         return { app };
@@ -114,7 +117,7 @@ test.provider("recreates an app after out-of-band delete", (stack) =>
 
     const healed = yield* stack.deploy(
       Effect.gen(function* () {
-        const app = yield* Cloudflare.FlagshipApp("HealApp", {
+        const app = yield* Cloudflare.Flagship.App("HealApp", {
           name: "alchemy-test-flagship-heal-v2",
         });
         return { app };
@@ -133,5 +136,46 @@ test.provider("recreates an app after out-of-band delete", (stack) =>
     yield* stack.destroy();
 
     yield* expectAppGone(accountId, healed.app.appId);
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed Flagship app", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        const app = yield* Cloudflare.Flagship.App("ListApp", {
+          name: "alchemy-test-flagship-list",
+        });
+        return { app };
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Flagship.App);
+
+    // The flagship apps list endpoint is eventually consistent: a freshly
+    // created app is strongly readable by id via getApp but takes a few
+    // seconds to surface in the account-wide list. Retry until it appears.
+    const all = yield* provider.list().pipe(
+      Effect.flatMap((apps) =>
+        apps.some((a) => a.appId === deployed.app.appId)
+          ? Effect.succeed(apps)
+          : Effect.fail(new AppNotListedYet()),
+      ),
+      Effect.retry({
+        while: (e): e is AppNotListedYet => e instanceof AppNotListedYet,
+        schedule: Schedule.exponential("500 millis").pipe(
+          Schedule.both(Schedule.recurs(8)),
+        ),
+      }),
+    );
+
+    expect(all.some((a) => a.appId === deployed.app.appId)).toBe(true);
+    const found = all.find((a) => a.appId === deployed.app.appId);
+    expect(found?.name).toEqual("alchemy-test-flagship-list");
+    expect(found?.accountId).toEqual(deployed.app.accountId);
+
+    yield* stack.destroy();
   }).pipe(logLevel),
 );

@@ -11,7 +11,7 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-export type AccessCertificateProps = {
+export type CertificateProps = {
   /**
    * Display name for the certificate. Used as a stable identifier so the
    * provider can locate the certificate during adoption / state recovery.
@@ -35,9 +35,9 @@ export type AccessCertificateProps = {
   associatedHostnames?: string[];
 };
 
-export type AccessCertificate = Resource<
+export type Certificate = Resource<
   "Cloudflare.Access.Certificate",
-  AccessCertificateProps,
+  CertificateProps,
   {
     /** UUID of the certificate assigned by Cloudflare. */
     certificateId: string;
@@ -68,18 +68,20 @@ export type AccessCertificate = Resource<
  *
  * The certificate body is immutable — changing the PEM replaces the
  * resource. The name and associated hostnames converge in place.
- *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a Certificate
  * @example Upload a CA certificate
  * ```typescript
- * const ca = yield* Cloudflare.AccessCertificate("ClientCa", {
+ * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   certificate: CA_PEM, // -----BEGIN CERTIFICATE----- ...
  * });
  * ```
  *
  * @example Certificate with associated hostnames
  * ```typescript
- * const ca = yield* Cloudflare.AccessCertificate("ClientCa", {
+ * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   name: "corp-client-ca",
  *   certificate: CA_PEM,
  *   associatedHostnames: ["app.example.com"],
@@ -89,25 +91,44 @@ export type AccessCertificate = Resource<
  * @section Updating Hostnames
  * @example Associate more hostnames in place
  * ```typescript
- * const ca = yield* Cloudflare.AccessCertificate("ClientCa", {
+ * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   certificate: CA_PEM,
  *   associatedHostnames: ["app.example.com", "admin.example.com"],
  * });
  * ```
  */
-export const AccessCertificate = Resource<AccessCertificate>(
+export const Certificate = Resource<Certificate>(
   "Cloudflare.Access.Certificate",
 );
 
-export const isAccessCertificate = (
-  value: unknown,
-): value is AccessCertificate =>
+export const isCertificate = (value: unknown): value is Certificate =>
   Predicate.hasProperty(value, "Type") &&
   value.Type === "Cloudflare.Access.Certificate";
 
-export const AccessCertificateProvider = () =>
-  Provider.succeed(AccessCertificate, {
+export const CertificateProvider = () =>
+  Provider.succeed(Certificate, {
     stables: ["certificateId", "accountId", "fingerprint"],
+    // Account-scoped collection (pattern b). Cloudflare never returns the
+    // certificate PEM body, so the persisted `certificate` field is empty for
+    // enumerated items — every other attribute matches the `read` shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* zeroTrust.listAccessCertificatesForAccount
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? [])
+                .filter(
+                  (c): c is ObservedCertificate & { id: string } =>
+                    c.id != null,
+                )
+                .map((c) => toAttrs(c, accountId, "")),
+            ),
+          ),
+        );
+    }),
     diff: Effect.fn(function* ({ news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       if (!isResolved(news)) return undefined;
@@ -193,7 +214,7 @@ export const AccessCertificateProvider = () =>
           );
         if (!created.id) {
           return yield* Effect.fail(
-            new Error("AccessCertificate: created certificate missing id"),
+            new Error("Certificate: created certificate missing id"),
           );
         }
         return toAttrs(created, acct, news.certificate);

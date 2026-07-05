@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -24,7 +25,7 @@ test.provider("create, verify out-of-band, and destroy tag", (stack) =>
 
     const tag = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessTag("BasicTag", {});
+        return yield* Cloudflare.Access.Tag("BasicTag", {});
       }),
     );
 
@@ -41,7 +42,7 @@ test.provider("create, verify out-of-band, and destroy tag", (stack) =>
     // without churn.
     const again = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessTag("BasicTag", {});
+        return yield* Cloudflare.Access.Tag("BasicTag", {});
       }),
     );
     expect(again.name).toEqual(tag.name);
@@ -65,7 +66,7 @@ test.provider("rename replaces the tag", (stack) =>
 
     const tag = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessTag("RenameTag", {
+        return yield* Cloudflare.Access.Tag("RenameTag", {
           name: "alchemy-test-access-tag-a",
         });
       }),
@@ -74,7 +75,7 @@ test.provider("rename replaces the tag", (stack) =>
 
     const renamed = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessTag("RenameTag", {
+        return yield* Cloudflare.Access.Tag("RenameTag", {
           name: "alchemy-test-access-tag-b",
         });
       }),
@@ -103,5 +104,30 @@ test.provider("rename replaces the tag", (stack) =>
         Effect.catchTag("AccessTagNotFound", () => Effect.succeed(undefined)),
       );
     expect(afterDestroy).toBeUndefined();
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed access tag", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const tag = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Access.Tag("ListTag", {
+          name: "alchemy-test-access-tag-list",
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Access.Tag);
+    const all = yield* provider.list();
+
+    const found = all.find((t) => t.name === tag.name);
+    expect(found).toBeDefined();
+    expect(found?.accountId).toEqual(accountId);
+
+    yield* stack.destroy();
   }).pipe(logLevel),
 );

@@ -5,12 +5,14 @@ import * as Predicate from "effect/Predicate";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const SecurityTxtTypeId = "Cloudflare.SecurityTxt" as const;
-type SecurityTxtTypeId = typeof SecurityTxtTypeId;
+const TypeId = "Cloudflare.SecurityTxt.SecurityTxt" as const;
+type TypeId = typeof TypeId;
 
-export type SecurityTxtProps = {
+export type Props = {
   /**
    * Zone the security.txt file belongs to. Stable — changing the zone
    * triggers a replacement (the old zone's security.txt is deleted and a
@@ -69,7 +71,7 @@ export type SecurityTxtProps = {
   preferredLanguages?: string;
 };
 
-export type SecurityTxtAttributes = {
+export type Attributes = {
   /** Zone the security.txt file belongs to. */
   zoneId: string;
   /** Whether the file is served at `/.well-known/security.txt`. */
@@ -92,13 +94,7 @@ export type SecurityTxtAttributes = {
   preferredLanguages: string | undefined;
 };
 
-export type SecurityTxt = Resource<
-  SecurityTxtTypeId,
-  SecurityTxtProps,
-  SecurityTxtAttributes,
-  never,
-  Providers
->;
+export type SecurityTxt = Resource<TypeId, Props, Attributes, never, Providers>;
 
 /**
  * A zone's `security.txt` file
@@ -113,13 +109,15 @@ export type SecurityTxt = Resource<
  *
  * Cloudflare requires the RFC 9116 mandatory fields — `contact` and
  * `expires` — on every write.
- *
+ * @resource
+ * @product Security.txt
+ * @category Application Security
  * @section Publishing a security.txt
  * @example Minimal security.txt
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.SecurityTxt("SecurityTxt", {
+ * yield* Cloudflare.SecurityTxt.SecurityTxt("SecurityTxt", {
  *   zoneId: zone.zoneId,
  *   contact: ["mailto:security@example.com"],
  *   expires: "2027-01-01T00:00:00Z",
@@ -128,7 +126,7 @@ export type SecurityTxt = Resource<
  *
  * @example Full security.txt with policy and acknowledgments
  * ```typescript
- * yield* Cloudflare.SecurityTxt("SecurityTxt", {
+ * yield* Cloudflare.SecurityTxt.SecurityTxt("SecurityTxt", {
  *   zoneId: zone.zoneId,
  *   contact: ["mailto:security@example.com", "https://example.com/report"],
  *   expires: "2027-01-01T00:00:00Z",
@@ -142,7 +140,7 @@ export type SecurityTxt = Resource<
  * @section Pausing without deleting
  * @example Keep the configuration but stop serving the file
  * ```typescript
- * yield* Cloudflare.SecurityTxt("SecurityTxt", {
+ * yield* Cloudflare.SecurityTxt.SecurityTxt("SecurityTxt", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  *   contact: ["mailto:security@example.com"],
@@ -152,21 +150,46 @@ export type SecurityTxt = Resource<
  *
  * @see https://developers.cloudflare.com/security-center/infrastructure/security-file/
  */
-export const SecurityTxt = Resource<SecurityTxt>(SecurityTxtTypeId);
+export const SecurityTxt = Resource<SecurityTxt>(TypeId);
 
 /**
  * Returns true if the given value is a SecurityTxt resource.
  */
 export const isSecurityTxt = (value: unknown): value is SecurityTxt =>
-  Predicate.hasProperty(value, "Type") && value.Type === SecurityTxtTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const SecurityTxtProvider = () =>
   Provider.succeed(SecurityTxt, {
     stables: ["zoneId"],
 
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // There is no account-wide API for this per-zone singleton, and the
+      // file is only present on zones that have explicitly configured it —
+      // enumerate every zone, read its security.txt, and emit one entry per
+      // configured zone (an empty-string sentinel means unconfigured, which
+      // `read` treats as absent, so skip it).
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          securityTxt
+            .getSecurityTxt({ zoneId })
+            .pipe(
+              Effect.map((observed) =>
+                typeof observed === "string"
+                  ? undefined
+                  : toAttributes(zoneId, observed),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is Attributes => row !== undefined);
+    }),
+
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
-      const o = olds as SecurityTxtProps;
-      const n = news as SecurityTxtProps;
+      const o = olds as Props;
+      const n = news as Props;
       // zoneId is Input<string>; compare only once both sides are concrete.
       const oldZoneId =
         output?.zoneId ?? (typeof o.zoneId === "string" ? o.zoneId : undefined);
@@ -239,10 +262,7 @@ export const SecurityTxtProvider = () =>
   });
 
 /** Normalize the desired state from input props into the Attributes shape. */
-const desiredAttributes = (
-  zoneId: string,
-  news: SecurityTxtProps,
-): SecurityTxtAttributes => ({
+const desiredAttributes = (zoneId: string, news: Props): Attributes => ({
   zoneId,
   enabled: news.enabled ?? true,
   contact: [...news.contact],
@@ -260,7 +280,7 @@ const desiredAttributes = (
 const toAttributes = (
   zoneId: string,
   observed: Exclude<securityTxt.GetSecurityTxtResponse, string>,
-): SecurityTxtAttributes => ({
+): Attributes => ({
   zoneId,
   enabled: observed.enabled ?? false,
   contact: [...(observed.contact ?? [])],
@@ -293,10 +313,7 @@ const listEquals = (
   return a.length === b.length && a.every((v, i) => v === b[i]);
 };
 
-const attributesEqual = (
-  a: SecurityTxtAttributes,
-  b: SecurityTxtAttributes,
-): boolean =>
+const attributesEqual = (a: Attributes, b: Attributes): boolean =>
   a.zoneId === b.zoneId &&
   a.enabled === b.enabled &&
   a.expires === b.expires &&

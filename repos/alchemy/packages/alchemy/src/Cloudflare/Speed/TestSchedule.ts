@@ -1,20 +1,23 @@
 import * as speed from "@distilled.cloud/cloudflare/speed";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const SpeedTestScheduleTypeId = "Cloudflare.Speed.TestSchedule" as const;
-type SpeedTestScheduleTypeId = typeof SpeedTestScheduleTypeId;
+const TypeId = "Cloudflare.Speed.TestSchedule" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Region a scheduled Observatory (speed) test runs from. GCP-style region
  * identifiers — Cloudflare keys schedules per `(url, region)` pair.
  */
-export type SpeedTestRegion =
+export type TestRegion =
   | "asia-east1"
   | "asia-northeast1"
   | "asia-northeast2"
@@ -40,9 +43,9 @@ export type SpeedTestRegion =
 /**
  * How often a scheduled test runs.
  */
-export type SpeedTestFrequency = "DAILY" | "WEEKLY";
+export type TestFrequency = "DAILY" | "WEEKLY";
 
-export interface SpeedTestScheduleProps {
+export interface TestScheduleProps {
   /**
    * Zone the scheduled test belongs to.
    *
@@ -66,31 +69,31 @@ export interface SpeedTestScheduleProps {
    * region is created and the old one deleted).
    * @default "us-central1"
    */
-  region?: SpeedTestRegion;
+  region?: TestRegion;
   /**
    * How often the test runs. The API has no update call, so changing the
    * frequency is converged in place by deleting and re-creating the
    * schedule (same identity — not a replacement).
    * @default WEEKLY for free plans, DAILY for paid plans (API default)
    */
-  frequency?: SpeedTestFrequency;
+  frequency?: TestFrequency;
 }
 
-export interface SpeedTestScheduleAttributes {
+export interface TestScheduleAttributes {
   /** Zone the schedule belongs to. */
   zoneId: string;
   /** The tested page URL as normalized by Cloudflare (e.g. `example.com/`). */
   url: string;
   /** Region the test runs from. */
-  region: SpeedTestRegion;
+  region: TestRegion;
   /** How often the test runs. */
-  frequency: SpeedTestFrequency;
+  frequency: TestFrequency;
 }
 
-export type SpeedTestSchedule = Resource<
-  SpeedTestScheduleTypeId,
-  SpeedTestScheduleProps,
-  SpeedTestScheduleAttributes,
+export type TestSchedule = Resource<
+  TypeId,
+  TestScheduleProps,
+  TestScheduleAttributes,
   never,
   Providers
 >;
@@ -115,11 +118,13 @@ export type SpeedTestSchedule = Resource<
  * state, `read` reports an existing schedule for the same `(url, region)` as
  * `Unowned`, so the engine refuses to take it over unless `--adopt` (or
  * `adopt(true)`) is set.
- *
+ * @resource
+ * @product Speed
+ * @category Performance & Reliability
  * @section Scheduling a test
  * @example Weekly test of the home page
  * ```typescript
- * yield* Cloudflare.SpeedTestSchedule("HomePageSpeed", {
+ * yield* Cloudflare.Speed.TestSchedule("HomePageSpeed", {
  *   zoneId: zone.zoneId,
  *   url: "example.com/",
  *   frequency: "WEEKLY",
@@ -128,7 +133,7 @@ export type SpeedTestSchedule = Resource<
  *
  * @example Daily test of a specific page from Europe
  * ```typescript
- * yield* Cloudflare.SpeedTestSchedule("PricingSpeedEU", {
+ * yield* Cloudflare.Speed.TestSchedule("PricingSpeedEU", {
  *   zoneId: zone.zoneId,
  *   url: "example.com/pricing",
  *   region: "europe-west2",
@@ -138,20 +143,15 @@ export type SpeedTestSchedule = Resource<
  *
  * @see https://developers.cloudflare.com/speed/speed-test/
  */
-export const SpeedTestSchedule = Resource<SpeedTestSchedule>(
-  SpeedTestScheduleTypeId,
-);
+export const TestSchedule = Resource<TestSchedule>(TypeId);
 
 /**
- * Returns true if the given value is a SpeedTestSchedule resource.
+ * Returns true if the given value is a TestSchedule resource.
  */
-export const isSpeedTestSchedule = (
-  value: unknown,
-): value is SpeedTestSchedule =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === SpeedTestScheduleTypeId;
+export const isTestSchedule = (value: unknown): value is TestSchedule =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-const DEFAULT_REGION: SpeedTestRegion = "us-central1";
+const DEFAULT_REGION: TestRegion = "us-central1";
 
 /**
  * Cloudflare normalizes schedule URLs: the scheme is dropped and a bare
@@ -164,13 +164,72 @@ const normalizeUrl = (url: string): string => {
   return stripped.includes("/") ? stripped : `${stripped}/`;
 };
 
-export const SpeedTestScheduleProvider = () =>
-  Provider.succeed(SpeedTestSchedule, {
+export const TestScheduleProvider = () =>
+  Provider.succeed(TestSchedule, {
     stables: ["zoneId", "url", "region"],
 
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Schedules live inside a zone and are keyed per `(url, region)` —
+      // there is no account-wide enumeration API. Fan out over every zone,
+      // enumerate the zone's Observatory pages, and resolve each page's
+      // schedule with the exact `(url, region)` keying `read` uses.
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          speed.listPages.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).flatMap((p) =>
+                  p.url
+                    ? [
+                        {
+                          url: p.url,
+                          region:
+                            (p.region?.value as TestRegion | undefined) ??
+                            DEFAULT_REGION,
+                        },
+                      ]
+                    : [],
+                ),
+              ),
+            ),
+            Effect.flatMap((pages) =>
+              Effect.forEach(
+                pages,
+                ({ url, region }) =>
+                  getSchedule(zone.id, url, region).pipe(
+                    Effect.map((observed) =>
+                      observed
+                        ? toAttributes(observed, zone.id, url, region)
+                        : undefined,
+                    ),
+                    // Plan-gated zone rejects the schedule route; skip it.
+                    Effect.catchTag("Forbidden", () =>
+                      Effect.succeed(undefined),
+                    ),
+                  ),
+                { concurrency: 10 },
+              ),
+            ),
+            Effect.map((items) =>
+              items.filter(
+                (item): item is TestScheduleAttributes => item !== undefined,
+              ),
+            ),
+            // Plan-gated / partial zones reject the pages route; skip them.
+            Effect.catchTag("InvalidRoute", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
+
     diff: Effect.fn(function* ({ olds, news }) {
-      const o = olds as SpeedTestScheduleProps | undefined;
-      const n = news as SpeedTestScheduleProps;
+      const o = olds as TestScheduleProps | undefined;
+      const n = news as TestScheduleProps;
       // No prior props to compare against — let the engine decide.
       if (o?.url === undefined) return undefined;
       // The URL is the schedule's path identity.
@@ -197,7 +256,7 @@ export const SpeedTestScheduleProvider = () =>
       const zoneId = output?.zoneId ?? (olds?.zoneId as string | undefined);
       const url = output?.url ?? olds?.url;
       const region =
-        output?.region ?? (olds?.region as SpeedTestRegion) ?? DEFAULT_REGION;
+        output?.region ?? (olds?.region as TestRegion) ?? DEFAULT_REGION;
       if (!zoneId || !url) return undefined;
 
       const observed = yield* getSchedule(zoneId, url, region);
@@ -213,7 +272,7 @@ export const SpeedTestScheduleProvider = () =>
       return Unowned(attrs);
     }),
 
-    reconcile: Effect.fn(function* ({ news, output }) {
+    reconcile: Effect.fn(function* ({ news }) {
       // Inputs have been resolved to concrete strings by Plan.
       const zoneId = news.zoneId as string;
       const region = news.region ?? DEFAULT_REGION;
@@ -261,9 +320,7 @@ export const SpeedTestScheduleProvider = () =>
               zoneId,
               news.url,
               region,
-              (previous.frequency ?? undefined) as
-                | SpeedTestFrequency
-                | undefined,
+              (previous.frequency ?? undefined) as TestFrequency | undefined,
             ).pipe(Effect.flatMap(() => Effect.fail(error))),
           ),
         );
@@ -296,7 +353,7 @@ interface ObservedSchedule {
  * Read a schedule, mapping "gone" (`TestScheduleNotFound`, Cloudflare
  * `speed.errors.schedule_not_found`) to `undefined`.
  */
-const getSchedule = (zoneId: string, url: string, region: SpeedTestRegion) =>
+const getSchedule = (zoneId: string, url: string, region: TestRegion) =>
   speed.getSchedule({ zoneId, url, region }).pipe(
     Effect.map((s): ObservedSchedule | undefined => s),
     Effect.catchTag("TestScheduleNotFound", () => Effect.succeed(undefined)),
@@ -311,8 +368,8 @@ const getSchedule = (zoneId: string, url: string, region: SpeedTestRegion) =>
 const createAndObserve = (
   zoneId: string,
   url: string,
-  region: SpeedTestRegion,
-  frequency: SpeedTestFrequency | undefined,
+  region: TestRegion,
+  frequency: TestFrequency | undefined,
 ) =>
   speed.createSchedule({ zoneId, url, region, frequency }).pipe(
     Effect.flatMap((created) =>
@@ -326,11 +383,7 @@ const createAndObserve = (
     ),
   );
 
-const getScheduleOrFail = (
-  zoneId: string,
-  url: string,
-  region: SpeedTestRegion,
-) =>
+const getScheduleOrFail = (zoneId: string, url: string, region: TestRegion) =>
   // Let the typed `TestScheduleNotFound` propagate — reaching this state
   // means the schedule vanished between our calls; surfacing the typed
   // error is more honest than inventing one.
@@ -342,13 +395,13 @@ const toAttributes = (
   observed: ObservedSchedule,
   zoneId: string,
   url: string,
-  region: SpeedTestRegion,
-): SpeedTestScheduleAttributes => ({
+  region: TestRegion,
+): TestScheduleAttributes => ({
   zoneId,
   // Prefer the server-normalized URL (e.g. trailing slash added).
   url: observed.url ?? normalizeUrl(url),
-  region: (observed.region ?? region) as SpeedTestRegion,
+  region: (observed.region ?? region) as TestRegion,
   // Cloudflare always echoes a frequency for a persisted schedule; the
   // distilled type is open/nullable, so default defensively.
-  frequency: (observed.frequency ?? "WEEKLY") as SpeedTestFrequency,
+  frequency: (observed.frequency ?? "WEEKLY") as TestFrequency,
 });

@@ -8,6 +8,7 @@ import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 const FirewallAccessRuleTypeId = "Cloudflare.Firewall.AccessRule" as const;
 type FirewallAccessRuleTypeId = typeof FirewallAccessRuleTypeId;
@@ -18,7 +19,7 @@ type FirewallAccessRuleTypeId = typeof FirewallAccessRuleTypeId;
  * Note: `block` for `country`/`asn` targets requires an Enterprise plan;
  * `challenge` and `managed_challenge` work on all plans.
  */
-export type FirewallAccessRuleMode =
+export type AccessRuleMode =
   | "block"
   | "challenge"
   | "whitelist"
@@ -30,23 +31,18 @@ export type FirewallAccessRuleMode =
  * IPv6 (`ip6`), a CIDR range (`ip_range`), an AS number (`asn`), or a
  * two-letter ISO-3166-1 alpha-2 country code (`country`).
  */
-export type FirewallAccessRuleTarget =
-  | "ip"
-  | "ip6"
-  | "ip_range"
-  | "asn"
-  | "country";
+export type AccessRuleTarget = "ip" | "ip6" | "ip_range" | "asn" | "country";
 
 /**
  * The match configuration of an IP Access rule. Immutable — the Cloudflare
  * API only allows `mode`/`notes` to be patched, so changing the
  * configuration replaces the rule.
  */
-export interface FirewallAccessRuleConfiguration {
+export interface AccessRuleConfiguration {
   /**
    * What the rule matches on.
    */
-  target: FirewallAccessRuleTarget;
+  target: AccessRuleTarget;
   /**
    * The value to match — e.g. `198.51.100.4` (`ip`), `2001:db8::/64`
    * (`ip_range`), `AS13335` (`asn`), or `US` (`country`).
@@ -54,7 +50,7 @@ export interface FirewallAccessRuleConfiguration {
   value: string;
 }
 
-export interface FirewallAccessRuleProps {
+export interface AccessRuleProps {
   /**
    * Zone the rule applies to. When omitted, the rule is created at the
    * account level and applies to every zone in the account.
@@ -69,11 +65,11 @@ export interface FirewallAccessRuleProps {
    * (only `mode`/`notes` are patchable), so changing it triggers a
    * replacement.
    */
-  configuration: FirewallAccessRuleConfiguration;
+  configuration: AccessRuleConfiguration;
   /**
    * The action to apply to a matched request. Mutable — patched in place.
    */
-  mode: FirewallAccessRuleMode;
+  mode: AccessRuleMode;
   /**
    * An informative summary of the rule, typically used as a reminder or
    * explanation. Mutable — patched in place.
@@ -81,7 +77,7 @@ export interface FirewallAccessRuleProps {
   notes?: string;
 }
 
-export interface FirewallAccessRuleAttributes {
+export interface AccessRuleAttributes {
   /** Cloudflare-assigned identifier of the IP Access rule. */
   ruleId: string;
   /** Zone the rule belongs to, or `undefined` for account-scoped rules. */
@@ -89,11 +85,11 @@ export interface FirewallAccessRuleAttributes {
   /** Account the rule was created under. */
   accountId: string;
   /** The rule's match configuration. */
-  configuration: FirewallAccessRuleConfiguration;
+  configuration: AccessRuleConfiguration;
   /** The action applied to matched requests. */
-  mode: FirewallAccessRuleMode;
+  mode: AccessRuleMode;
   /** The actions available for this rule. */
-  allowedModes: FirewallAccessRuleMode[];
+  allowedModes: AccessRuleMode[];
   /** The rule's informative summary, if set. */
   notes: string | undefined;
   /** ISO8601 creation timestamp. */
@@ -102,10 +98,10 @@ export interface FirewallAccessRuleAttributes {
   modifiedOn: string | undefined;
 }
 
-export type FirewallAccessRule = Resource<
+export type AccessRule = Resource<
   FirewallAccessRuleTypeId,
-  FirewallAccessRuleProps,
-  FirewallAccessRuleAttributes,
+  AccessRuleProps,
+  AccessRuleAttributes,
   never,
   Providers
 >;
@@ -125,11 +121,13 @@ export type FirewallAccessRule = Resource<
  * prior state, `read` scans the scope for an existing rule with the same
  * configuration and reports it as `Unowned`, so the engine refuses to take
  * it over unless `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  * @section Blocking an IP
  * @example Block a single IPv4 address on a zone
  * ```typescript
- * yield* Cloudflare.FirewallAccessRule("BlockBadActor", {
+ * yield* Cloudflare.Firewall.AccessRule("BlockBadActor", {
  *   zoneId: zone.zoneId,
  *   configuration: { target: "ip", value: "198.51.100.4" },
  *   mode: "block",
@@ -140,7 +138,7 @@ export type FirewallAccessRule = Resource<
  * @example Block a CIDR range account-wide
  * ```typescript
  * // No zoneId — the rule applies to every zone in the account.
- * yield* Cloudflare.FirewallAccessRule("BlockScannerRange", {
+ * yield* Cloudflare.Firewall.AccessRule("BlockScannerRange", {
  *   configuration: { target: "ip_range", value: "203.0.113.0/24" },
  *   mode: "block",
  * });
@@ -151,7 +149,7 @@ export type FirewallAccessRule = Resource<
  * ```typescript
  * // `block` for country targets is Enterprise-only; challenges work on
  * // all plans.
- * yield* Cloudflare.FirewallAccessRule("ChallengeCountry", {
+ * yield* Cloudflare.Firewall.AccessRule("ChallengeCountry", {
  *   zoneId: zone.zoneId,
  *   configuration: { target: "country", value: "KP" },
  *   mode: "managed_challenge",
@@ -161,7 +159,7 @@ export type FirewallAccessRule = Resource<
  * @section Whitelisting
  * @example Always allow an office IP
  * ```typescript
- * yield* Cloudflare.FirewallAccessRule("AllowOffice", {
+ * yield* Cloudflare.Firewall.AccessRule("AllowOffice", {
  *   zoneId: zone.zoneId,
  *   configuration: { target: "ip", value: "192.0.2.10" },
  *   mode: "whitelist",
@@ -171,26 +169,22 @@ export type FirewallAccessRule = Resource<
  *
  * @see https://developers.cloudflare.com/waf/tools/ip-access-rules/
  */
-export const FirewallAccessRule = Resource<FirewallAccessRule>(
-  FirewallAccessRuleTypeId,
-);
+export const AccessRule = Resource<AccessRule>(FirewallAccessRuleTypeId);
 
 /**
- * Returns true if the given value is a FirewallAccessRule resource.
+ * Returns true if the given value is a AccessRule resource.
  */
-export const isFirewallAccessRule = (
-  value: unknown,
-): value is FirewallAccessRule =>
+export const isAccessRule = (value: unknown): value is AccessRule =>
   Predicate.hasProperty(value, "Type") &&
   value.Type === FirewallAccessRuleTypeId;
 
-export const FirewallAccessRuleProvider = () =>
-  Provider.succeed(FirewallAccessRule, {
+export const AccessRuleProvider = () =>
+  Provider.succeed(AccessRule, {
     stables: ["ruleId", "zoneId", "accountId", "allowedModes", "createdOn"],
 
     diff: Effect.fn(function* ({ olds = {}, news }) {
-      const o = olds as FirewallAccessRuleProps;
-      const n = news as FirewallAccessRuleProps;
+      const o = olds as AccessRuleProps;
+      const n = news as AccessRuleProps;
       // No prior props to compare against — let the engine decide.
       if (o.configuration === undefined) return undefined;
       // The API can only patch mode/notes — configuration is immutable.
@@ -293,6 +287,50 @@ export const FirewallAccessRuleProvider = () =>
       return toAttributes(observed, zoneId, accountId);
     }),
 
+    // IP Access rules are hybrid-scoped: account-level rules (zoneId
+    // undefined) plus per-zone rules. Enumerate both — the account
+    // collection, then fan out across every zone — and tag each item with
+    // its scope so the result matches the exact `read` Attributes shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const accountRules = yield* firewall.listAccessRulesForAccount
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? []).map((rule) =>
+                toAttributes(rule, undefined, accountId),
+              ),
+            ),
+          ),
+          // No permission to read account-level rules — skip them.
+          Effect.catchTag("Forbidden", () => Effect.succeed([])),
+        );
+
+      const zones = yield* listAllZones(accountId);
+      const zoneRuleGroups = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          firewall.listAccessRulesForZone.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((rule) =>
+                  toAttributes(rule, zone.id, accountId),
+                ),
+              ),
+            ),
+            // Plan-gated / partial zones reject the route; skip them.
+            Effect.catchTag("Forbidden", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+
+      return [...accountRules, ...zoneRuleGroups.flat()];
+    }),
+
     delete: Effect.fn(function* ({ output }) {
       // Cloudflare answers DELETE for an already-gone rule with HTTP 200
       // and `result: null` (not an error envelope), which the typed
@@ -340,7 +378,7 @@ const getRule = (
 const findByConfiguration = (
   zoneId: string | undefined,
   accountId: string,
-  configuration: FirewallAccessRuleConfiguration,
+  configuration: AccessRuleConfiguration,
 ) =>
   (zoneId !== undefined
     ? firewall.listAccessRulesForZone.items({ zoneId })
@@ -359,7 +397,7 @@ const findByConfiguration = (
 const createRule = (
   zoneId: string | undefined,
   accountId: string,
-  news: FirewallAccessRuleProps,
+  news: AccessRuleProps,
 ) =>
   zoneId !== undefined
     ? firewall.createAccessRuleForZone({
@@ -379,7 +417,7 @@ const patchRule = (
   zoneId: string | undefined,
   accountId: string,
   ruleId: string,
-  news: FirewallAccessRuleProps,
+  news: AccessRuleProps,
 ) =>
   zoneId !== undefined
     ? firewall.patchAccessRuleForZone({
@@ -410,18 +448,18 @@ const toAttributes = (
   rule: ObservedRule,
   zoneId: string | undefined,
   accountId: string,
-): FirewallAccessRuleAttributes => ({
+): AccessRuleAttributes => ({
   ruleId: rule.id,
   zoneId,
   accountId,
   configuration: {
     // Distilled types each union variant's target/value as optional —
     // Cloudflare always echoes both for a persisted rule.
-    target: (rule.configuration.target ?? "ip") as FirewallAccessRuleTarget,
+    target: (rule.configuration.target ?? "ip") as AccessRuleTarget,
     value: rule.configuration.value ?? "",
   },
-  mode: rule.mode as FirewallAccessRuleMode,
-  allowedModes: [...rule.allowedModes] as FirewallAccessRuleMode[],
+  mode: rule.mode as AccessRuleMode,
+  allowedModes: [...rule.allowedModes] as AccessRuleMode[],
   notes: rule.notes ?? undefined,
   createdOn: rule.createdOn ?? undefined,
   modifiedOn: rule.modifiedOn ?? undefined,

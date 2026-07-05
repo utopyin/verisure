@@ -2,6 +2,7 @@ import * as planetscale from "@distilled.cloud/planetscale";
 import { Credentials } from "@distilled.cloud/planetscale/Credentials";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { Unowned } from "../AdoptPolicy.ts";
 import { isResolved } from "../Diff.ts";
 import { createPhysicalName } from "../PhysicalName.ts";
@@ -13,6 +14,7 @@ import { ensureMySQLProductionBranchClusterSize } from "./MySQL/MySQLClusterSize
 import {
   ensurePostgresProductionBranchClusterSize,
   toPostgresClusterSku,
+  waitForPendingPostgresChanges,
 } from "./Postgres/PostgresClusterSize.ts";
 import {
   DEFAULT_MIGRATIONS_TABLE,
@@ -104,6 +106,16 @@ export interface BaseBranchAttributes {
   migrationsHashes: Record<string, string>;
   /** Content hashes for the last applied import files. */
   importHashes: Record<string, string>;
+  /**
+   * Desired total replica count requested by the resource input, when known.
+   * PlanetScale's branch read API exposes only boolean HA state, so this is
+   * persisted from Alchemy state rather than observed from live provider data.
+   */
+  desiredReplicas: number | undefined;
+  /** Whether the branch currently has HA replicas. */
+  hasReplicas: boolean | undefined;
+  /** Whether the branch currently has read-only replicas. */
+  hasReadOnlyReplicas: boolean | undefined;
 }
 
 // Runtime-resolved Database/Branch references. `news.database` can be a
@@ -185,6 +197,69 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
 }) =>
   Provider.succeed(opts.resource, {
     stables: ["organization", "database"],
+
+    // PARENT FAN-OUT: PlanetScale branches are nested under a database within
+    // an organization, so there is no flat per-org branch enumeration API.
+    // Enumerate every database in the credentialed org, then list each
+    // database's branches concurrently (bounded), exhaustively paginating
+    // both levels, and keep only the branches whose engine kind matches this
+    // resource. Each item is hydrated into the exact `read` Attributes shape.
+    list: Effect.fn(function* () {
+      const { organization } = yield* yield* Credentials;
+
+      const databases = yield* planetscale.listDatabases
+        .pages({ organization })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk).flatMap((page) => page.data)),
+        );
+
+      const rows = yield* Effect.forEach(
+        databases,
+        (db) =>
+          planetscale.listBranches
+            .pages({ organization, database: db.name })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  page.data
+                    .filter((branch) => branch.kind === opts.expectedKind)
+                    .map(
+                      (branch) =>
+                        ({
+                          name: branch.name,
+                          organization,
+                          database: db.name,
+                          parentBranch: branch.parent_branch ?? "main",
+                          production: branch.production,
+                          createdAt: branch.created_at,
+                          updatedAt: branch.updated_at,
+                          htmlUrl: branch.html_url,
+                          region: { slug: branch.region.slug },
+                          migrationsDir: undefined,
+                          migrationsTable: undefined,
+                          migrationsHashes: {},
+                          importHashes: {},
+                          desiredReplicas: undefined,
+                          hasReplicas: branch.has_replicas,
+                          hasReadOnlyReplicas: branch.has_read_only_replicas,
+                        }) satisfies BaseBranchAttributes,
+                    ),
+                ),
+              ),
+              // A database can be deleted between enumeration and the
+              // per-database branch list — skip it rather than fail.
+              Effect.catchTag("NotFound", () =>
+                Effect.succeed([] as BaseBranchAttributes[]),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+
+      return rows.flat();
+    }),
+
     diff: Effect.fn(function* ({ news, olds, output }: any) {
       if (!isResolved(news)) return undefined;
 
@@ -210,6 +285,20 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         news.region.slug !== output.region.slug
       ) {
         return { action: "replace" } as const;
+      }
+
+      if (news.replicas !== undefined) {
+        if (output?.desiredReplicas !== news.replicas) {
+          return { action: "update" } as const;
+        }
+
+        const desiredHasReplicas = news.replicas > 0;
+        if (
+          output?.hasReplicas !== undefined &&
+          output.hasReplicas !== desiredHasReplicas
+        ) {
+          return { action: "update" } as const;
+        }
       }
 
       if (news.migrationsDir) {
@@ -275,6 +364,12 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
               migrationsTable: output?.migrationsTable ?? olds?.migrationsTable,
               migrationsHashes: output?.migrationsHashes ?? {},
               importHashes: output?.importHashes ?? {},
+              desiredReplicas:
+                output?.desiredReplicas ??
+                olds?.desiredReplicas ??
+                olds?.replicas,
+              hasReplicas: data.has_replicas,
+              hasReadOnlyReplicas: data.has_read_only_replicas,
             } satisfies BaseBranchAttributes;
 
             return output ? attrs : Unowned(attrs);
@@ -432,6 +527,39 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         }
       }
 
+      if (opts.expectedKind === "postgresql" && news.replicas !== undefined) {
+        const desiredReplicas = news.replicas;
+        const desiredHasReplicas = desiredReplicas > 0;
+        const shouldApplyReplicaChange =
+          current.has_replicas !== desiredHasReplicas ||
+          (desiredHasReplicas && output?.desiredReplicas !== desiredReplicas);
+
+        if (shouldApplyReplicaChange) {
+          yield* waitForPendingPostgresChanges(
+            organization,
+            databaseName,
+            branchName,
+          );
+          const change = yield* planetscale.updateBranchChangeRequest({
+            organization,
+            database: databaseName,
+            branch: branchName,
+            replicas: desiredReplicas,
+          });
+          yield* waitForPendingPostgresChanges(
+            organization,
+            databaseName,
+            branchName,
+            change.id,
+          );
+          current = yield* planetscale.getBranch({
+            organization,
+            database: databaseName,
+            branch: branchName,
+          });
+        }
+      }
+
       // Sync clusterSize — only meaningful on production branches.
       if (news.clusterSize) {
         if (current.kind === "postgresql") {
@@ -498,6 +626,9 @@ export const makeBranchProvider = <R extends ResourceLike>(opts: {
         migrationsTable: news.migrationsDir ? migrationsTable : undefined,
         migrationsHashes,
         importHashes,
+        desiredReplicas: news.replicas ?? output?.desiredReplicas,
+        hasReplicas: updated.has_replicas,
+        hasReadOnlyReplicas: updated.has_read_only_replicas,
       } satisfies BaseBranchAttributes;
     }),
 

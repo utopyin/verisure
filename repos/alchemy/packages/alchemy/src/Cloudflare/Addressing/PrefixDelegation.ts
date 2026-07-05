@@ -9,11 +9,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const AddressingPrefixDelegationTypeId =
-  "Cloudflare.Addressing.PrefixDelegation" as const;
-type AddressingPrefixDelegationTypeId = typeof AddressingPrefixDelegationTypeId;
+const TypeId = "Cloudflare.Addressing.PrefixDelegation" as const;
+type TypeId = typeof TypeId;
 
-export interface AddressingPrefixDelegationProps {
+export interface PrefixDelegationProps {
   /**
    * Identifier of the parent BYOIP prefix being delegated from. Changing it
    * forces a replacement.
@@ -31,7 +30,7 @@ export interface AddressingPrefixDelegationProps {
   delegatedAccountId: string;
 }
 
-export interface AddressingPrefixDelegationAttributes {
+export interface PrefixDelegationAttributes {
   /** Cloudflare-assigned identifier of the delegation. */
   delegationId: string;
   /** Identifier of the parent BYOIP prefix. */
@@ -46,10 +45,10 @@ export interface AddressingPrefixDelegationAttributes {
   createdAt: string | undefined;
 }
 
-export type AddressingPrefixDelegation = Resource<
-  AddressingPrefixDelegationTypeId,
-  AddressingPrefixDelegationProps,
-  AddressingPrefixDelegationAttributes,
+export type PrefixDelegation = Resource<
+  TypeId,
+  PrefixDelegationProps,
+  PrefixDelegationAttributes,
   never,
   Providers
 >;
@@ -61,11 +60,13 @@ export type AddressingPrefixDelegation = Resource<
  *
  * Delegations are create/delete only — every prop change forces a
  * replacement.
- *
+ * @resource
+ * @product Addressing
+ * @category Network
  * @section Delegating a Prefix
  * @example Delegate a /26 to another account
  * ```typescript
- * const delegation = yield* Cloudflare.AddressingPrefixDelegation("share", {
+ * const delegation = yield* Cloudflare.Addressing.PrefixDelegation("share", {
  *   prefixId: prefix.prefixId,
  *   cidr: "192.0.2.0/26",
  *   delegatedAccountId: "023e105f4ecef8ad9ca31a8372d0c353",
@@ -74,21 +75,16 @@ export type AddressingPrefixDelegation = Resource<
  *
  * @see https://developers.cloudflare.com/byoip/
  */
-export const AddressingPrefixDelegation = Resource<AddressingPrefixDelegation>(
-  AddressingPrefixDelegationTypeId,
-);
+export const PrefixDelegation = Resource<PrefixDelegation>(TypeId);
 
 /**
- * Returns true if the given value is an AddressingPrefixDelegation resource.
+ * Returns true if the given value is an PrefixDelegation resource.
  */
-export const isAddressingPrefixDelegation = (
-  value: unknown,
-): value is AddressingPrefixDelegation =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === AddressingPrefixDelegationTypeId;
+export const isPrefixDelegation = (value: unknown): value is PrefixDelegation =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const AddressingPrefixDelegationProvider = () =>
-  Provider.succeed(AddressingPrefixDelegation, {
+export const PrefixDelegationProvider = () =>
+  Provider.succeed(PrefixDelegation, {
     stables: [
       "delegationId",
       "prefixId",
@@ -190,6 +186,41 @@ export const AddressingPrefixDelegationProvider = () =>
         })
         .pipe(Effect.catchTag("DelegationNotFound", () => Effect.void));
     }),
+
+    // Delegations are children of BYOIP prefixes and have no account-wide
+    // enumeration API. Fan out: list every account prefix, then list the
+    // delegations on each prefix (bounded concurrency). A prefix that has
+    // gone away between the two calls reads as an empty list (typed
+    // `PrefixNotFound`, handled in `listDelegations`).
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const prefixIds = yield* addressing.listPrefixes
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? [])
+                .map((p) => p.id)
+                .filter((id): id is string => typeof id === "string"),
+            ),
+          ),
+        );
+
+      const rows = yield* Effect.forEach(
+        prefixIds,
+        (prefixId) =>
+          listDelegations(accountId, prefixId).pipe(
+            Effect.map((delegations) =>
+              delegations.map((d) => toAttributes(d, prefixId, accountId)),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+
+      return rows.flat();
+    }),
   });
 
 interface ObservedDelegation {
@@ -217,7 +248,7 @@ const toAttributes = (
   delegation: ObservedDelegation,
   prefixId: string,
   accountId: string,
-): AddressingPrefixDelegationAttributes => ({
+): PrefixDelegationAttributes => ({
   delegationId: delegation.id ?? "",
   prefixId,
   accountId,

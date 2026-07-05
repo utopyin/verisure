@@ -1,6 +1,7 @@
 import * as resourceSharing from "@distilled.cloud/cloudflare/resource-sharing";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,9 +9,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const ShareRecipientTypeId =
-  "Cloudflare.ResourceSharing.ShareRecipient" as const;
-type ShareRecipientTypeId = typeof ShareRecipientTypeId;
+const TypeId = "Cloudflare.ResourceSharing.ShareRecipient" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Association status of a share recipient. Association is eventually
@@ -73,7 +73,7 @@ export type ShareRecipientAttributes = {
 };
 
 export type ShareRecipient = Resource<
-  ShareRecipientTypeId,
+  TypeId,
   ShareRecipientProps,
   ShareRecipientAttributes,
   never,
@@ -88,11 +88,13 @@ export type ShareRecipient = Resource<
  * change triggers a replacement. Association is eventually consistent
  * (`associating → associated`). Do not manage the same recipient both inline
  * on `Share.recipients` and through this resource.
- *
+ * @resource
+ * @product Resource Sharing
+ * @category Account & Identity
  * @section Adding a Recipient
  * @example Share with another account
  * ```typescript
- * const recipient = yield* Cloudflare.ShareRecipient("Partner", {
+ * const recipient = yield* Cloudflare.ResourceSharing.ShareRecipient("Partner", {
  *   shareId: share.shareId,
  *   accountId: "<recipient-account-id>",
  * });
@@ -100,7 +102,7 @@ export type ShareRecipient = Resource<
  *
  * @example Share with an organization
  * ```typescript
- * const recipient = yield* Cloudflare.ShareRecipient("Org", {
+ * const recipient = yield* Cloudflare.ResourceSharing.ShareRecipient("Org", {
  *   shareId: share.shareId,
  *   organizationId: "<recipient-organization-id>",
  * });
@@ -108,13 +110,13 @@ export type ShareRecipient = Resource<
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-account-resources/
  */
-export const ShareRecipient = Resource<ShareRecipient>(ShareRecipientTypeId);
+export const ShareRecipient = Resource<ShareRecipient>(TypeId);
 
 /**
  * Returns true if the given value is a ShareRecipient resource.
  */
 export const isShareRecipient = (value: unknown): value is ShareRecipient =>
-  Predicate.hasProperty(value, "Type") && value.Type === ShareRecipientTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const ShareRecipientProvider = () =>
   Provider.succeed(ShareRecipient, {
@@ -220,6 +222,46 @@ export const ShareRecipientProvider = () =>
           recipientId: output.recipientId,
         })
         .pipe(Effect.catchTag("ShareRecipientNotFound", () => Effect.void));
+    }),
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Parent fan-out: recipients are keyed by their parent Share, which is
+      // account-scoped. Enumerate the account's owned (sent) shares, then list
+      // recipients within each share with bounded concurrency.
+      const shareIds = yield* resourceSharing.listResourceSharings
+        .pages({ accountId, kind: "sent" })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? []).map((share) => share.id),
+            ),
+          ),
+          // The account cannot enumerate shares — nothing to list.
+          Effect.catchTag("Forbidden", () => Effect.succeed([] as string[])),
+        );
+
+      const rows = yield* Effect.forEach(
+        shareIds,
+        (shareId) =>
+          resourceSharing.listRecipients.pages({ accountId, shareId }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? [])
+                  // Disassociated recipients are "gone" — match `read`.
+                  .filter((r) => r.associationStatus !== "disassociated")
+                  .map((r) => toAttributes(r, accountId, shareId)),
+              ),
+            ),
+            // The share vanished mid-enumeration or isn't ours — skip it.
+            Effect.catchTag(["ShareNotFound", "Forbidden"], () =>
+              Effect.succeed([] as ShareRecipientAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
   });
 

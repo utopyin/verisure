@@ -2,6 +2,7 @@ import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Output from "@/Output";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as tokenValidation from "@distilled.cloud/cloudflare/token-validation";
 import { expect } from "@effect/vitest";
@@ -101,6 +102,53 @@ test.provider(
   { timeout: 120_000 },
 );
 
+// Canonical `list()` test (zone-scoped collection): configurations live
+// inside a zone and the list op is keyed per zone, so `list()` enumerates
+// every zone via `listAllZones` and fans out the per-zone list, skipping
+// zones that reject with the typed `TokenValidationNotEntitled` / `Forbidden`
+// tags. On the unentitled testing account every zone is skipped, so the
+// result is an empty array — the assertion is that `list()` resolves to an
+// array (proving the typed skip path) rather than throwing. Presence of a
+// deployed configuration is asserted only on an entitled account (env-gated).
+test.provider(
+  "list enumerates configurations across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.TokenValidation.TokenConfiguration,
+      );
+
+      if (!entitledZoneId) {
+        const all = yield* provider.list();
+        expect(Array.isArray(all)).toBe(true);
+        yield* stack.destroy();
+        return;
+      }
+
+      const zoneId = entitledZoneId;
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.TokenValidation.TokenConfiguration(
+            "JwtConfigList",
+            {
+              zoneId,
+              tokenSources: ['http.request.headers["authorization"][0]'],
+              keys: [JWKS_KEY_1],
+            },
+          );
+        }),
+      );
+
+      const all = yield* provider.list();
+      expect(all.some((c) => c.configId === deployed.configId)).toBe(true);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitledZoneId)(
   "configuration + rule lifecycle: create, update in place, rotate keys, destroy",
   (stack) =>
@@ -112,13 +160,16 @@ test.provider.skipIf(!entitledZoneId)(
       // -- Create: configuration with one key, rule that logs ------------
       const created = yield* stack.deploy(
         Effect.gen(function* () {
-          const config = yield* Cloudflare.TokenConfiguration("JwtConfig", {
-            zoneId,
-            description: "v1",
-            tokenSources: ['http.request.headers["authorization"][0]'],
-            keys: [JWKS_KEY_1],
-          });
-          const rule = yield* Cloudflare.TokenValidationRule("JwtRule", {
+          const config = yield* Cloudflare.TokenValidation.TokenConfiguration(
+            "JwtConfig",
+            {
+              zoneId,
+              description: "v1",
+              tokenSources: ['http.request.headers["authorization"][0]'],
+              keys: [JWKS_KEY_1],
+            },
+          );
+          const rule = yield* Cloudflare.TokenValidation.Rule("JwtRule", {
             zoneId,
             description: "v1",
             action: "log",
@@ -152,16 +203,19 @@ test.provider.skipIf(!entitledZoneId)(
       // -- Update in place: patch metadata, rotate keys, flip the rule ---
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          const config = yield* Cloudflare.TokenConfiguration("JwtConfig", {
-            zoneId,
-            description: "v2",
-            tokenSources: [
-              'http.request.headers["authorization"][0]',
-              'http.request.uri.args["token"][0]',
-            ],
-            keys: [JWKS_KEY_1, JWKS_KEY_2],
-          });
-          const rule = yield* Cloudflare.TokenValidationRule("JwtRule", {
+          const config = yield* Cloudflare.TokenValidation.TokenConfiguration(
+            "JwtConfig",
+            {
+              zoneId,
+              description: "v2",
+              tokenSources: [
+                'http.request.headers["authorization"][0]',
+                'http.request.uri.args["token"][0]',
+              ],
+              keys: [JWKS_KEY_1, JWKS_KEY_2],
+            },
+          );
+          const rule = yield* Cloudflare.TokenValidation.Rule("JwtRule", {
             zoneId,
             description: "v2",
             enabled: false,

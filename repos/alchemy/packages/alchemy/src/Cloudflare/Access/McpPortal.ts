@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -9,10 +10,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const AccessMcpPortalTypeId = "Cloudflare.Access.McpPortal" as const;
-type AccessMcpPortalTypeId = typeof AccessMcpPortalTypeId;
+const TypeId = "Cloudflare.Access.McpPortal" as const;
+type TypeId = typeof TypeId;
 
-export interface AccessMcpPortalProps {
+export interface McpPortalProps {
   /**
    * The client-supplied portal identifier. Immutable — changing it
    * triggers a replacement. If omitted, a deterministic id is generated
@@ -47,7 +48,7 @@ export interface AccessMcpPortalProps {
   secureWebGateway?: boolean;
 }
 
-export type AccessMcpPortalAttributes = {
+export type McpPortalAttributes = {
   /** The portal id. */
   portalId: string;
   /** Account that owns the portal. */
@@ -66,10 +67,10 @@ export type AccessMcpPortalAttributes = {
   createdAt: string | undefined;
 };
 
-export type AccessMcpPortal = Resource<
-  AccessMcpPortalTypeId,
-  AccessMcpPortalProps,
-  AccessMcpPortalAttributes,
+export type McpPortal = Resource<
+  TypeId,
+  McpPortalProps,
+  McpPortalAttributes,
   never,
   Providers
 >;
@@ -84,18 +85,20 @@ export type AccessMcpPortal = Resource<
  * entitlement; accounts without it receive the typed `Forbidden` error
  * on all writes. Attaching servers to the portal is managed out of band
  * (a future `Cloudflare.Access.McpServer` resource).
- *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  * @section Creating an MCP portal
  * @example Minimal portal
  * ```typescript
- * const portal = yield* Cloudflare.AccessMcpPortal("AiPortal", {
+ * const portal = yield* Cloudflare.Access.McpPortal("AiPortal", {
  *   hostname: "mcp.example.com",
  * });
  * ```
  *
  * @example Portal with gateway egress
  * ```typescript
- * const portal = yield* Cloudflare.AccessMcpPortal("AiPortal", {
+ * const portal = yield* Cloudflare.Access.McpPortal("AiPortal", {
  *   hostname: "mcp.example.com",
  *   description: "Company-approved AI tools",
  *   secureWebGateway: true,
@@ -104,17 +107,39 @@ export type AccessMcpPortal = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/
  */
-export const AccessMcpPortal = Resource<AccessMcpPortal>(AccessMcpPortalTypeId);
+export const McpPortal = Resource<McpPortal>(TypeId);
 
 /**
- * Returns true if the given value is an AccessMcpPortal resource.
+ * Returns true if the given value is an McpPortal resource.
  */
-export const isAccessMcpPortal = (value: unknown): value is AccessMcpPortal =>
-  Predicate.hasProperty(value, "Type") && value.Type === AccessMcpPortalTypeId;
+export const isMcpPortal = (value: unknown): value is McpPortal =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const AccessMcpPortalProvider = () =>
-  Provider.succeed(AccessMcpPortal, {
+export const McpPortalProvider = () =>
+  Provider.succeed(McpPortal, {
     stables: ["portalId", "accountId", "createdAt"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection; exhaustively paginate. The list rows
+      // carry the full portal shape, so each maps directly into the same
+      // Attributes `read` returns. Accounts without the AI Controls
+      // entitlement reject the route with the typed `Forbidden` — treat
+      // them as having no portals.
+      return yield* zeroTrust.listAccessAiControlMcpPortals
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? []).map((portal) =>
+                toAttributes(portal, accountId),
+              ),
+            ),
+          ),
+          Effect.catchTag("Forbidden", () => Effect.succeed([])),
+        );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -245,7 +270,7 @@ const createPortalId = (id: string, portalId: string | undefined) =>
 const toAttributes = (
   portal: ObservedPortal,
   accountId: string,
-): AccessMcpPortalAttributes => ({
+): McpPortalAttributes => ({
   portalId: portal.id,
   accountId,
   name: portal.name,

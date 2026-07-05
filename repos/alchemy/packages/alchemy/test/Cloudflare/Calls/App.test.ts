@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as calls from "@distilled.cloud/cloudflare/calls";
 import { expect } from "@effect/vitest";
@@ -48,7 +49,7 @@ test.provider("create and delete an app with default name", (stack) =>
 
     yield* stack.destroy();
 
-    const app = yield* stack.deploy(Cloudflare.CallsApp("DefaultApp", {}));
+    const app = yield* stack.deploy(Cloudflare.Calls.App("DefaultApp", {}));
 
     expect(app.appId).toBeTruthy();
     expect(Redacted.value(app.secret)).toBeTruthy();
@@ -72,7 +73,7 @@ test.provider("update name in place (same appId, secret preserved)", (stack) =>
     yield* stack.destroy();
 
     const initial = yield* stack.deploy(
-      Cloudflare.CallsApp("UpdateApp", {
+      Cloudflare.Calls.App("UpdateApp", {
         name: "alchemy-calls-app-update",
       }),
     );
@@ -82,7 +83,7 @@ test.provider("update name in place (same appId, secret preserved)", (stack) =>
     expect(initialSecret).toBeTruthy();
 
     const updated = yield* stack.deploy(
-      Cloudflare.CallsApp("UpdateApp", {
+      Cloudflare.Calls.App("UpdateApp", {
         name: "alchemy-calls-app-update-v2",
       }),
     );
@@ -98,7 +99,7 @@ test.provider("update name in place (same appId, secret preserved)", (stack) =>
 
     // Redeploying identical props is a no-op (still the same app).
     const noop = yield* stack.deploy(
-      Cloudflare.CallsApp("UpdateApp", {
+      Cloudflare.Calls.App("UpdateApp", {
         name: "alchemy-calls-app-update-v2",
       }),
     );
@@ -111,6 +112,33 @@ test.provider("update name in place (same appId, secret preserved)", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed app", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const app = yield* stack.deploy(
+      Cloudflare.Calls.App("ListApp", {
+        name: "alchemy-calls-app-list",
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Calls.App);
+    const all = yield* provider.list();
+
+    // The account-scoped enumeration must contain the just-deployed app.
+    const found = all.find((a) => a.appId === app.appId);
+    expect(found).toBeDefined();
+    expect(found?.accountId).toEqual(accountId);
+    expect(found?.name).toEqual("alchemy-calls-app-list");
+
+    yield* stack.destroy();
+
+    yield* expectGone(accountId, app.appId);
+  }).pipe(logLevel),
+);
+
 test.provider("recreates after out-of-band delete", (stack) =>
   Effect.gen(function* () {
     const { accountId } = yield* yield* CloudflareEnvironment;
@@ -118,7 +146,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     yield* stack.destroy();
 
     const app = yield* stack.deploy(
-      Cloudflare.CallsApp("HealApp", {
+      Cloudflare.Calls.App("HealApp", {
         name: "alchemy-calls-app-heal",
       }),
     );
@@ -135,7 +163,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     );
 
     const healed = yield* stack.deploy(
-      Cloudflare.CallsApp("HealApp", {
+      Cloudflare.Calls.App("HealApp", {
         name: "alchemy-calls-app-heal-v2",
       }),
     );

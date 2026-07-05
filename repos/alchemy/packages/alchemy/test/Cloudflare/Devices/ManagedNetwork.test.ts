@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -59,7 +60,7 @@ test.provider(
       yield* stack.destroy();
 
       const network = yield* stack.deploy(
-        Cloudflare.DeviceManagedNetwork("Office", {
+        Cloudflare.Devices.DeviceManagedNetwork("Office", {
           name: "alchemy-test-managed-network",
           config: { tlsSockaddr: "192.0.2.1:443", sha256: SHA_A },
         }),
@@ -79,7 +80,7 @@ test.provider(
 
       // Update config in place — same networkId.
       const updated = yield* stack.deploy(
-        Cloudflare.DeviceManagedNetwork("Office", {
+        Cloudflare.Devices.DeviceManagedNetwork("Office", {
           name: "alchemy-test-managed-network",
           config: { tlsSockaddr: "192.0.2.2:443", sha256: SHA_B },
         }),
@@ -93,7 +94,7 @@ test.provider(
 
       // Redeploying identical props is a no-op (same network).
       const noop = yield* stack.deploy(
-        Cloudflare.DeviceManagedNetwork("Office", {
+        Cloudflare.Devices.DeviceManagedNetwork("Office", {
           name: "alchemy-test-managed-network",
           config: { tlsSockaddr: "192.0.2.2:443", sha256: SHA_B },
         }),
@@ -103,4 +104,27 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, network.networkId);
     }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed managed network", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Cloudflare.Devices.DeviceManagedNetwork("ListResource", {
+        name: "alchemy-test-managed-network-list",
+        config: { tlsSockaddr: "192.0.2.3:443", sha256: SHA_A },
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Devices.DeviceManagedNetwork,
+    );
+    const all = yield* provider.list();
+
+    expect(all.some((n) => n.networkId === deployed.networkId)).toBe(true);
+
+    yield* stack.destroy();
+    yield* expectGone(deployed.accountId, deployed.networkId);
+  }).pipe(logLevel),
 );

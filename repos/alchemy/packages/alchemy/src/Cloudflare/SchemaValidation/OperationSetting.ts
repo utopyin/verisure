@@ -1,28 +1,26 @@
 import * as schemaValidation from "@distilled.cloud/cloudflare/schema-validation";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const SchemaValidationOperationSettingTypeId =
-  "Cloudflare.SchemaValidation.OperationSetting" as const;
-type SchemaValidationOperationSettingTypeId =
-  typeof SchemaValidationOperationSettingTypeId;
+const TypeId = "Cloudflare.SchemaValidation.OperationSetting" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Per-operation mitigation action for schema validation: `log` records
  * non-conforming requests, `block` denies them, `none` does nothing.
  */
-export type SchemaValidationOperationMitigationAction =
-  | "log"
-  | "block"
-  | "none";
+export type OperationMitigationAction = "log" | "block" | "none";
 
-export interface SchemaValidationOperationSettingProps {
+export interface OperationSettingProps {
   /**
    * Zone the operation belongs to.
    *
@@ -44,22 +42,22 @@ export interface SchemaValidationOperationSettingProps {
    * Mutable in place (the PUT is a true upsert). `log` may be plan-gated
    * (API Shield entitlement).
    */
-  mitigationAction: SchemaValidationOperationMitigationAction;
+  mitigationAction: OperationMitigationAction;
 }
 
-export interface SchemaValidationOperationSettingAttributes {
+export interface OperationSettingAttributes {
   /** Zone the operation belongs to. */
   zoneId: string;
   /** UUID of the API Shield operation the override applies to. */
   operationId: string;
   /** The mitigation action applied to this operation. */
-  mitigationAction: SchemaValidationOperationMitigationAction;
+  mitigationAction: OperationMitigationAction;
 }
 
-export type SchemaValidationOperationSetting = Resource<
-  SchemaValidationOperationSettingTypeId,
-  SchemaValidationOperationSettingProps,
-  SchemaValidationOperationSettingAttributes,
+export type OperationSetting = Resource<
+  TypeId,
+  OperationSettingProps,
+  OperationSettingAttributes,
   never,
   Providers
 >;
@@ -73,18 +71,20 @@ export type SchemaValidationOperationSetting = Resource<
  * The override is keyed by the operation's UUID; deleting the resource
  * clears the override so the operation falls back to the zone default.
  * Deleting the underlying API Shield operation cascades the override away.
- *
+ * @resource
+ * @product Schema Validation
+ * @category Application Security
  * @section Overriding an operation
  * @example Block non-conforming requests on one operation
  * ```typescript
- * const op = yield* Cloudflare.ApiShieldOperation("GetUser", {
+ * const op = yield* Cloudflare.ApiShield.Operation("GetUser", {
  *   zoneId: zone.zoneId,
  *   method: "GET",
  *   host: "api.example.com",
  *   endpoint: "/users/{id}",
  * });
  *
- * yield* Cloudflare.SchemaValidationOperationSetting("BlockGetUser", {
+ * yield* Cloudflare.SchemaValidation.OperationSetting("BlockGetUser", {
  *   zoneId: zone.zoneId,
  *   operationId: op.operationId,
  *   mitigationAction: "block",
@@ -93,7 +93,7 @@ export type SchemaValidationOperationSetting = Resource<
  *
  * @example Exempt an operation from validation
  * ```typescript
- * yield* Cloudflare.SchemaValidationOperationSetting("SkipWebhook", {
+ * yield* Cloudflare.SchemaValidation.OperationSetting("SkipWebhook", {
  *   zoneId: zone.zoneId,
  *   operationId: webhookOp.operationId,
  *   mitigationAction: "none",
@@ -102,24 +102,59 @@ export type SchemaValidationOperationSetting = Resource<
  *
  * @see https://developers.cloudflare.com/api-shield/security/schema-validation/
  */
-export const SchemaValidationOperationSetting =
-  Resource<SchemaValidationOperationSetting>(
-    SchemaValidationOperationSettingTypeId,
-  );
+export const OperationSetting = Resource<OperationSetting>(TypeId);
 
 /**
- * Returns true if the given value is a SchemaValidationOperationSetting
+ * Returns true if the given value is a OperationSetting
  * resource.
  */
-export const isSchemaValidationOperationSetting = (
-  value: unknown,
-): value is SchemaValidationOperationSetting =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === SchemaValidationOperationSettingTypeId;
+export const isOperationSetting = (value: unknown): value is OperationSetting =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const SchemaValidationOperationSettingProvider = () =>
-  Provider.succeed(SchemaValidationOperationSetting, {
+export const OperationSettingProvider = () =>
+  Provider.succeed(OperationSetting, {
     stables: ["zoneId", "operationId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Per-operation overrides live inside a zone with no account-wide
+      // enumeration API — fan out over every zone and list its operation
+      // settings, exhaustively paginated.
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          schemaValidation.listSettingOperations
+            .pages({ zoneId: zone.id })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.result ?? [])
+                    // An operation with no override reports a nullish action;
+                    // skip it so the result mirrors what `read` returns.
+                    .filter((op) => op.mitigationAction != null)
+                    .map((op) =>
+                      toAttributes(zone.id, {
+                        operationId: op.operationId,
+                        // Distilled widens the generated enum to an open union.
+                        mitigationAction:
+                          op.mitigationAction as OperationMitigationAction,
+                      }),
+                    ),
+                ),
+              ),
+              // A zone with no API Shield / schema-validation entitlement
+              // rejects the route — skip it, keep the rest. (Transient
+              // code-10000 "Authentication error" blips under concurrency are
+              // retried globally by the Cloudflare retry policy, so they never
+              // reach here as a real failure.)
+              Effect.catchTag("InvalidRoute", () => Effect.succeed([])),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
@@ -182,8 +217,7 @@ export const SchemaValidationOperationSettingProvider = () =>
       return toAttributes(zoneId, {
         operationId: updated.operationId,
         // Distilled widens the generated enum to an open union.
-        mitigationAction:
-          updated.mitigationAction as SchemaValidationOperationMitigationAction,
+        mitigationAction: updated.mitigationAction as OperationMitigationAction,
       });
     }),
 
@@ -214,7 +248,7 @@ const getOperationSetting = (zoneId: string, operationId: string) =>
             operationId: setting.operationId,
             // Distilled widens the generated enum to an open union.
             mitigationAction:
-              setting.mitigationAction as SchemaValidationOperationMitigationAction,
+              setting.mitigationAction as OperationMitigationAction,
           },
     ),
     Effect.catchTag("OperationNotFound", () => Effect.succeed(undefined)),
@@ -224,9 +258,9 @@ const toAttributes = (
   zoneId: string,
   setting: {
     operationId: string;
-    mitigationAction: SchemaValidationOperationMitigationAction;
+    mitigationAction: OperationMitigationAction;
   },
-): SchemaValidationOperationSettingAttributes => ({
+): OperationSettingAttributes => ({
   zoneId,
   operationId: setting.operationId,
   mitigationAction: setting.mitigationAction,

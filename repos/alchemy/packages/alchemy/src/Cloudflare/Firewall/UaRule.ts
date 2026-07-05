@@ -6,7 +6,9 @@ import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 const UaRuleTypeId = "Cloudflare.Firewall.UaRule" as const;
 type UaRuleTypeId = typeof UaRuleTypeId;
@@ -93,11 +95,13 @@ export type UaRule = Resource<
  * state, `read` scans the zone for an existing rule with the same
  * User-Agent string and reports it as `Unowned`, so the engine refuses to
  * take it over unless `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  * @section Blocking a User-Agent
  * @example Block a scraper outright
  * ```typescript
- * yield* Cloudflare.UaRule("BlockScraper", {
+ * yield* Cloudflare.Firewall.UaRule("BlockScraper", {
  *   zoneId: zone.zoneId,
  *   userAgent: "BadBot/1.2 (+http://badbot.example)",
  *   mode: "block",
@@ -108,7 +112,7 @@ export type UaRule = Resource<
  * @section Challenging a User-Agent
  * @example Managed challenge instead of a hard block
  * ```typescript
- * yield* Cloudflare.UaRule("ChallengeOldClient", {
+ * yield* Cloudflare.Firewall.UaRule("ChallengeOldClient", {
  *   zoneId: zone.zoneId,
  *   userAgent: "LegacyApp/0.9",
  *   mode: "managed_challenge",
@@ -118,7 +122,7 @@ export type UaRule = Resource<
  * @section Pausing a rule
  * @example Temporarily disable a rule without deleting it
  * ```typescript
- * yield* Cloudflare.UaRule("BlockScraper", {
+ * yield* Cloudflare.Firewall.UaRule("BlockScraper", {
  *   zoneId: zone.zoneId,
  *   userAgent: "BadBot/1.2 (+http://badbot.example)",
  *   mode: "block",
@@ -139,6 +143,32 @@ export const isUaRule = (value: unknown): value is UaRule =>
 export const UaRuleProvider = () =>
   Provider.succeed(UaRule, {
     stables: ["uaRuleId", "zoneId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // UA rules live inside a zone (`/zones/{zone_id}/firewall/ua_rules`)
+      // with no account-wide list — enumerate every zone and exhaustively
+      // paginate each one's rules.
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          firewall.listUaRules.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((rule) => toAttributes(rule, zone.id)),
+              ),
+            ),
+            // Plan-gated / partial zones (eventually-consistent scoped
+            // tokens) reject the route; skip them rather than fail the
+            // whole enumeration.
+            Effect.catchTag("Forbidden", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news }) {
       const o = olds as UaRuleProps;

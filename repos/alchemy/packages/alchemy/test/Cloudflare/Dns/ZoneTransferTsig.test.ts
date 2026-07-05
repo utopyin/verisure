@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -58,7 +59,7 @@ test.provider(
       yield* stack.destroy();
 
       const created = yield* stack.deploy(
-        Cloudflare.ZoneTransferTsig("TestTsig", {
+        Cloudflare.DNS.ZoneTransferTsig("TestTsig", {
           name: "alchemy-dnszt-tsig-test.",
           algo: "hmac-sha512.",
           secret: Redacted.make(SECRET_A),
@@ -78,7 +79,7 @@ test.provider(
 
       // Rotate the secret in place — same physical TSIG.
       const rotated = yield* stack.deploy(
-        Cloudflare.ZoneTransferTsig("TestTsig", {
+        Cloudflare.DNS.ZoneTransferTsig("TestTsig", {
           name: "alchemy-dnszt-tsig-test.",
           algo: "hmac-sha512.",
           secret: Redacted.make(SECRET_B),
@@ -93,6 +94,36 @@ test.provider(
       yield* expectGone(accountId, created.tsigId);
 
       // Re-running destroy is idempotent.
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Canonical `list()` test (account-scoped collection): deploy a real TSIG,
+// resolve the provider from context via the typed `findProvider`, call
+// `list()`, and assert the deployed TSIG appears in the exhaustively-paginated
+// result.
+test.provider(
+  "list enumerates the deployed TSIG",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.DNS.ZoneTransferTsig("ListTsig", {
+          name: "alchemy-dnszt-tsig-list.",
+          algo: "hmac-sha512.",
+          secret: Redacted.make(SECRET_A),
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DNS.ZoneTransferTsig,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((t) => t.tsigId === deployed.tsigId)).toBe(true);
+
       yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },

@@ -2,6 +2,7 @@ import { adopt, OwnedBySomeoneElse } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as emailSending from "@distilled.cloud/cloudflare/email-sending";
 import { expect } from "@effect/vitest";
@@ -29,6 +30,7 @@ const NAME_DEFAULT = `alchemy-sendsub-default.${zoneName}`;
 const NAME_REPLACE_A = `alchemy-sendsub-replace-a.${zoneName}`;
 const NAME_REPLACE_B = `alchemy-sendsub-replace-b.${zoneName}`;
 const NAME_ADOPT = `alchemy-sendsub-adopt.${zoneName}`;
+const NAME_LIST = `alchemy-sendsub-list.${zoneName}`;
 
 const resolveZoneId = Effect.gen(function* () {
   const { accountId } = yield* yield* CloudflareEnvironment;
@@ -99,7 +101,7 @@ test.provider("create and destroy a sending subdomain", (stack) =>
 
     const sending = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.EmailSendingSubdomain("Sending", {
+        return yield* Cloudflare.Email.SendingSubdomain("Sending", {
           zoneId,
           name: NAME_DEFAULT,
         });
@@ -146,7 +148,7 @@ test.provider("changing the name triggers replacement", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.EmailSendingSubdomain("ReplaceSending", {
+        return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
           zoneId,
           name: NAME_REPLACE_A,
         });
@@ -157,7 +159,7 @@ test.provider("changing the name triggers replacement", (stack) =>
 
     const replaced = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.EmailSendingSubdomain("ReplaceSending", {
+        return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
           zoneId,
           name: NAME_REPLACE_B,
         });
@@ -209,7 +211,7 @@ test.provider(
       const error = yield* stack
         .deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.EmailSendingSubdomain("AdoptSending", {
+            return yield* Cloudflare.Email.SendingSubdomain("AdoptSending", {
               zoneId,
               name: NAME_ADOPT,
             });
@@ -225,7 +227,7 @@ test.provider(
       // instead of failing.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.EmailSendingSubdomain("AdoptSending", {
+          return yield* Cloudflare.Email.SendingSubdomain("AdoptSending", {
             zoneId,
             name: NAME_ADOPT,
           }).pipe(adopt(true));
@@ -237,6 +239,51 @@ test.provider(
       yield* stack.destroy();
 
       const gone = yield* findByName(zoneId, NAME_ADOPT);
+      expect(gone).toBeUndefined();
+    }).pipe(logLevel),
+  { timeout: 180_000 },
+);
+
+test.provider(
+  "list enumerates the deployed sending subdomain",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      yield* stack.destroy();
+      yield* purgeSubdomain(zoneId, NAME_LIST);
+
+      const sending = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Email.SendingSubdomain("ListSending", {
+            zoneId,
+            name: NAME_LIST,
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Email.SendingSubdomain,
+      );
+      // The scoped token may still be propagating across the edge; ride out
+      // the typed Forbidden blips on the enumeration itself.
+      const all = yield* provider.list().pipe(
+        Effect.retry({
+          while: (e) => e._tag === "Forbidden",
+          schedule: forbiddenRetrySchedule,
+          times: 8,
+        }),
+      );
+
+      // The deployed subdomain is present, with the full read Attributes shape.
+      const found = all.find((s) => s.subdomainId === sending.subdomainId);
+      expect(found).toBeDefined();
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.name).toEqual(NAME_LIST);
+
+      yield* stack.destroy();
+
+      const gone = yield* findByName(zoneId, NAME_LIST);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
   { timeout: 180_000 },

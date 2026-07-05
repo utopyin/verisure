@@ -1,5 +1,6 @@
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as alerting from "@distilled.cloud/cloudflare/alerting";
 import { expect } from "@effect/vitest";
@@ -47,11 +48,14 @@ test.provider("create, update window in place, delete silence", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        const policy = yield* Cloudflare.NotificationPolicy("SilencedPolicy", {
-          alertType: "universal_ssl_event_type",
-          mechanisms: { email: [{ id: EMAIL }] },
-        });
-        return yield* Cloudflare.Silence("Maintenance", {
+        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+          "SilencedPolicy",
+          {
+            alertType: "universal_ssl_event_type",
+            mechanisms: { email: [{ id: EMAIL }] },
+          },
+        );
+        return yield* Cloudflare.Alerting.Silence("Maintenance", {
           policyId: policy.policyId,
           startTime: start,
           endTime: end,
@@ -77,11 +81,14 @@ test.provider("create, update window in place, delete silence", (stack) =>
     // Extend the window in place — same silence id.
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        const policy = yield* Cloudflare.NotificationPolicy("SilencedPolicy", {
-          alertType: "universal_ssl_event_type",
-          mechanisms: { email: [{ id: EMAIL }] },
-        });
-        return yield* Cloudflare.Silence("Maintenance", {
+        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+          "SilencedPolicy",
+          {
+            alertType: "universal_ssl_event_type",
+            mechanisms: { email: [{ id: EMAIL }] },
+          },
+        );
+        return yield* Cloudflare.Alerting.Silence("Maintenance", {
           policyId: policy.policyId,
           startTime: start,
           endTime: extendedEnd,
@@ -114,16 +121,22 @@ test.provider("replaces silence when the policy changes", (stack) =>
     const deploySilence = (policyResourceId: "PolicyA" | "PolicyB") =>
       stack.deploy(
         Effect.gen(function* () {
-          const policyA = yield* Cloudflare.NotificationPolicy("PolicyA", {
-            alertType: "universal_ssl_event_type",
-            mechanisms: { email: [{ id: EMAIL }] },
-          });
-          const policyB = yield* Cloudflare.NotificationPolicy("PolicyB", {
-            alertType: "universal_ssl_event_type",
-            mechanisms: { email: [{ id: EMAIL }] },
-          });
+          const policyA = yield* Cloudflare.Alerting.NotificationPolicy(
+            "PolicyA",
+            {
+              alertType: "universal_ssl_event_type",
+              mechanisms: { email: [{ id: EMAIL }] },
+            },
+          );
+          const policyB = yield* Cloudflare.Alerting.NotificationPolicy(
+            "PolicyB",
+            {
+              alertType: "universal_ssl_event_type",
+              mechanisms: { email: [{ id: EMAIL }] },
+            },
+          );
           const target = policyResourceId === "PolicyA" ? policyA : policyB;
-          const silence = yield* Cloudflare.Silence("ReplaceMe", {
+          const silence = yield* Cloudflare.Alerting.Silence("ReplaceMe", {
             policyId: target.policyId,
             startTime: start,
             endTime: end,
@@ -153,6 +166,41 @@ test.provider("replaces silence when the policy changes", (stack) =>
     yield* stack.destroy();
 
     yield* waitForSilenceDeleted(accountId, replaced.silence.silenceId);
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed silence", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const { start, end } = yield* silenceWindow;
+
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        const policy = yield* Cloudflare.Alerting.NotificationPolicy(
+          "ListedPolicy",
+          {
+            alertType: "universal_ssl_event_type",
+            mechanisms: { email: [{ id: EMAIL }] },
+          },
+        );
+        return yield* Cloudflare.Alerting.Silence("ListedSilence", {
+          policyId: policy.policyId,
+          startTime: start,
+          endTime: end,
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Alerting.Silence);
+    const all = yield* provider.list();
+
+    expect(all.some((s) => s.silenceId === deployed.silenceId)).toBe(true);
+
+    yield* stack.destroy();
+
+    yield* waitForSilenceDeleted(accountId, deployed.silenceId);
   }).pipe(logLevel),
 );
 

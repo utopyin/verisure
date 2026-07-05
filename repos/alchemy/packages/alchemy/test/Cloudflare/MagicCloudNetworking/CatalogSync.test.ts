@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as mcn from "@distilled.cloud/cloudflare/magic-cloud-networking";
 import { expect } from "@effect/vitest";
@@ -96,7 +97,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const sync = yield* stack.deploy(
-        Cloudflare.CatalogSync("Sync", {
+        Cloudflare.MagicCloudNetworking.CatalogSync("Sync", {
           name: "alchemy-mcn-catalog-sync",
           destinationType: "NONE",
           updateMode: "MANUAL",
@@ -118,7 +119,7 @@ test.provider.skipIf(!entitled)(
 
       // Update mutable props in place — same syncId.
       const updated = yield* stack.deploy(
-        Cloudflare.CatalogSync("Sync", {
+        Cloudflare.MagicCloudNetworking.CatalogSync("Sync", {
           name: "alchemy-mcn-catalog-sync-v2",
           destinationType: "NONE",
           updateMode: "AUTO",
@@ -142,6 +143,48 @@ test.provider.skipIf(!entitled)(
   { timeout: 120_000 },
 );
 
+// On unentitled accounts `list()` swallows the typed `FeatureNotEnabled`
+// error and returns `[]`, so the read-only assertion runs everywhere. On an
+// entitled account we additionally deploy a sync and assert it shows up in
+// the exhaustively-paginated result.
+test.provider(
+  "list enumerates account catalog syncs",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicCloudNetworking.CatalogSync,
+      );
+
+      const before = yield* provider.list();
+      expect(Array.isArray(before)).toBe(true);
+
+      if (!entitled) {
+        // Unentitled — FeatureNotEnabled is caught and mapped to [].
+        expect(before).toEqual([]);
+        yield* stack.destroy();
+        return;
+      }
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.MagicCloudNetworking.CatalogSync("ListSync", {
+          name: "alchemy-mcn-catalog-sync-list",
+          destinationType: "NONE",
+          updateMode: "MANUAL",
+        }),
+      );
+
+      const all = yield* provider.list();
+      expect(all.some((s) => s.syncId === deployed.syncId)).toBe(true);
+
+      yield* stack.destroy();
+
+      yield* expectGone(deployed.accountId, deployed.syncId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "replaces the sync when destinationType changes",
   (stack) =>
@@ -151,7 +194,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const initial = yield* stack.deploy(
-        Cloudflare.CatalogSync("ReplaceSync", {
+        Cloudflare.MagicCloudNetworking.CatalogSync("ReplaceSync", {
           name: "alchemy-mcn-catalog-sync-replace",
           destinationType: "NONE",
           updateMode: "MANUAL",
@@ -161,7 +204,7 @@ test.provider.skipIf(!entitled)(
       // destinationType is provisioned at create time — changing it must
       // produce a brand-new sync (new syncId).
       const replaced = yield* stack.deploy(
-        Cloudflare.CatalogSync("ReplaceSync", {
+        Cloudflare.MagicCloudNetworking.CatalogSync("ReplaceSync", {
           name: "alchemy-mcn-catalog-sync-replace",
           destinationType: "ZERO_TRUST_LIST",
           updateMode: "MANUAL",

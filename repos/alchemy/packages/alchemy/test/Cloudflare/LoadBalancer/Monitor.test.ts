@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as loadBalancers from "@distilled.cloud/cloudflare/load-balancers";
 import { expect } from "@effect/vitest";
@@ -95,7 +96,7 @@ test.provider.skipIf(!lbEnabled)(
       yield* stack.destroy();
 
       const initial = yield* stack.deploy(
-        Cloudflare.LoadBalancerMonitor("Monitor", {
+        Cloudflare.LoadBalancer.Monitor("Monitor", {
           description: NAME_LIFECYCLE,
           type: "https",
           path: "/health",
@@ -116,7 +117,7 @@ test.provider.skipIf(!lbEnabled)(
 
       // Mutable props update in place — same monitorId.
       const updated = yield* stack.deploy(
-        Cloudflare.LoadBalancerMonitor("Monitor", {
+        Cloudflare.LoadBalancer.Monitor("Monitor", {
           description: NAME_LIFECYCLE,
           type: "https",
           path: "/healthz",
@@ -134,7 +135,7 @@ test.provider.skipIf(!lbEnabled)(
 
       // Redeploying identical props is a no-op (still the same monitor).
       const noop = yield* stack.deploy(
-        Cloudflare.LoadBalancerMonitor("Monitor", {
+        Cloudflare.LoadBalancer.Monitor("Monitor", {
           description: NAME_LIFECYCLE,
           type: "https",
           path: "/healthz",
@@ -148,6 +149,62 @@ test.provider.skipIf(!lbEnabled)(
       yield* stack.destroy();
 
       yield* expectGone(accountId, initial.monitorId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Ungated: the account-scoped listMonitors enumeration works regardless of
+// the Load Balancing subscription (it just returns an empty array on an
+// unentitled account), so this proves the list() op end-to-end live.
+test.provider(
+  "list returns an array of monitor attributes",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.LoadBalancer.Monitor,
+      );
+      const all = yield* provider.list();
+      expect(Array.isArray(all)).toBe(true);
+      for (const monitor of all) {
+        expect(typeof monitor.monitorId).toBe("string");
+        expect(typeof monitor.accountId).toBe("string");
+      }
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 60_000 },
+);
+
+// Full presence check — requires the LB subscription to deploy a real
+// monitor. Skips on unentitled accounts (create fails with the typed
+// MonitorIntervalOutOfRange plan-gate error). Set CLOUDFLARE_LB_ENABLED=1
+// once the subscription is provisioned.
+test.provider.skipIf(!lbEnabled)(
+  "list enumerates the deployed monitor",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.LoadBalancer.Monitor("ListMonitor", {
+          description: NAME_LIFECYCLE,
+          type: "https",
+          path: "/health",
+          expectedCodes: "2xx",
+          allowInsecure: true,
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.LoadBalancer.Monitor,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((m) => m.monitorId === deployed.monitorId)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

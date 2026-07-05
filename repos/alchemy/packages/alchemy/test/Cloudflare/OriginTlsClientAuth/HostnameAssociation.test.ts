@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as originTls from "@distilled.cloud/cloudflare/origin-tls-client-auth";
 import { expect } from "@effect/vitest";
@@ -8,8 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import { CERT_5, CERT_6, KEY_5, KEY_6 } from "./fixtures/certs.ts";
 import { describe } from "vitest";
+import { CERT_5, CERT_6, KEY_5, KEY_6 } from "./fixtures/certs.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
@@ -130,7 +131,7 @@ const program = (opts: {
   enabled: boolean;
 }) =>
   Effect.gen(function* () {
-    const cert5 = yield* Cloudflare.OriginTlsClientAuthHostnameCertificate(
+    const cert5 = yield* Cloudflare.OriginTlsClientAuth.HostnameCertificate(
       "AssocCert5",
       {
         zoneId: opts.zoneId,
@@ -138,7 +139,7 @@ const program = (opts: {
         privateKey: Redacted.make(KEY_5),
       },
     );
-    const cert6 = yield* Cloudflare.OriginTlsClientAuthHostnameCertificate(
+    const cert6 = yield* Cloudflare.OriginTlsClientAuth.HostnameCertificate(
       "AssocCert6",
       {
         zoneId: opts.zoneId,
@@ -148,7 +149,7 @@ const program = (opts: {
     );
     const pinned = opts.cert === "6" ? cert6 : cert5;
     const association =
-      yield* Cloudflare.OriginTlsClientAuthHostnameAssociation("AopHost", {
+      yield* Cloudflare.OriginTlsClientAuth.HostnameAssociation("AopHost", {
         zoneId: opts.zoneId,
         hostname: opts.hostname,
         certId: pinned.certificateId,
@@ -157,7 +158,25 @@ const program = (opts: {
     return { cert5, cert6, association };
   });
 
-describe.sequential("HostnameAssociation", () => {
+describe.skipIf(!!process.env.FAST)("HostnameAssociation", () => {
+  // Hostname associations are keyed entirely by {zoneId, hostname} and
+  // Cloudflare exposes no endpoint that enumerates which hostnames in a zone
+  // have an AOP association, so `list()` is non-listable and returns []. This
+  // read-only assertion always runs (no cert/hostname deploy required).
+  test.provider("list returns [] for the non-listable association", (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.OriginTlsClientAuth.HostnameAssociation,
+      );
+      const all = yield* provider.list();
+      expect(all).toEqual([]);
+
+      yield* stack.destroy();
+    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+  );
+
   test.provider(
     "associates a hostname, updates cert and enablement in place, voids on destroy",
     (stack) =>
@@ -214,16 +233,26 @@ describe.sequential("HostnameAssociation", () => {
               ? Effect.void
               : Effect.fail({ _tag: "AssociationNotVoided" } as const),
           ),
+          // Frequent, bounded spaced poll (~240s): voiding settles through
+          // edge propagation asynchronously and can occasionally take well
+          // past two minutes, so poll every 5s with a generous bound rather
+          // than backing off exponentially (whose late gaps overshoot).
           Effect.retry({
             while: (e) => e._tag === "AssociationNotVoided",
-            schedule: Schedule.exponential("500 millis"),
-            times: 10,
+            schedule: Schedule.spaced("5 seconds"),
+            times: 48,
           }),
           Effect.map(() => true),
         );
         expect(gone).toEqual(true);
-      }).pipe(logLevel),
-    { timeout: 120_000 },
+      }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    // Two sequential deploys, each uploading two hostname client-certificates
+    // plus the association, on Cloudflare's per-zone-serialized client-cert
+    // API. Under a full concurrent `./test/Cloudflare` run this zone's cert
+    // mutations contend with the sibling Certificate/HostnameCertificate
+    // suites (each create/delete bounded-retries the per-zone 409), then a
+    // ~240s spaced void poll — give real headroom while staying bounded.
+    { timeout: 420_000 },
   );
 
   test.provider(
@@ -272,10 +301,13 @@ describe.sequential("HostnameAssociation", () => {
               ? Effect.void
               : Effect.fail({ _tag: "AssociationNotVoided" } as const),
           ),
+          // Frequent, bounded spaced poll (~120s): voiding settles through
+          // edge propagation asynchronously, so check every 5s rather than
+          // backing off exponentially (whose late gaps overshoot the timeout).
           Effect.retry({
             while: (e) => e._tag === "AssociationNotVoided",
-            schedule: Schedule.exponential("500 millis"),
-            times: 10,
+            schedule: Schedule.spaced("5 seconds"),
+            times: 24,
           }),
           Effect.map(() => true),
         );
@@ -283,9 +315,29 @@ describe.sequential("HostnameAssociation", () => {
 
         yield* stack.destroy();
 
-        const newGone = yield* getAssociation(zoneId, HOST_REPLACE_B);
-        expect(newGone).toBeUndefined();
-      }).pipe(logLevel),
-    { timeout: 120_000 },
+        // Voiding is asynchronous (the void PUT settles through edge
+        // propagation) — poll until the association reads as absent rather
+        // than asserting on a single (potentially stale) read.
+        const newGone = yield* getAssociation(zoneId, HOST_REPLACE_B).pipe(
+          Effect.flatMap((assoc) =>
+            assoc === undefined
+              ? Effect.void
+              : Effect.fail({ _tag: "AssociationNotVoided" } as const),
+          ),
+          // Frequent, bounded spaced poll (~120s): voiding settles through
+          // edge propagation asynchronously, so check every 5s rather than
+          // backing off exponentially (whose late gaps overshoot the timeout).
+          Effect.retry({
+            while: (e) => e._tag === "AssociationNotVoided",
+            schedule: Schedule.spaced("5 seconds"),
+            times: 24,
+          }),
+          Effect.map(() => true),
+        );
+        expect(newGone).toEqual(true);
+      }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    // Same per-zone-serialized client-cert contention as the lifecycle case
+    // above, plus two spaced void polls — give real headroom under load.
+    { timeout: 300_000 },
   );
 });

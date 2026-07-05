@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import { expect } from "@effect/vitest";
@@ -77,6 +78,48 @@ test.provider(
   { timeout: 120_000 },
 );
 
+// Canonical `list()` test (account collection): Magic WAN sites are
+// account-scoped, so `list()` paginates the account-wide sites API and
+// hydrates each into the `read` Attributes shape. On unentitled accounts
+// enumeration is rejected with the typed `MagicWanUnauthorized` (1025) or
+// `Forbidden` (403) and `list()` returns a well-typed `[]`. On entitled
+// accounts (CLOUDFLARE_TEST_MAGIC_WAN=1) we deploy a site and assert it
+// appears in the exhaustively-paginated result.
+test.provider(
+  "list enumerates account Magic WAN sites",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicTransit.MagicSite,
+      );
+
+      if (!entitled) {
+        // Unentitled account — `list()` swallows the typed entitlement /
+        // permission rejection and yields an empty, well-typed array.
+        const all = yield* provider.list();
+        expect(all).toEqual([]);
+        yield* stack.destroy();
+        return;
+      }
+
+      const site = yield* stack.deploy(
+        Cloudflare.MagicTransit.MagicSite("ListSite", {
+          name: "alchemy-magic-site-list",
+          description: "alchemy magic site list test",
+        }),
+      );
+      expect(site.siteId).toBeTruthy();
+
+      const all = yield* provider.list();
+      expect(all.some((s) => s.siteId === site.siteId)).toBe(true);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 180_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "creates a site with WAN, LAN, and ACL, updates in place, and destroys",
   (stack) =>
@@ -86,7 +129,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const site = yield* stack.deploy(
-        Cloudflare.MagicSite("Site", {
+        Cloudflare.MagicTransit.MagicSite("Site", {
           name: "alchemy-magic-site",
           description: "alchemy magic site test",
           location: { lat: "37.7749", lon: "-122.4194" },
@@ -103,7 +146,7 @@ test.provider.skipIf(!entitled)(
       expect(live.name).toEqual("alchemy-magic-site");
 
       const wan = yield* stack.deploy(
-        Cloudflare.MagicSiteWan("Wan", {
+        Cloudflare.MagicTransit.MagicSiteWan("Wan", {
           siteId: site.siteId,
           physport: 1,
           name: "alchemy-site-wan",
@@ -114,7 +157,7 @@ test.provider.skipIf(!entitled)(
       expect(wan.siteId).toEqual(site.siteId);
 
       const lan1 = yield* stack.deploy(
-        Cloudflare.MagicSiteLan("Lan1", {
+        Cloudflare.MagicTransit.MagicSiteLan("Lan1", {
           siteId: site.siteId,
           physport: 2,
           name: "alchemy-site-lan1",
@@ -123,7 +166,7 @@ test.provider.skipIf(!entitled)(
         }),
       );
       const lan2 = yield* stack.deploy(
-        Cloudflare.MagicSiteLan("Lan2", {
+        Cloudflare.MagicTransit.MagicSiteLan("Lan2", {
           siteId: site.siteId,
           physport: 3,
           name: "alchemy-site-lan2",
@@ -135,7 +178,7 @@ test.provider.skipIf(!entitled)(
       expect(lan2.lanId).toBeTruthy();
 
       const acl = yield* stack.deploy(
-        Cloudflare.MagicSiteAcl("Acl", {
+        Cloudflare.MagicTransit.MagicSiteAcl("Acl", {
           siteId: site.siteId,
           name: "alchemy-site-acl",
           lan1: { lanId: lan1.lanId, ports: [443] },
@@ -149,7 +192,7 @@ test.provider.skipIf(!entitled)(
 
       // Update the site description in place — same siteId.
       const updated = yield* stack.deploy(
-        Cloudflare.MagicSite("Site", {
+        Cloudflare.MagicTransit.MagicSite("Site", {
           name: "alchemy-magic-site",
           description: "alchemy magic site test v2",
           location: { lat: "37.7749", lon: "-122.4194" },

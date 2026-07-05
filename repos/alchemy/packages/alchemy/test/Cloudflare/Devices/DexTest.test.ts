@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -61,7 +62,7 @@ test.provider.skipIf(!entitled)(
 
       const created = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.DeviceDexTest("AppHealth", {
+          return yield* Cloudflare.Devices.DeviceDexTest("AppHealth", {
             name: TEST_NAME,
             data: {
               host: "https://app.example.com/health",
@@ -89,7 +90,7 @@ test.provider.skipIf(!entitled)(
       // Interval + description update converges in place — same test id.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.DeviceDexTest("AppHealth", {
+          return yield* Cloudflare.Devices.DeviceDexTest("AppHealth", {
             name: TEST_NAME,
             data: {
               host: "https://app.example.com/health",
@@ -113,6 +114,63 @@ test.provider.skipIf(!entitled)(
         .getDeviceDexTest({ accountId, dexTestId: created.testId })
         .pipe(Effect.flip);
       expect(gone._tag).toEqual("DexTestNotFound");
+    }).pipe(logLevel),
+  { timeout: 90_000 },
+);
+
+// Canonical `list()` test (account-scoped collection). The lifecycle requires
+// the DEX entitlement, so the deploy + presence assertion is gated behind an
+// entitled account. On unentitled accounts the provider's `list()` catches the
+// typed `Forbidden` (dex.api.entitlements.missing) and returns `[]`; the ungated
+// half of this test asserts that well-typed empty result so a clean skip run
+// still exercises `list()`.
+test.provider.skipIf(!entitled)(
+  "list enumerates the deployed DEX test",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Devices.DeviceDexTest("ListResource", {
+            name: TEST_NAME,
+            data: {
+              host: "https://app.example.com/health",
+              kind: "http",
+              method: "GET",
+            },
+            interval: "0h30m0s",
+            description: "list",
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DeviceDexTest,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((t) => t.testId === deployed.testId)).toBe(true);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 90_000 },
+);
+
+test.provider.skipIf(entitled)(
+  "list returns a well-typed empty array on unentitled accounts",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DeviceDexTest,
+      );
+      const all = yield* provider.list();
+
+      expect(Array.isArray(all)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 90_000 },
 );

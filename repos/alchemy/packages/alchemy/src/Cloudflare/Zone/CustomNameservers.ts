@@ -5,13 +5,14 @@ import * as Predicate from "effect/Predicate";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const ZoneCustomNameserversTypeId =
-  "Cloudflare.Zone.CustomNameservers" as const;
-type ZoneCustomNameserversTypeId = typeof ZoneCustomNameserversTypeId;
+const TypeId = "Cloudflare.Zone.CustomNameservers" as const;
+type TypeId = typeof TypeId;
 
-export type ZoneCustomNameserversProps = {
+export type CustomNameserversProps = {
   /**
    * Zone whose account-level custom nameserver usage is managed. Stable —
    * changing the zone triggers a replacement (the old zone's configuration
@@ -40,7 +41,7 @@ export type ZoneCustomNameserversProps = {
   nsSet?: number;
 };
 
-export type ZoneCustomNameserversAttributes = {
+export type CustomNameserversAttributes = {
   /** Zone whose custom nameserver usage is managed. */
   zoneId: string;
   /** Whether the zone currently uses account-level custom nameservers. */
@@ -57,10 +58,10 @@ export type ZoneCustomNameserversAttributes = {
   initialNsSet: number | undefined;
 };
 
-export type ZoneCustomNameservers = Resource<
-  ZoneCustomNameserversTypeId,
-  ZoneCustomNameserversProps,
-  ZoneCustomNameserversAttributes,
+export type CustomNameservers = Resource<
+  TypeId,
+  CustomNameserversProps,
+  CustomNameserversAttributes,
   never,
   Providers
 >;
@@ -78,11 +79,13 @@ export type ZoneCustomNameservers = Resource<
  * Enabling requires an account custom nameserver set to be configured first
  * (Business/Enterprise feature). Without one, Cloudflare rejects the update
  * with the typed `CustomNameserverSetNotFound` error.
- *
+ * @resource
+ * @product Zones
+ * @category Domains & DNS
  * @section Enabling account custom nameservers
  * @example Use the account's default nameserver set
  * ```typescript
- * yield* Cloudflare.ZoneCustomNameservers("CustomNs", {
+ * yield* Cloudflare.Zone.CustomNameservers("CustomNs", {
  *   zoneId: zone.zoneId,
  *   enabled: true,
  * });
@@ -90,7 +93,7 @@ export type ZoneCustomNameservers = Resource<
  *
  * @example Pin a specific nameserver set
  * ```typescript
- * yield* Cloudflare.ZoneCustomNameservers("CustomNs", {
+ * yield* Cloudflare.Zone.CustomNameservers("CustomNs", {
  *   zoneId: zone.zoneId,
  *   enabled: true,
  *   nsSet: 2,
@@ -100,7 +103,7 @@ export type ZoneCustomNameservers = Resource<
  * @section Disabling
  * @example Explicitly pin the zone to Cloudflare-assigned nameservers
  * ```typescript
- * yield* Cloudflare.ZoneCustomNameservers("CustomNs", {
+ * yield* Cloudflare.Zone.CustomNameservers("CustomNs", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  * });
@@ -108,22 +111,54 @@ export type ZoneCustomNameservers = Resource<
  *
  * @see https://developers.cloudflare.com/api/resources/zones/subresources/custom_nameservers/
  */
-export const ZoneCustomNameservers = Resource<ZoneCustomNameservers>(
-  ZoneCustomNameserversTypeId,
-);
+export const CustomNameservers = Resource<CustomNameservers>(TypeId);
 
 /**
- * Returns true if the given value is a ZoneCustomNameservers resource.
+ * Returns true if the given value is a CustomNameservers resource.
  */
-export const isZoneCustomNameservers = (
+export const isCustomNameservers = (
   value: unknown,
-): value is ZoneCustomNameservers =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === ZoneCustomNameserversTypeId;
+): value is CustomNameservers =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const ZoneCustomNameserversProvider = () =>
-  Provider.succeed(ZoneCustomNameservers, {
+export const CustomNameserversProvider = () =>
+  Provider.succeed(CustomNameservers, {
     stables: ["zoneId", "initialEnabled", "initialNsSet"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its custom-nameserver config.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          zones.getCustomNameserver({ zoneId }).pipe(
+            Effect.map((observed) => {
+              // Only zones actively using account custom nameservers are
+              // worth enumerating — a disabled (default) toggle has
+              // nothing to restore on destroy.
+              if (!(observed.enabled ?? false)) return undefined;
+              return toAttributes(
+                zoneId,
+                observed,
+                observed.enabled ?? false,
+                observed.nsSet ?? undefined,
+              );
+            }),
+            // ACNS is a Business/Enterprise feature — plan-gated zones
+            // reject with `Forbidden`; zones deleted out-of-band 404 with
+            // `InvalidZoneIdentifier`. Skip both.
+            Effect.catchTag(["InvalidZoneIdentifier", "Forbidden"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is CustomNameserversAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       // zoneId is the resource's identity; compare only once both sides
@@ -247,7 +282,7 @@ const toAttributes = (
   observed: zones.GetCustomNameserverResponse,
   initialEnabled: boolean,
   initialNsSet: number | undefined,
-): ZoneCustomNameserversAttributes => ({
+): CustomNameserversAttributes => ({
   zoneId,
   enabled: observed.enabled ?? false,
   nsSet: observed.nsSet ?? undefined,

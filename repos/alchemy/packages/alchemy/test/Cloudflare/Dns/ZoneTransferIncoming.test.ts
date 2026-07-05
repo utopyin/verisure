@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -49,6 +50,37 @@ const retryForbidden = <A, E extends { _tag: string }, R>(
     }),
   );
 
+// Canonical `list()` test (zone-scoped singleton): there is no
+// account-wide API for this per-zone config, so `list()` enumerates every
+// zone via `listAllZones` and reads the incoming transfer config in each,
+// skipping zones that have none (`IncomingZoneTransferNotFound`). The
+// read-only assertion always runs and proves the result is a well-typed
+// `Attributes[]`; if a real secondary zone is supplied, assert it appears.
+test.provider(
+  "list enumerates incoming configs across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DNS.ZoneTransferIncoming,
+      );
+      const all = yield* provider.list();
+
+      expect(Array.isArray(all)).toBe(true);
+      for (const row of all) {
+        expect(typeof row.zoneId).toBe("string");
+        expect(Array.isArray(row.peers)).toBe(true);
+      }
+      if (secondaryZoneId) {
+        expect(all.some((c) => c.zoneId === secondaryZoneId)).toBe(true);
+      }
+
+      // `stack` is unused (list is a read-only account enumeration); keep the
+      // destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!!secondaryZoneId)(
   "incoming config does not persist on non-secondary zones (typed not-found)",
   (stack) =>
@@ -76,17 +108,20 @@ test.provider.skipIf(!secondaryZoneId)(
 
       const { incoming, peer } = yield* stack.deploy(
         Effect.gen(function* () {
-          const peer = yield* Cloudflare.ZoneTransferPeer("IncomingPeer", {
+          const peer = yield* Cloudflare.DNS.ZoneTransferPeer("IncomingPeer", {
             name: "alchemy-dnszt-incoming-peer",
             ip: "192.0.2.53",
             port: 53,
           });
-          const incoming = yield* Cloudflare.ZoneTransferIncoming("Incoming", {
-            zoneId,
-            name: `${zoneName}.`,
-            peers: [peer.peerId],
-            autoRefreshSeconds: 86400,
-          });
+          const incoming = yield* Cloudflare.DNS.ZoneTransferIncoming(
+            "Incoming",
+            {
+              zoneId,
+              name: `${zoneName}.`,
+              peers: [peer.peerId],
+              autoRefreshSeconds: 86400,
+            },
+          );
           return { incoming, peer };
         }),
       );
@@ -99,17 +134,20 @@ test.provider.skipIf(!secondaryZoneId)(
       // in the same deploy that changes its dependent).
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          const peer = yield* Cloudflare.ZoneTransferPeer("IncomingPeer", {
+          const peer = yield* Cloudflare.DNS.ZoneTransferPeer("IncomingPeer", {
             name: "alchemy-dnszt-incoming-peer",
             ip: "192.0.2.53",
             port: 53,
           });
-          const incoming = yield* Cloudflare.ZoneTransferIncoming("Incoming", {
-            zoneId,
-            name: `${zoneName}.`,
-            peers: [peer.peerId],
-            autoRefreshSeconds: 43200,
-          });
+          const incoming = yield* Cloudflare.DNS.ZoneTransferIncoming(
+            "Incoming",
+            {
+              zoneId,
+              name: `${zoneName}.`,
+              peers: [peer.peerId],
+              autoRefreshSeconds: 43200,
+            },
+          );
           return incoming;
         }),
       );

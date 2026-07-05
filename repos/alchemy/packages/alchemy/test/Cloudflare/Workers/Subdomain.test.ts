@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import { expect } from "@effect/vitest";
@@ -54,7 +55,7 @@ test.provider(
       // observed === news.subdomain and never issues a PUT.
       const sub = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.WorkersSubdomain("Subdomain", {
+          return yield* Cloudflare.Workers.Subdomain("Subdomain", {
             subdomain: liveBefore,
           });
         }),
@@ -67,7 +68,7 @@ test.provider(
       // Re-deploy unchanged — still converged, still no mutation.
       const again = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.WorkersSubdomain("Subdomain", {
+          return yield* Cloudflare.Workers.Subdomain("Subdomain", {
             subdomain: liveBefore,
           });
         }),
@@ -81,6 +82,36 @@ test.provider(
 
       const liveAfter = yield* getLiveSubdomain;
       expect(liveAfter).toEqual(liveBefore);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Canonical `list()` test (account-scoped singleton): the workers.dev
+// subdomain is account-global with only a `get`, so `list()` returns a
+// one-element array mirroring `read` when the account has a subdomain, or
+// `[]` when it doesn't. The test account always has one registered, so we
+// assert the result is a single element matching the live subdomain. This is
+// strictly read-only and never mutates the account's subdomain.
+test.provider(
+  "list returns the account's workers.dev subdomain singleton",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const liveBefore = yield* getLiveSubdomain;
+      expect(liveBefore.length).toBeGreaterThan(0);
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Workers.Subdomain,
+      );
+      const all = yield* provider.list();
+
+      expect(all.length).toEqual(1);
+      expect(all[0].subdomain).toEqual(liveBefore);
+      expect(all[0].initialSubdomain).toEqual(liveBefore);
+      expect(typeof all[0].accountId).toEqual("string");
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -34,7 +35,10 @@ describe.sequential("DefaultProfile", () => {
 
         const profile = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.DeviceDefaultProfile("Default", {});
+            return yield* Cloudflare.Devices.DeviceDefaultProfile(
+              "Default",
+              {},
+            );
           }),
         );
 
@@ -71,7 +75,7 @@ describe.sequential("DefaultProfile", () => {
         // Step 1 — set to 180 seconds.
         const a = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.DeviceDefaultProfile("Default", {
+            return yield* Cloudflare.Devices.DeviceDefaultProfile("Default", {
               captivePortal: 180,
             });
           }),
@@ -83,7 +87,7 @@ describe.sequential("DefaultProfile", () => {
         // Step 2 — flip to 360.
         const b = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.DeviceDefaultProfile("Default", {
+            return yield* Cloudflare.Devices.DeviceDefaultProfile("Default", {
               captivePortal: 360,
             });
           }),
@@ -95,7 +99,7 @@ describe.sequential("DefaultProfile", () => {
         // Restore via a final deploy so the account is not left mutated.
         yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.DeviceDefaultProfile("Default", {
+            return yield* Cloudflare.Devices.DeviceDefaultProfile("Default", {
               captivePortal: originalCaptive,
             });
           }),
@@ -103,5 +107,30 @@ describe.sequential("DefaultProfile", () => {
 
         yield* stack.destroy();
       }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (account-scoped singleton): there is exactly one
+  // default device profile per account and no enumeration API, so `list()`
+  // reads the single profile and returns it as a one-element array — exactly
+  // mirroring `read`. Read-only, so it is NOT gated behind the mutation env
+  // var; it only requires the account to have Zero Trust / WARP entitlement.
+  test.provider("list returns the singleton default device profile", (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DeviceDefaultProfile,
+      );
+      const all = yield* provider.list();
+
+      // Account singleton: exactly one element, well-typed Attributes.
+      expect(all.length).toEqual(1);
+      expect(all[0].accountId).toEqual(accountId);
+      expect(["include", "exclude"]).toContain(all[0].mode);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

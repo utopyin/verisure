@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as mcn from "@distilled.cloud/cloudflare/magic-cloud-networking";
 import { expect } from "@effect/vitest";
@@ -88,6 +89,55 @@ test.provider(
     }).pipe(logLevel),
 );
 
+test.provider("list returns a well-typed array of integrations", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.MagicCloudNetworking.CloudIntegration,
+    );
+    const all = yield* provider.list();
+
+    // On an unentitled account `list()` catches the typed `FeatureNotEnabled`
+    // tag and yields `[]`; on an entitled account it enumerates every
+    // integration. Either way the result is the full Attributes array.
+    expect(Array.isArray(all)).toBe(true);
+    for (const item of all) {
+      expect(typeof item.integrationId).toBe("string");
+      expect(typeof item.accountId).toBe("string");
+    }
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+test.provider.skipIf(!entitled)(
+  "list enumerates the deployed integration",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.MagicCloudNetworking.CloudIntegration("ListIntegration", {
+          cloudType: "AWS",
+          friendlyName: "alchemy-mcn-cloud-integration-list",
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.MagicCloudNetworking.CloudIntegration,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((x) => x.integrationId === deployed.integrationId)).toBe(
+        true,
+      );
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "registers an AWS integration, updates it in place, and destroys it",
   (stack) =>
@@ -97,7 +147,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const integration = yield* stack.deploy(
-        Cloudflare.CloudIntegration("Aws", {
+        Cloudflare.MagicCloudNetworking.CloudIntegration("Aws", {
           cloudType: "AWS",
           friendlyName: "alchemy-mcn-cloud-integration",
           description: "alchemy cloud integration test",
@@ -118,7 +168,7 @@ test.provider.skipIf(!entitled)(
 
       // Update mutable props in place — same integrationId.
       const updated = yield* stack.deploy(
-        Cloudflare.CloudIntegration("Aws", {
+        Cloudflare.MagicCloudNetworking.CloudIntegration("Aws", {
           cloudType: "AWS",
           friendlyName: "alchemy-mcn-cloud-integration-v2",
           description: "alchemy cloud integration test v2",
@@ -153,7 +203,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const initial = yield* stack.deploy(
-        Cloudflare.CloudIntegration("ReplaceIntegration", {
+        Cloudflare.MagicCloudNetworking.CloudIntegration("ReplaceIntegration", {
           cloudType: "AWS",
           friendlyName: "alchemy-mcn-cloud-integration-replace",
         }),
@@ -162,7 +212,7 @@ test.provider.skipIf(!entitled)(
       // cloudType is the provider identity — changing it must produce a
       // brand-new integration (new integrationId).
       const replaced = yield* stack.deploy(
-        Cloudflare.CloudIntegration("ReplaceIntegration", {
+        Cloudflare.MagicCloudNetworking.CloudIntegration("ReplaceIntegration", {
           cloudType: "GOOGLE",
           friendlyName: "alchemy-mcn-cloud-integration-replace",
         }),

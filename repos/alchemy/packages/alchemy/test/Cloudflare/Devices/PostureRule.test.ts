@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -48,7 +49,7 @@ test.provider("create, update in place, and delete a posture rule", (stack) =>
     yield* stack.destroy();
 
     const rule = yield* stack.deploy(
-      Cloudflare.DevicePostureRule("WindowsOsVersion", {
+      Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
         name: "alchemy-test-posture-os",
         type: "os_version",
         description: "Require Windows 10.0.19045+",
@@ -75,7 +76,7 @@ test.provider("create, update in place, and delete a posture rule", (stack) =>
 
     // Update mutable props in place — same rule id.
     const updated = yield* stack.deploy(
-      Cloudflare.DevicePostureRule("WindowsOsVersion", {
+      Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
         name: "alchemy-test-posture-os",
         type: "os_version",
         description: "Require Windows 10.0.22631+",
@@ -108,7 +109,7 @@ test.provider("changing the rule type triggers a replacement", (stack) =>
     yield* stack.destroy();
 
     const original = yield* stack.deploy(
-      Cloudflare.DevicePostureRule("Replace", {
+      Cloudflare.Devices.DevicePostureRule("Replace", {
         name: "alchemy-test-posture-replace",
         type: "firewall",
         match: [{ platform: "mac" }],
@@ -120,7 +121,7 @@ test.provider("changing the rule type triggers a replacement", (stack) =>
 
     // `type` is immutable — diff must request a replacement.
     const replaced = yield* stack.deploy(
-      Cloudflare.DevicePostureRule("Replace", {
+      Cloudflare.Devices.DevicePostureRule("Replace", {
         name: "alchemy-test-posture-replace",
         type: "disk_encryption",
         match: [{ platform: "mac" }],
@@ -136,5 +137,40 @@ test.provider("changing the rule type triggers a replacement", (stack) =>
 
     yield* stack.destroy();
     yield* expectGone(accountId, replaced.postureRuleId);
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed posture rule", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Cloudflare.Devices.DevicePostureRule("ListRule", {
+        name: "alchemy-test-posture-list",
+        type: "os_version",
+        match: [{ platform: "windows" }],
+        schedule: "5m",
+        input: {
+          operatingSystem: "windows",
+          operator: ">=",
+          version: "10.0.19045",
+        },
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Devices.DevicePostureRule,
+    );
+    const all = yield* provider.list();
+
+    // Exhaustive pagination must include the rule we just deployed.
+    expect(
+      all.some((rule) => rule.postureRuleId === deployed.postureRuleId),
+    ).toBe(true);
+
+    yield* stack.destroy();
+    yield* expectGone(accountId, deployed.postureRuleId);
   }).pipe(logLevel),
 );

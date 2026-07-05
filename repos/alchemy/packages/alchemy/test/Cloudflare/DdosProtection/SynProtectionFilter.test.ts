@@ -1,4 +1,5 @@
 import * as Cloudflare from "@/Cloudflare";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as ddos from "@distilled.cloud/cloudflare/ddos-protection";
 import { expect } from "@effect/vitest";
@@ -35,10 +36,13 @@ test.provider.skipIf(!magicTransit)(
       // Create.
       const filter = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.SynProtectionFilter("Filter", {
-            expression: "tcp.dstport in {443}",
-            mode: "monitoring",
-          });
+          return yield* Cloudflare.DdosProtection.SynProtectionFilter(
+            "Filter",
+            {
+              expression: "tcp.dstport in {443}",
+              mode: "monitoring",
+            },
+          );
         }),
       );
       expect(filter.expression).toEqual("tcp.dstport in {443}");
@@ -54,10 +58,13 @@ test.provider.skipIf(!magicTransit)(
       // In-place update — expression and mode are patched, id is stable.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.SynProtectionFilter("Filter", {
-            expression: "tcp.dstport in {443 8443}",
-            mode: "enabled",
-          });
+          return yield* Cloudflare.DdosProtection.SynProtectionFilter(
+            "Filter",
+            {
+              expression: "tcp.dstport in {443 8443}",
+              mode: "enabled",
+            },
+          );
         }),
       );
       expect(updated.filterId).toEqual(filter.filterId);
@@ -74,6 +81,59 @@ test.provider.skipIf(!magicTransit)(
         })
         .pipe(Effect.flip);
       expect(error._tag).toEqual("SynProtectionFilterNotFound");
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Ungated: list() enumerates every filter in the ambient account. On the
+// unentitled testing account the typed `AdvancedTcpProtectionNotEntitled`
+// (Cloudflare code 8888) / `Forbidden` rejection is caught and surfaces as a
+// well-typed empty array — proving list() is resilient on accounts without
+// the Advanced TCP Protection entitlement.
+test.provider(
+  "list returns a well-typed array of SYN protection filters",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DdosProtection.SynProtectionFilter,
+      );
+      const all = yield* provider.list();
+      expect(Array.isArray(all)).toBe(true);
+      for (const f of all) {
+        expect(typeof f.filterId).toBe("string");
+        expect(typeof f.accountId).toBe("string");
+      }
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Gated full lifecycle: on an entitled account, a deployed filter must appear
+// in the exhaustively-paginated list().
+test.provider.skipIf(!magicTransit)(
+  "list enumerates the deployed SYN protection filter",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const filter = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.DdosProtection.SynProtectionFilter(
+            "ListFilter",
+            {
+              expression: "tcp.dstport in {8443}",
+              mode: "monitoring",
+            },
+          );
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DdosProtection.SynProtectionFilter,
+      );
+      const all = yield* provider.list();
+      expect(all.some((f) => f.filterId === filter.filterId)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

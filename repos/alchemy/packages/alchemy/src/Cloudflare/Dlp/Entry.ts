@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -9,10 +10,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const DlpEntryTypeId = "Cloudflare.Dlp.Entry" as const;
-type DlpEntryTypeId = typeof DlpEntryTypeId;
+const TypeId = "Cloudflare.Dlp.Entry" as const;
+type TypeId = typeof TypeId;
 
-export interface DlpEntryProps {
+export interface EntryProps {
   /**
    * Name of the entry. If omitted, a unique name is generated from the
    * app, stage, and logical ID.
@@ -44,7 +45,7 @@ export interface DlpEntryProps {
   profileId?: string;
 }
 
-export type DlpEntryAttributes = {
+export type EntryAttributes = {
   /** API UUID of the entry. */
   entryId: string;
   /** Account that owns the entry. */
@@ -59,10 +60,10 @@ export type DlpEntryAttributes = {
   profileId: string | undefined;
 };
 
-export type DlpEntry = Resource<
-  DlpEntryTypeId,
-  DlpEntryProps,
-  DlpEntryAttributes,
+export type Entry = Resource<
+  TypeId,
+  EntryProps,
+  EntryAttributes,
   never,
   Providers
 >;
@@ -71,15 +72,17 @@ export type DlpEntry = Resource<
  * A Cloudflare Zero Trust **DLP custom entry** — a standalone regular-
  * expression detection that can be attached to a custom DLP profile.
  * Use it when entries are managed independently of the
- * {@link DlpProfile} that groups them.
+ * {@link Profile} that groups them.
  *
  * Requires the Cloudflare DLP entitlement (a paid Zero Trust add-on);
  * accounts without it receive the typed `Forbidden` error on all writes.
- *
+ * @resource
+ * @product DLP
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a DLP entry
  * @example Attach a regex entry to a profile
  * ```typescript
- * const entry = yield* Cloudflare.DlpEntry("EmployeeId", {
+ * const entry = yield* Cloudflare.Dlp.Entry("EmployeeId", {
  *   pattern: { regex: "EMP-[0-9]{6}" },
  *   profileId: profile.profileId,
  * });
@@ -87,7 +90,7 @@ export type DlpEntry = Resource<
  *
  * @example Luhn-validated card entry
  * ```typescript
- * const card = yield* Cloudflare.DlpEntry("CardNumber", {
+ * const card = yield* Cloudflare.Dlp.Entry("CardNumber", {
  *   pattern: { regex: "[0-9]{13,16}", validation: "luhn" },
  *   profileId: profile.profileId,
  * });
@@ -95,16 +98,16 @@ export type DlpEntry = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/policies/data-loss-prevention/dlp-profiles/
  */
-export const DlpEntry = Resource<DlpEntry>(DlpEntryTypeId);
+export const Entry = Resource<Entry>(TypeId);
 
 /**
- * Returns true if the given value is a DlpEntry resource.
+ * Returns true if the given value is a Entry resource.
  */
-export const isDlpEntry = (value: unknown): value is DlpEntry =>
-  Predicate.hasProperty(value, "Type") && value.Type === DlpEntryTypeId;
+export const isEntry = (value: unknown): value is Entry =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const DlpEntryProvider = () =>
-  Provider.succeed(DlpEntry, {
+export const EntryProvider = () =>
+  Provider.succeed(Entry, {
     stables: ["entryId", "accountId", "profileId"],
 
     diff: Effect.fn(function* ({ olds, news, output }) {
@@ -127,6 +130,28 @@ export const DlpEntryProvider = () =>
       if (!output?.entryId) return undefined;
       const observed = yield* observeEntry(acct, output.entryId);
       return observed ? toAttributes(observed, acct) : undefined;
+    }),
+
+    // Account collection: enumerate every custom DLP entry in the account
+    // (GET /accounts/{id}/dlp/entries), exhaustively paginated. The list
+    // response is a union of entry variants; only the `custom` variant is
+    // an alchemy-managed Entry, so we narrow to it and hydrate into the
+    // exact `read` Attributes shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* zeroTrust.listDlpEntryCustoms.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .filter(
+                (entry): entry is typeof entry & { type: "custom" } =>
+                  "type" in entry && entry.type === "custom",
+              )
+              .map((entry) => toAttributes(entry, accountId)),
+          ),
+        ),
+      );
     }),
 
     reconcile: Effect.fn(function* ({ id, news, output }) {
@@ -231,7 +256,7 @@ const encodePattern = (pattern: {
 const toAttributes = (
   entry: ObservedEntry,
   accountId: string,
-): DlpEntryAttributes => ({
+): EntryAttributes => ({
   entryId: entry.id,
   accountId,
   name: entry.name,

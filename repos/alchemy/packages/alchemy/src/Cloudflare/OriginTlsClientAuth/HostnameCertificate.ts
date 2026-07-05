@@ -3,23 +3,24 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const OriginTlsClientAuthHostnameCertificateTypeId =
-  "Cloudflare.OriginTlsClientAuth.HostnameCertificate" as const;
-type OriginTlsClientAuthHostnameCertificateTypeId =
-  typeof OriginTlsClientAuthHostnameCertificateTypeId;
+const TypeId = "Cloudflare.OriginTlsClientAuth.HostnameCertificate" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Deployment status of the certificate. Deploying and deleting are
  * asynchronous (`pending_deployment` → `active`, `pending_deletion` →
  * `deleted`), typically settling within minutes.
  */
-export type OriginTlsClientAuthHostnameCertificateStatus =
+export type HostnameCertificateStatus =
   | "initializing"
   | "pending_deployment"
   | "pending_deletion"
@@ -30,7 +31,7 @@ export type OriginTlsClientAuthHostnameCertificateStatus =
   // Keep the union open so new Cloudflare statuses aren't blocked by stale types.
   | (string & {});
 
-export type OriginTlsClientAuthHostnameCertificateProps = {
+export type HostnameCertificateProps = {
   /**
    * Zone the certificate is uploaded to. Cannot be changed after upload —
    * updating this property triggers a replacement.
@@ -39,7 +40,7 @@ export type OriginTlsClientAuthHostnameCertificateProps = {
   /**
    * The per-hostname client certificate in PEM format, presented by
    * Cloudflare to your origin for hostnames associated with it via
-   * {@link OriginTlsClientAuthHostnameAssociation}. Cannot be changed after
+   * {@link HostnameAssociation}. Cannot be changed after
    * upload — updating this property triggers a replacement.
    */
   certificate: string;
@@ -50,13 +51,13 @@ export type OriginTlsClientAuthHostnameCertificateProps = {
   privateKey: Redacted.Redacted<string>;
 };
 
-export type OriginTlsClientAuthHostnameCertificateAttributes = {
+export type HostnameCertificateAttributes = {
   /** Unique identifier of the uploaded certificate. */
   certificateId: string;
   /** Zone the certificate is uploaded to. */
   zoneId: string;
   /** Deployment status of the certificate. */
-  status: OriginTlsClientAuthHostnameCertificateStatus | undefined;
+  status: HostnameCertificateStatus | undefined;
   /** When the certificate expires. */
   expiresOn: string | undefined;
   /** The certificate authority that issued the certificate. */
@@ -69,10 +70,10 @@ export type OriginTlsClientAuthHostnameCertificateAttributes = {
   uploadedOn: string | undefined;
 };
 
-export type OriginTlsClientAuthHostnameCertificate = Resource<
-  OriginTlsClientAuthHostnameCertificateTypeId,
-  OriginTlsClientAuthHostnameCertificateProps,
-  OriginTlsClientAuthHostnameCertificateAttributes,
+export type HostnameCertificate = Resource<
+  TypeId,
+  HostnameCertificateProps,
+  HostnameCertificateAttributes,
   never,
   Providers
 >;
@@ -83,18 +84,20 @@ export type OriginTlsClientAuthHostnameCertificate = Resource<
  *
  * Uploads a client certificate that Cloudflare presents to your origin for
  * specific hostnames. Hostnames opt in by referencing the certificate from an
- * {@link OriginTlsClientAuthHostnameAssociation}, which pins the certificate
+ * {@link HostnameAssociation}, which pins the certificate
  * and enables hostname-level AOP.
  *
  * Certificates are immutable: there is no update API, so changing any
  * property triggers a replacement. Deployment is asynchronous — the
  * certificate starts in `pending_deployment` and becomes `active` within a
  * few minutes; deletion likewise passes through `pending_deletion`.
- *
+ * @resource
+ * @product Origin TLS Client Auth
+ * @category SSL/TLS & Certificates
  * @section Uploading a hostname certificate
  * @example Hostname client certificate
  * ```typescript
- * const cert = yield* Cloudflare.OriginTlsClientAuthHostnameCertificate("AopHostCert", {
+ * const cert = yield* Cloudflare.OriginTlsClientAuth.HostnameCertificate("AopHostCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
  *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
@@ -104,13 +107,13 @@ export type OriginTlsClientAuthHostnameCertificate = Resource<
  * @section Enabling AOP for a hostname
  * @example Upload the certificate and associate a hostname
  * ```typescript
- * const cert = yield* Cloudflare.OriginTlsClientAuthHostnameCertificate("AopHostCert", {
+ * const cert = yield* Cloudflare.OriginTlsClientAuth.HostnameCertificate("AopHostCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
  *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
  * });
  *
- * yield* Cloudflare.OriginTlsClientAuthHostnameAssociation("AopHost", {
+ * yield* Cloudflare.OriginTlsClientAuth.HostnameAssociation("AopHost", {
  *   zoneId: zone.zoneId,
  *   hostname: "api.example.com",
  *   certId: cert.certificateId,
@@ -120,24 +123,47 @@ export type OriginTlsClientAuthHostnameCertificate = Resource<
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/set-up/per-hostname/
  */
-export const OriginTlsClientAuthHostnameCertificate =
-  Resource<OriginTlsClientAuthHostnameCertificate>(
-    OriginTlsClientAuthHostnameCertificateTypeId,
-  );
+export const HostnameCertificate = Resource<HostnameCertificate>(TypeId);
 
 /**
- * Returns true if the given value is an OriginTlsClientAuthHostnameCertificate
+ * Returns true if the given value is an HostnameCertificate
  * resource.
  */
-export const isOriginTlsClientAuthHostnameCertificate = (
+export const isHostnameCertificate = (
   value: unknown,
-): value is OriginTlsClientAuthHostnameCertificate =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === OriginTlsClientAuthHostnameCertificateTypeId;
+): value is HostnameCertificate =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const OriginTlsClientAuthHostnameCertificateProvider = () =>
-  Provider.succeed(OriginTlsClientAuthHostnameCertificate, {
+export const HostnameCertificateProvider = () =>
+  Provider.succeed(HostnameCertificate, {
     stables: ["certificateId", "zoneId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Per-hostname client certificates live inside a zone and are only
+      // enumerable per-zone — fan out over every zone in the account.
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          originTls.listHostnameCertificates.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? [])
+                  // Match `read`: tombstoned (deleted / pending_deletion)
+                  // certificates no longer satisfy the desired state.
+                  .filter((c) => isLive(c.status))
+                  .map((c) => toAttributes(c, zone.id)),
+              ),
+            ),
+            // Plan-gated / partial zones reject the route; skip them.
+            Effect.catchTag("Forbidden", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ olds, news }) {
       if (!isResolved(news)) return undefined;
@@ -301,7 +327,7 @@ type CertificateShape = {
 const toAttributes = (
   cert: CertificateShape,
   zoneId: string,
-): OriginTlsClientAuthHostnameCertificateAttributes => ({
+): HostnameCertificateAttributes => ({
   certificateId: cert.id!,
   zoneId,
   status: cert.status ?? undefined,

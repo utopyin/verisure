@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -59,7 +60,7 @@ test.provider("create, verify, and destroy an OIDC IdP", (stack) =>
     yield* stack.destroy();
 
     const idp = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("BasicOidc", {
+      Cloudflare.Access.IdentityProvider("BasicOidc", {
         name: "alchemy-zt-idp-basic",
         type: "oidc",
         config: oidcConfig,
@@ -91,7 +92,7 @@ test.provider("update name and config in place (same id)", (stack) =>
     yield* stack.destroy();
 
     const initial = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("UpdateOidc", {
+      Cloudflare.Access.IdentityProvider("UpdateOidc", {
         name: "alchemy-zt-idp-update",
         type: "oidc",
         config: oidcConfig,
@@ -104,7 +105,7 @@ test.provider("update name and config in place (same id)", (stack) =>
     // are stripped from the decoded value even though Cloudflare returns
     // them on the wire.
     const updated = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("UpdateOidc", {
+      Cloudflare.Access.IdentityProvider("UpdateOidc", {
         name: "alchemy-zt-idp-update-v2",
         type: "oidc",
         config: {
@@ -126,7 +127,7 @@ test.provider("update name and config in place (same id)", (stack) =>
 
     // Redeploying identical props is a no-op (still the same IdP).
     const noop = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("UpdateOidc", {
+      Cloudflare.Access.IdentityProvider("UpdateOidc", {
         name: "alchemy-zt-idp-update-v2",
         type: "oidc",
         config: {
@@ -142,6 +143,32 @@ test.provider("update name and config in place (same id)", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed IdP", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Cloudflare.Access.IdentityProvider("ListOidc", {
+        name: "alchemy-zt-idp-list",
+        type: "oidc",
+        config: oidcConfig,
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Access.IdentityProvider,
+    );
+    const all = yield* provider.list();
+
+    expect(
+      all.some((x) => x.identityProviderId === deployed.identityProviderId),
+    ).toBe(true);
+
+    yield* stack.destroy();
+    yield* expectGone(deployed.accountId, deployed.identityProviderId);
+  }).pipe(logLevel),
+);
+
 test.provider("changing the type replaces the IdP", (stack) =>
   Effect.gen(function* () {
     const { accountId } = yield* yield* CloudflareEnvironment;
@@ -149,7 +176,7 @@ test.provider("changing the type replaces the IdP", (stack) =>
     yield* stack.destroy();
 
     const oidc = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("ReplaceIdp", {
+      Cloudflare.Access.IdentityProvider("ReplaceIdp", {
         name: "alchemy-zt-idp-replace",
         type: "oidc",
         config: oidcConfig,
@@ -160,7 +187,7 @@ test.provider("changing the type replaces the IdP", (stack) =>
     // (type change) pairs with a rename — keeping the old name would make
     // the engine find the doomed sibling and refuse to adopt it.
     const github = yield* stack.deploy(
-      Cloudflare.AccessIdentityProvider("ReplaceIdp", {
+      Cloudflare.Access.IdentityProvider("ReplaceIdp", {
         name: "alchemy-zt-idp-replace-github",
         type: "github",
         config: {

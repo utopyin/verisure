@@ -6,10 +6,12 @@ import * as Schedule from "effect/Schedule";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const TotalTlsTypeId = "Cloudflare.Acm.TotalTls" as const;
-type TotalTlsTypeId = typeof TotalTlsTypeId;
+const TypeId = "Cloudflare.Acm.TotalTls" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The Certificate Authority Total TLS certificates are issued through.
@@ -69,7 +71,7 @@ export interface TotalTlsAttributes {
 }
 
 export type TotalTls = Resource<
-  TotalTlsTypeId,
+  TypeId,
   TotalTlsProps,
   TotalTlsAttributes,
   never,
@@ -96,13 +98,15 @@ export type TotalTls = Resource<
  *
  * Only one `TotalTls` resource per zone makes sense — two instances
  * managing the same zone would fight over the singleton.
- *
+ * @resource
+ * @product ACM
+ * @category SSL/TLS & Certificates
  * @section Managing Total TLS
  * @example Enable Total TLS on a zone
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.TotalTls("TotalTls", {
+ * yield* Cloudflare.Acm.TotalTls("TotalTls", {
  *   zoneId: zone.zoneId,
  *   enabled: true,
  * });
@@ -110,7 +114,7 @@ export type TotalTls = Resource<
  *
  * @example Pin the issuing Certificate Authority
  * ```typescript
- * yield* Cloudflare.TotalTls("TotalTls", {
+ * yield* Cloudflare.Acm.TotalTls("TotalTls", {
  *   zoneId: zone.zoneId,
  *   enabled: true,
  *   certificateAuthority: "lets_encrypt",
@@ -119,17 +123,46 @@ export type TotalTls = Resource<
  *
  * @see https://developers.cloudflare.com/ssl/edge-certificates/additional-options/total-tls/
  */
-export const TotalTls = Resource<TotalTls>(TotalTlsTypeId);
+export const TotalTls = Resource<TotalTls>(TypeId);
 
 /**
  * Returns true if the given value is a TotalTls resource.
  */
 export const isTotalTls = (value: unknown): value is TotalTls =>
-  Predicate.hasProperty(value, "Type") && value.Type === TotalTlsTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const TotalTlsProvider = () =>
   Provider.succeed(TotalTls, {
+    nuke: { singleton: true },
     stables: ["zoneId", "initialEnabled", "initialCertificateAuthority"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its setting (every zone has one,
+      // defaulting to disabled; reads succeed even without the ACM
+      // entitlement).
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          acm.getTotalTl({ zoneId }).pipe(
+            Effect.map((observed) =>
+              toAttributes(
+                zoneId,
+                observed,
+                initialStateOf(undefined, observed),
+              ),
+            ),
+            // Zone deleted out-of-band between enumeration and read.
+            Effect.catchTag("InvalidObjectIdentifier", () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is TotalTlsAttributes => row !== undefined);
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;

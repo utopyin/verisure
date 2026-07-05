@@ -3,6 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
@@ -10,23 +11,21 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const PagesDeploymentTypeId = "Cloudflare.Pages.Deployment" as const;
-type PagesDeploymentTypeId = typeof PagesDeploymentTypeId;
+const TypeId = "Cloudflare.Pages.Deployment" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Raised when a Pages deployment reaches a `failure`/`canceled` stage, or
  * does not reach a successful `deploy` stage within the bounded wait.
  */
-export class PagesDeploymentFailed extends Data.TaggedError(
-  "PagesDeploymentFailed",
-)<{
+export class DeploymentFailed extends Data.TaggedError("DeploymentFailed")<{
   readonly projectName: string;
   readonly deploymentId: string;
   readonly stageName: string;
   readonly stageStatus: string;
 }> {}
 
-export interface PagesDeploymentProps {
+export interface DeploymentProps {
   /**
    * Name of the Pages project to deploy to (e.g. `project.name`).
    * Deployments are immutable and belong to exactly one project —
@@ -43,7 +42,7 @@ export interface PagesDeploymentProps {
   branch?: string;
 }
 
-export interface PagesDeploymentAttributes {
+export interface DeploymentAttributes {
   /**
    * Cloudflare-assigned UUID of the deployment.
    */
@@ -88,10 +87,10 @@ export interface PagesDeploymentAttributes {
   createdOn: string;
 }
 
-export type PagesDeployment = Resource<
-  PagesDeploymentTypeId,
-  PagesDeploymentProps,
-  PagesDeploymentAttributes,
+export type Deployment = Resource<
+  TypeId,
+  DeploymentProps,
+  DeploymentAttributes,
   never,
   Providers
 >;
@@ -117,13 +116,15 @@ export type PagesDeployment = Resource<
  * it is the project's active production deployment — Cloudflare refuses to
  * delete the live deployment, so delete tolerates that case and the
  * deployment is cleaned up when the project itself is deleted.
- *
+ * @resource
+ * @product Pages
+ * @category Workers & Compute
  * @section Creating a Deployment
  * @example Production deployment on a direct-upload project
  * ```typescript
- * const project = yield* Cloudflare.PagesProject("site", {});
+ * const project = yield* Cloudflare.Pages.Project("site", {});
  *
- * const deployment = yield* Cloudflare.PagesDeployment("site-deploy", {
+ * const deployment = yield* Cloudflare.Pages.Deployment("site-deploy", {
  *   projectName: project.name,
  * });
  * // deployment.url === "https://<shortId>.<project>.pages.dev"
@@ -132,7 +133,7 @@ export type PagesDeployment = Resource<
  *
  * @example Preview deployment from a non-production branch
  * ```typescript
- * const preview = yield* Cloudflare.PagesDeployment("site-preview", {
+ * const preview = yield* Cloudflare.Pages.Deployment("site-preview", {
  *   projectName: project.name,
  *   branch: "feature-x",
  * });
@@ -141,16 +142,16 @@ export type PagesDeployment = Resource<
  *
  * @see https://developers.cloudflare.com/pages/
  */
-export const PagesDeployment = Resource<PagesDeployment>(PagesDeploymentTypeId);
+export const Deployment = Resource<Deployment>(TypeId);
 
 /**
- * Returns true if the given value is a PagesDeployment resource.
+ * Returns true if the given value is a Deployment resource.
  */
-export const isPagesDeployment = (value: unknown): value is PagesDeployment =>
-  Predicate.hasProperty(value, "Type") && value.Type === PagesDeploymentTypeId;
+export const isDeployment = (value: unknown): value is Deployment =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const PagesDeploymentProvider = () =>
-  Provider.succeed(PagesDeployment, {
+export const DeploymentProvider = () =>
+  Provider.succeed(Deployment, {
     stables: [
       "deploymentId",
       "shortId",
@@ -194,6 +195,39 @@ export const PagesDeploymentProvider = () =>
       return observed
         ? toAttributes(observed, output.accountId, output.projectName)
         : undefined;
+    }),
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Deployments are sub-resources keyed by Pages project, with no
+      // account-wide deployment enumeration API. Enumerate every project
+      // (account-scoped) first, then fan out and list each project's
+      // deployments, paginating exhaustively.
+      const projects = yield* pages.listProjects.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.result ?? []),
+        ),
+        // Account without a Pages entitlement can't list projects → nothing.
+        Effect.catchTag("Forbidden", () => Effect.succeed([])),
+      );
+      const rows = yield* Effect.forEach(
+        projects,
+        (project) =>
+          pages.listProjectDeployments
+            .pages({ accountId, projectName: project.name })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.result ?? []).map((deployment) =>
+                    toAttributes(deployment, accountId, project.name),
+                  ),
+                ),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
     reconcile: Effect.fn(function* ({ news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
@@ -310,7 +344,7 @@ const awaitDeployment = (
       observed.latestStage.name !== "deploy"
     ) {
       return yield* Effect.fail(
-        new PagesDeploymentFailed({
+        new DeploymentFailed({
           projectName,
           deploymentId: observed.id,
           stageName: observed.latestStage.name,
@@ -321,11 +355,27 @@ const awaitDeployment = (
     return observed;
   });
 
+/**
+ * Minimal structural shape `toAttributes` reads — satisfied by both the
+ * get/create deployment responses and a `listProjectDeployments` row.
+ */
+type DeploymentAttributesSource = {
+  readonly id: string;
+  readonly shortId: string;
+  readonly environment: string;
+  readonly url: string;
+  readonly deploymentTrigger: {
+    readonly metadata: { readonly branch: string };
+  };
+  readonly latestStage: { readonly name: string; readonly status: string };
+  readonly createdOn: string;
+};
+
 const toAttributes = (
-  deployment: ObservedDeployment,
+  deployment: DeploymentAttributesSource,
   accountId: string,
   projectName: string,
-): PagesDeploymentAttributes => ({
+): DeploymentAttributes => ({
   deploymentId: deployment.id,
   shortId: deployment.shortId,
   accountId,

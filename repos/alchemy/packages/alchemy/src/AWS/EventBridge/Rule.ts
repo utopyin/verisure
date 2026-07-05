@@ -161,7 +161,7 @@ export interface RuleProps {
 
 /**
  * An Amazon EventBridge rule that matches events and routes them to targets.
- *
+ * @resource
  * @section Creating Rules
  * @example Event Pattern Rule
  * ```typescript
@@ -338,6 +338,87 @@ export const RuleProvider = () =>
             ? attrs
             : Unowned(attrs);
         }),
+        list: () =>
+          Effect.gen(function* () {
+            const { accountId, region } = yield* AWSEnvironment.current;
+            // A Rule belongs to an event bus and `listRules` is scoped to one
+            // bus (defaulting to "default"). To enumerate every rule in the
+            // account/region we first enumerate all event buses (manual
+            // NextToken pagination — neither op is a paginated distilled op),
+            // then list rules per bus with bounded concurrency.
+            const busNames: string[] = [];
+            let busToken: string | undefined;
+            do {
+              const page = yield* eventbridge.listEventBuses({
+                NextToken: busToken,
+              });
+              for (const bus of page.EventBuses ?? []) {
+                if (bus.Name) {
+                  busNames.push(bus.Name);
+                }
+              }
+              busToken = page.NextToken;
+            } while (busToken);
+            // `listEventBuses` should include the default bus, but guarantee it.
+            if (!busNames.includes("default")) {
+              busNames.push("default");
+            }
+
+            const perBus = yield* Effect.forEach(
+              busNames,
+              (busName) =>
+                Effect.gen(function* () {
+                  const eventBusParam =
+                    busName !== "default" ? busName : undefined;
+                  const attrs: {
+                    ruleName: RuleName;
+                    ruleArn: RuleArn;
+                    eventBusName: string;
+                  }[] = [];
+                  let ruleToken: string | undefined;
+                  do {
+                    // A peer reconciler may delete an event bus between our
+                    // `listEventBuses` snapshot and this `listRules` call —
+                    // treat a vanished bus as contributing zero rules rather
+                    // than failing the whole enumeration.
+                    const page = yield* eventbridge
+                      .listRules({
+                        EventBusName: eventBusParam,
+                        NextToken: ruleToken,
+                      })
+                      .pipe(
+                        Effect.catchTag("ResourceNotFoundException", () =>
+                          Effect.succeed(
+                            undefined as
+                              | eventbridge.ListRulesResponse
+                              | undefined,
+                          ),
+                        ),
+                      );
+                    if (!page) {
+                      break;
+                    }
+                    for (const rule of page.Rules ?? []) {
+                      if (!rule.Name) {
+                        continue;
+                      }
+                      const resolvedBus = rule.EventBusName ?? busName;
+                      attrs.push({
+                        ruleName: rule.Name,
+                        ruleArn:
+                          (rule.Arn as RuleArn | undefined) ??
+                          toRuleArn(region, accountId, resolvedBus, rule.Name),
+                        eventBusName: resolvedBus,
+                      });
+                    }
+                    ruleToken = page.NextToken;
+                  } while (ruleToken);
+                  return attrs;
+                }),
+              { concurrency: 5 },
+            );
+            return perBus.flat();
+          }),
         reconcile: Effect.fn(function* ({ id, news = {}, output, session }) {
           const { accountId, region } = yield* AWSEnvironment.current;
           yield* validateRuleProps(news);

@@ -1,5 +1,6 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -98,7 +99,7 @@ export interface RestApi extends Resource<
  * stack is the `RestApi` value itself: child resources accept `restApi: api`
  * and register themselves back onto the API so that deployments and stages
  * wait for them without any user-authored dependency lists.
- *
+ * @resource
  * @section Getting started
  * A minimal API Gateway stack is four pieces: the `RestApi`, one or more
  * `Method`s, a `Deployment` that snapshots those methods, and a `Stage` that
@@ -324,6 +325,23 @@ export const RestApiProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        // Enumerate every REST API in the account/region. `getRestApis` is a
+        // paginated collection op (items field "items"); collect every page and
+        // map each item through the same snapshot helper `read` uses so each
+        // element is a complete `Attributes` shape.
+        list: () =>
+          ag.getRestApis.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.items ?? [])
+                  .filter(
+                    (api): api is ag.RestApi & { id: string } => api.id != null,
+                  )
+                  .map((api) => snapshotFromApi(api)),
+              ),
+            ),
+          ),
         read: Effect.fn(function* ({ output }) {
           if (!output?.restApiId) return undefined;
           const api = yield* ag

@@ -1,11 +1,13 @@
 import * as AdoptPolicy from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
+import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
@@ -34,15 +36,15 @@ test.provider(
       const domain = `alchemy-test-app.${zoneName}`;
       const { app, policy } = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* Cloudflare.Zone("TestZone", {
+          yield* Cloudflare.Zone.Zone("TestZone", {
             name: zoneName,
           }).pipe(AdoptPolicy.adopt(true));
-          const policy = yield* Cloudflare.AccessPolicy("AllowExampleDomain", {
+          const policy = yield* Cloudflare.Access.Policy("AllowExampleDomain", {
             name: "Allow example.com",
             decision: "allow",
             include: [{ emailDomain: { domain: "example.com" } }],
           });
-          const app = yield* Cloudflare.AccessApplication("SelfHostedApp", {
+          const app = yield* Cloudflare.Access.Application("SelfHostedApp", {
             type: "self_hosted",
             domain,
             sessionDuration: "24h",
@@ -92,12 +94,12 @@ test.provider(
       const app = yield* stack.deploy(
         Effect.gen(function* () {
           // Warp apps derive their domain from the auth domain — no zone needed.
-          const policy = yield* Cloudflare.AccessPolicy("WarpAllowDomain", {
+          const policy = yield* Cloudflare.Access.Policy("WarpAllowDomain", {
             name: "Allow example.com",
             decision: "allow",
             include: [{ emailDomain: { domain: "example.com" } }],
           });
-          return yield* Cloudflare.AccessApplication("WarpEnroll", {
+          return yield* Cloudflare.Access.Application("WarpEnroll", {
             type: "warp",
             name: "Alchemy Warp Test",
             sessionDuration: "720h",
@@ -116,6 +118,61 @@ test.provider(
     }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed access application", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const domain = `alchemy-test-list-app.${zoneName}`;
+    const app = yield* stack.deploy(
+      Effect.gen(function* () {
+        yield* Cloudflare.Zone.Zone("TestZone", {
+          name: zoneName,
+        }).pipe(AdoptPolicy.adopt(true));
+        const policy = yield* Cloudflare.Access.Policy("ListAllowDomain", {
+          name: "Allow example.com",
+          decision: "allow",
+          include: [{ emailDomain: { domain: "example.com" } }],
+        });
+        return yield* Cloudflare.Access.Application("ListApp", {
+          type: "self_hosted",
+          domain,
+          sessionDuration: "24h",
+          policies: [policy.policyId],
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Access.Application,
+    );
+
+    // `list()` enumerates every Access application in the account. The
+    // provider already rides out the transient enumeration failures internally
+    // (the typed `AccessReferenceNotFound` from a sibling app mid-teardown
+    // still referencing a deleted policy, plus throttling 403s), so here we
+    // only poll until our own freshly created app becomes visible.
+    const all = yield* provider.list().pipe(
+      Effect.flatMap((rows) =>
+        rows.some((a) => a.applicationId === app.applicationId)
+          ? Effect.succeed(rows)
+          : Effect.fail({ _tag: "AppNotListed" as const }),
+      ),
+      Effect.retry({
+        while: (e) => e._tag === "AppNotListed",
+        schedule: Schedule.spaced("2 seconds"),
+        times: 15,
+      }),
+    );
+
+    const match = all.find((a) => a.applicationId === app.applicationId);
+    expect(match).toBeDefined();
+    expect(match?.type).toEqual("self_hosted");
+    expect(match?.aud.length).toBeGreaterThan(0);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 test.provider(
   "update policies in place keeps the applicationId stable",
   (stack) =>
@@ -128,15 +185,15 @@ test.provider(
 
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* Cloudflare.Zone("TestZone", {
+          yield* Cloudflare.Zone.Zone("TestZone", {
             name: zoneName,
           }).pipe(AdoptPolicy.adopt(true));
-          const allow = yield* Cloudflare.AccessPolicy("UpdateAllow", {
+          const allow = yield* Cloudflare.Access.Policy("UpdateAllow", {
             name: "Allow example.com",
             decision: "allow",
             include: [{ emailDomain: { domain: "example.com" } }],
           });
-          return yield* Cloudflare.AccessApplication("UpdatePolicies", {
+          return yield* Cloudflare.Access.Application("UpdatePolicies", {
             type: "self_hosted",
             domain,
             policies: [allow.policyId],
@@ -146,20 +203,20 @@ test.provider(
 
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* Cloudflare.Zone("TestZone", {
+          yield* Cloudflare.Zone.Zone("TestZone", {
             name: zoneName,
           }).pipe(AdoptPolicy.adopt(true));
-          const allow = yield* Cloudflare.AccessPolicy("UpdateAllow", {
+          const allow = yield* Cloudflare.Access.Policy("UpdateAllow", {
             name: "Allow example.com",
             decision: "allow",
             include: [{ emailDomain: { domain: "example.com" } }],
           });
-          const deny = yield* Cloudflare.AccessPolicy("UpdateDeny", {
+          const deny = yield* Cloudflare.Access.Policy("UpdateDeny", {
             name: "Deny everyone else",
             decision: "deny",
             include: [{ everyone: {} }],
           });
-          return yield* Cloudflare.AccessApplication("UpdatePolicies", {
+          return yield* Cloudflare.Access.Application("UpdatePolicies", {
             type: "self_hosted",
             domain,
             policies: [allow.policyId, deny.policyId],

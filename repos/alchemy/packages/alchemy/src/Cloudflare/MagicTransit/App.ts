@@ -1,6 +1,7 @@
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,8 +9,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const MagicAppTypeId = "Cloudflare.MagicTransit.App" as const;
-type MagicAppTypeId = typeof MagicAppTypeId;
+const TypeId = "Cloudflare.MagicTransit.App" as const;
+type TypeId = typeof TypeId;
 
 export interface MagicAppProps {
   /**
@@ -47,7 +48,7 @@ export interface MagicAppAttributes {
 }
 
 export type MagicApp = Resource<
-  MagicAppTypeId,
+  TypeId,
   MagicAppProps,
   MagicAppAttributes,
   never,
@@ -63,11 +64,13 @@ export type MagicApp = Resource<
  * `MagicWanUnauthorized` error (Cloudflare code 1025).
  *
  * All properties are mutable in place via PATCH.
- *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  * @section Creating an app
  * @example App matching hostnames
  * ```typescript
- * const app = yield* Cloudflare.MagicApp("crm", {
+ * const app = yield* Cloudflare.MagicTransit.MagicApp("crm", {
  *   name: "Internal CRM",
  *   type: "Business",
  *   hostnames: ["crm.example.com"],
@@ -76,7 +79,7 @@ export type MagicApp = Resource<
  *
  * @example App matching IP subnets
  * ```typescript
- * const app = yield* Cloudflare.MagicApp("voip", {
+ * const app = yield* Cloudflare.MagicTransit.MagicApp("voip", {
  *   name: "VoIP",
  *   type: "Communication",
  *   ipSubnets: ["192.0.2.0/24", "198.51.100.0/24"],
@@ -85,13 +88,13 @@ export type MagicApp = Resource<
  *
  * @see https://developers.cloudflare.com/magic-wan/configuration/apps/
  */
-export const MagicApp = Resource<MagicApp>(MagicAppTypeId);
+export const MagicApp = Resource<MagicApp>(TypeId);
 
 /**
  * Returns true if the given value is a MagicApp resource.
  */
 export const isMagicApp = (value: unknown): value is MagicApp =>
-  Predicate.hasProperty(value, "Type") && value.Type === MagicAppTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const MagicAppProvider = () =>
   Provider.succeed(MagicApp, {
@@ -170,6 +173,27 @@ export const MagicAppProvider = () =>
           accountAppId: output.appId,
         })
         .pipe(Effect.catchTag("AppNotFound", () => Effect.void));
+    }),
+
+    // Account collection — exhaustively paginate the account-scoped apps list
+    // and hydrate each account app into the `read` Attributes shape. Magic WAN
+    // is entitlement-gated; unentitled accounts reject with a typed error, in
+    // which case there are no apps to enumerate → [].
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* magicTransit.listApps.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .filter(isAccountApp)
+              .map((app) => toAttributes(app, accountId)),
+          ),
+        ),
+        Effect.catchTag(["MagicWanUnauthorized", "Forbidden"], () =>
+          Effect.succeed([] as MagicAppAttributes[]),
+        ),
+      );
     }),
   });
 

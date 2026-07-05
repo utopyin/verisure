@@ -2,6 +2,7 @@ import { adopt } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as firewall from "@distilled.cloud/cloudflare/firewall";
 import { expect } from "@effect/vitest";
@@ -28,6 +29,7 @@ const IP_UPDATE = "198.51.100.102";
 const IP_REPLACE_OLD = "198.51.100.103";
 const IP_REPLACE_NEW = "198.51.100.104";
 const IP_ACCOUNT = "198.51.100.105";
+const IP_LIST = "198.51.100.106";
 
 const resolveZoneId = Effect.gen(function* () {
   const { accountId } = yield* yield* CloudflareEnvironment;
@@ -139,7 +141,7 @@ test.provider("create and delete a zone-scoped ip rule", (stack) =>
 
     const rule = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("DefaultRule", {
+        return yield* Cloudflare.Firewall.AccessRule("DefaultRule", {
           zoneId,
           configuration: { target: "ip", value: IP_DEFAULT },
           mode: "challenge",
@@ -176,7 +178,7 @@ test.provider("update mode and notes in place (same ruleId)", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("UpdateRule", {
+        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
           zoneId,
           configuration: { target: "ip", value: IP_UPDATE },
           mode: "challenge",
@@ -190,7 +192,7 @@ test.provider("update mode and notes in place (same ruleId)", (stack) =>
 
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("UpdateRule", {
+        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
           zoneId,
           configuration: { target: "ip", value: IP_UPDATE },
           mode: "managed_challenge",
@@ -211,7 +213,7 @@ test.provider("update mode and notes in place (same ruleId)", (stack) =>
     // Redeploying identical props is a no-op (still the same rule).
     const noop = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("UpdateRule", {
+        return yield* Cloudflare.Firewall.AccessRule("UpdateRule", {
           zoneId,
           configuration: { target: "ip", value: IP_UPDATE },
           mode: "managed_challenge",
@@ -237,7 +239,7 @@ test.provider("changing the configuration triggers replacement", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("ReplaceRule", {
+        return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
           zoneId,
           configuration: { target: "ip", value: IP_REPLACE_OLD },
           mode: "challenge",
@@ -249,7 +251,7 @@ test.provider("changing the configuration triggers replacement", (stack) =>
 
     const replaced = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.FirewallAccessRule("ReplaceRule", {
+        return yield* Cloudflare.Firewall.AccessRule("ReplaceRule", {
           zoneId,
           configuration: { target: "ip", value: IP_REPLACE_NEW },
           mode: "challenge",
@@ -273,6 +275,41 @@ test.provider("changing the configuration triggers replacement", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed zone-scoped rule", (stack) =>
+  Effect.gen(function* () {
+    const zoneId = yield* resolveZoneId;
+
+    yield* stack.destroy();
+    yield* purgeRules({ zoneId }, IP_LIST);
+
+    const rule = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Firewall.AccessRule("ListRule", {
+          zoneId,
+          configuration: { target: "ip", value: IP_LIST },
+          mode: "challenge",
+          notes: "alchemy firewall test (list)",
+        }).pipe(adopt(true));
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Firewall.AccessRule,
+    );
+    const all = yield* provider.list();
+
+    const found = all.find((r) => r.ruleId === rule.ruleId);
+    expect(found).toBeDefined();
+    expect(found?.zoneId).toEqual(zoneId);
+    expect(found?.configuration).toEqual({ target: "ip", value: IP_LIST });
+    expect(found?.mode).toEqual("challenge");
+
+    yield* stack.destroy();
+
+    yield* expectZoneRuleGone(zoneId, rule.ruleId);
+  }).pipe(logLevel),
+);
+
 test.provider(
   "account-scoped rule (no zoneId) create, update, delete",
   (stack) =>
@@ -284,7 +321,7 @@ test.provider(
 
       const rule = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.FirewallAccessRule("AccountRule", {
+          return yield* Cloudflare.Firewall.AccessRule("AccountRule", {
             configuration: { target: "ip", value: IP_ACCOUNT },
             mode: "challenge",
             notes: "alchemy firewall test (account)",
@@ -304,7 +341,7 @@ test.provider(
 
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.FirewallAccessRule("AccountRule", {
+          return yield* Cloudflare.Firewall.AccessRule("AccountRule", {
             configuration: { target: "ip", value: IP_ACCOUNT },
             mode: "managed_challenge",
             notes: "alchemy firewall test (account, v2)",

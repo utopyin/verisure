@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as stream from "@distilled.cloud/cloudflare/stream";
 import { expect } from "@effect/vitest";
@@ -54,7 +55,7 @@ test.provider(
       yield* stack.destroy();
 
       const key = yield* stack.deploy(
-        Cloudflare.StreamSigningKey("PlaybackKey", {}),
+        Cloudflare.Stream.SigningKey("PlaybackKey", {}),
       );
 
       expect(key.keyId).toBeTruthy();
@@ -68,7 +69,7 @@ test.provider(
 
       // Redeploying is a no-op — same key, same material preserved.
       const noop = yield* stack.deploy(
-        Cloudflare.StreamSigningKey("PlaybackKey", {}),
+        Cloudflare.Stream.SigningKey("PlaybackKey", {}),
       );
       expect(noop.keyId).toEqual(key.keyId);
       expect(Redacted.value(noop.pem)).toEqual(Redacted.value(key.pem));
@@ -76,6 +77,28 @@ test.provider(
       yield* stack.destroy();
 
       yield* expectGone(accountId, key.keyId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+test.provider(
+  "list enumerates the deployed signing key",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const key = yield* stack.deploy(
+        Cloudflare.Stream.SigningKey("ListKey", {}),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Stream.SigningKey,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((k) => k.keyId === key.keyId)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

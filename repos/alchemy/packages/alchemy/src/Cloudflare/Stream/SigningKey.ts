@@ -2,18 +2,19 @@ import * as stream from "@distilled.cloud/cloudflare/stream";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const StreamSigningKeyTypeId = "Cloudflare.Stream.SigningKey" as const;
-type StreamSigningKeyTypeId = typeof StreamSigningKeyTypeId;
+const TypeId = "Cloudflare.Stream.SigningKey" as const;
+type TypeId = typeof TypeId;
 
-export type StreamSigningKeyProps = {};
+export type SigningKeyProps = {};
 
-export type StreamSigningKeyAttributes = {
+export type SigningKeyAttributes = {
   /**
    * The unique identifier of the signing key.
    */
@@ -38,10 +39,10 @@ export type StreamSigningKeyAttributes = {
   jwk: Redacted.Redacted<string>;
 };
 
-export type StreamSigningKey = Resource<
-  StreamSigningKeyTypeId,
-  StreamSigningKeyProps,
-  StreamSigningKeyAttributes,
+export type SigningKey = Resource<
+  TypeId,
+  SigningKeyProps,
+  SigningKeyAttributes,
   never,
   Providers
 >;
@@ -58,11 +59,13 @@ export type StreamSigningKey = Resource<
  * attributes.
  *
  * Requires the Stream subscription to be enabled on the account.
- *
+ * @resource
+ * @product Stream
+ * @category Media
  * @section Creating a signing key
  * @example Signing key for signed playback URLs
  * ```typescript
- * const key = yield* Cloudflare.StreamSigningKey("PlaybackKey", {});
+ * const key = yield* Cloudflare.Stream.SigningKey("PlaybackKey", {});
  *
  * // key.pem / key.jwk are Redacted<string> — use them server-side to
  * // sign playback tokens for videos with requireSignedURLs enabled.
@@ -71,19 +74,50 @@ export type StreamSigningKey = Resource<
  *
  * @see https://developers.cloudflare.com/stream/viewing-videos/securing-your-stream/
  */
-export const StreamSigningKey = Resource<StreamSigningKey>(
-  StreamSigningKeyTypeId,
-);
+export const SigningKey = Resource<SigningKey>(TypeId);
 
 /**
- * Returns true if the given value is a StreamSigningKey resource.
+ * Returns true if the given value is a SigningKey resource.
  */
-export const isStreamSigningKey = (value: unknown): value is StreamSigningKey =>
-  Predicate.hasProperty(value, "Type") && value.Type === StreamSigningKeyTypeId;
+export const isSigningKey = (value: unknown): value is SigningKey =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const StreamSigningKeyProvider = () =>
-  Provider.succeed(StreamSigningKey, {
+export const SigningKeyProvider = () =>
+  Provider.succeed(SigningKey, {
     stables: ["keyId", "accountId", "created", "pem", "jwk"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection: the keys list endpoint only returns
+      // `id` + `created`. The key material (pem/jwk) is create-only and
+      // can never be re-read, so — matching `read` for a key with no
+      // cached state — we surface it as empty redacted values.
+      return yield* stream.getKey.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .filter(
+                (key): key is { id: string; created?: string | null } =>
+                  typeof key.id === "string",
+              )
+              .map(
+                (key) =>
+                  ({
+                    keyId: key.id,
+                    accountId,
+                    created: key.created ?? undefined,
+                    pem: Redacted.make(""),
+                    jwk: Redacted.make(""),
+                  }) satisfies SigningKeyAttributes,
+              ),
+          ),
+        ),
+        // Accounts without the Stream subscription are forbidden from the
+        // keys endpoint — treat as an empty collection.
+        Effect.catchTag("Forbidden", () => Effect.succeed([])),
+      );
+    }),
 
     diff: Effect.fn(function* ({ output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
@@ -126,7 +160,7 @@ export const StreamSigningKeyProvider = () =>
         created: created.created ?? undefined,
         pem: Redacted.make(created.pem ?? ""),
         jwk: Redacted.make(created.jwk ?? ""),
-      } satisfies StreamSigningKeyAttributes;
+      } satisfies SigningKeyAttributes;
     }),
 
     delete: Effect.fn(function* ({ output }) {

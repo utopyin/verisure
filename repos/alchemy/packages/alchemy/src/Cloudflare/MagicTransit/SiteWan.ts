@@ -1,6 +1,7 @@
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -10,8 +11,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const MagicSiteWanTypeId = "Cloudflare.MagicTransit.SiteWan" as const;
-type MagicSiteWanTypeId = typeof MagicSiteWanTypeId;
+const TypeId = "Cloudflare.MagicTransit.SiteWan" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Static addressing configuration for a Magic WAN site WAN — omit to use
@@ -77,7 +78,7 @@ export interface MagicSiteWanAttributes {
 }
 
 export type MagicSiteWan = Resource<
-  MagicSiteWanTypeId,
+  TypeId,
   MagicSiteWanProps,
   MagicSiteWanAttributes,
   never,
@@ -94,11 +95,13 @@ export type MagicSiteWan = Resource<
  *
  * `siteId` is create-only — changing it triggers a replacement. Everything
  * else is updated in place.
- *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  * @section Creating a WAN
  * @example DHCP uplink
  * ```typescript
- * const wan = yield* Cloudflare.MagicSiteWan("hq-wan", {
+ * const wan = yield* Cloudflare.MagicTransit.MagicSiteWan("hq-wan", {
  *   siteId: site.siteId,
  *   physport: 1,
  * });
@@ -106,7 +109,7 @@ export type MagicSiteWan = Resource<
  *
  * @example Static uplink with priority
  * ```typescript
- * const wan = yield* Cloudflare.MagicSiteWan("hq-wan", {
+ * const wan = yield* Cloudflare.MagicTransit.MagicSiteWan("hq-wan", {
  *   siteId: site.siteId,
  *   physport: 1,
  *   priority: 10,
@@ -119,13 +122,13 @@ export type MagicSiteWan = Resource<
  *
  * @see https://developers.cloudflare.com/magic-wan/configuration/connector/
  */
-export const MagicSiteWan = Resource<MagicSiteWan>(MagicSiteWanTypeId);
+export const MagicSiteWan = Resource<MagicSiteWan>(TypeId);
 
 /**
  * Returns true if the given value is a MagicSiteWan resource.
  */
 export const isMagicSiteWan = (value: unknown): value is MagicSiteWan =>
-  Predicate.hasProperty(value, "Type") && value.Type === MagicSiteWanTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const MagicSiteWanProvider = () =>
   Provider.succeed(MagicSiteWan, {
@@ -237,6 +240,50 @@ export const MagicSiteWanProvider = () =>
           wanId: output.wanId,
         })
         .pipe(Effect.catchTag("SiteWanNotFound", () => Effect.void));
+    }),
+
+    // Parent fan-out: WANs are sub-resources keyed by site, and there is no
+    // account-wide WAN enumeration API. Enumerate every Magic site (account
+    // scope), then list WANs per site with bounded concurrency, paginating
+    // each list exhaustively. Magic WAN-gated accounts (and partial-scope
+    // tokens) reject these routes with the typed `MagicWanUnauthorized`
+    // (code 1025) / `Forbidden` tags — treat those as "nothing to list".
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const siteIds = yield* magicTransit.listSites.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).flatMap((site) => (site.id ? [site.id] : [])),
+          ),
+        ),
+        Effect.catchTag(["MagicWanUnauthorized", "Forbidden"], () =>
+          Effect.succeed([] as string[]),
+        ),
+      );
+
+      const rows = yield* Effect.forEach(
+        siteIds,
+        (siteId) =>
+          magicTransit.listSiteWans.pages({ accountId, siteId }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((wan) =>
+                  toAttributes(wan, siteId, accountId),
+                ),
+              ),
+            ),
+            // Site vanished or became inaccessible mid-enumeration — skip it.
+            Effect.catchTag(["MagicWanUnauthorized", "Forbidden"], () =>
+              Effect.succeed([] as MagicSiteWanAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+
+      return rows.flat();
     }),
   });
 

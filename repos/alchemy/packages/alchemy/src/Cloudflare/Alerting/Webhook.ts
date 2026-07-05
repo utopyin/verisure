@@ -4,6 +4,7 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -11,8 +12,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const NotificationWebhookTypeId = "Cloudflare.Alerting.Webhook" as const;
-type NotificationWebhookTypeId = typeof NotificationWebhookTypeId;
+const TypeId = "Cloudflare.Alerting.Webhook" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Webhook destination endpoint type, inferred by Cloudflare from the URL.
@@ -70,7 +71,7 @@ export interface NotificationWebhookAttributes {
 }
 
 export type NotificationWebhook = Resource<
-  NotificationWebhookTypeId,
+  TypeId,
   NotificationWebhookProps,
   NotificationWebhookAttributes,
   never,
@@ -84,11 +85,13 @@ export type NotificationWebhook = Resource<
  * {@link NotificationPolicy | notification policies}. Cloudflare sends a
  * test POST to the URL when the webhook is created or updated, so the
  * endpoint must be live and respond with a 2xx.
- *
+ * @resource
+ * @product Alerting
+ * @category Observability & Analytics
  * @section Creating a Webhook destination
  * @example Generic webhook with a generated name
  * ```typescript
- * const webhook = yield* Cloudflare.NotificationWebhook("AlertsHook", {
+ * const webhook = yield* Cloudflare.Alerting.NotificationWebhook("AlertsHook", {
  *   url: "https://alerts.example.com/cf",
  * });
  * ```
@@ -96,7 +99,7 @@ export type NotificationWebhook = Resource<
  * @example Webhook with an auth secret
  * The secret is sent in the `cf-webhook-auth` header on every dispatch.
  * ```typescript
- * const webhook = yield* Cloudflare.NotificationWebhook("AlertsHook", {
+ * const webhook = yield* Cloudflare.Alerting.NotificationWebhook("AlertsHook", {
  *   name: "production-alerts",
  *   url: "https://alerts.example.com/cf",
  *   secret: alchemy.secret.env.WEBHOOK_SECRET,
@@ -106,7 +109,7 @@ export type NotificationWebhook = Resource<
  * @section Using with a Notification policy
  * @example Dispatch policy notifications to the webhook
  * ```typescript
- * yield* Cloudflare.NotificationPolicy("SslAlerts", {
+ * yield* Cloudflare.Alerting.NotificationPolicy("SslAlerts", {
  *   alertType: "universal_ssl_event_type",
  *   mechanisms: { webhooks: [{ id: webhook.webhookId }] },
  * });
@@ -114,9 +117,7 @@ export type NotificationWebhook = Resource<
  *
  * @see https://developers.cloudflare.com/notifications/get-started/configure-webhooks/
  */
-export const NotificationWebhook = Resource<NotificationWebhook>(
-  NotificationWebhookTypeId,
-);
+export const NotificationWebhook = Resource<NotificationWebhook>(TypeId);
 
 /**
  * Returns true if the given value is a NotificationWebhook resource.
@@ -124,12 +125,30 @@ export const NotificationWebhook = Resource<NotificationWebhook>(
 export const isNotificationWebhook = (
   value: unknown,
 ): value is NotificationWebhook =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === NotificationWebhookTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const NotificationWebhookProvider = () =>
   Provider.succeed(NotificationWebhook, {
     stables: ["webhookId", "accountId"],
+
+    // Account collection (pattern b): enumerate every webhook destination in
+    // the account and hydrate each into the same Attributes shape `read`
+    // returns. The secret is write-only (never returned by Cloudflare), so it
+    // is absent from Attributes and there is nothing extra to fetch per item.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* alerting.listDestinationWebhooks.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .map(narrowWebhook)
+              .filter((w): w is ObservedWebhook => w !== undefined)
+              .map((w) => toWebhookAttributes(w, accountId)),
+          ),
+        ),
+      );
+    }),
 
     diff: Effect.fn(function* ({ output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;

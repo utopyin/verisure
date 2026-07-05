@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -44,7 +45,7 @@ test.provider(
       // is the lowest-risk field on the singleton: it only affects how
       // long manually-issued override codes last.
       const a = yield* stack.deploy(
-        Cloudflare.DeviceSettings("Devices", { disableForTime: 3600 }),
+        Cloudflare.Devices.DeviceSettings("Devices", { disableForTime: 3600 }),
       );
       expect(a.accountId).toEqual(accountId);
       expect(a.disableForTime).toEqual(3600);
@@ -56,7 +57,7 @@ test.provider(
       // Step 2 — update in place; the initial snapshot must be preserved,
       // not re-captured from the now-managed state.
       const b = yield* stack.deploy(
-        Cloudflare.DeviceSettings("Devices", { disableForTime: 7200 }),
+        Cloudflare.Devices.DeviceSettings("Devices", { disableForTime: 7200 }),
       );
       expect(b.disableForTime).toEqual(7200);
       expect(b.initialSettings.disableForTime ?? null).toEqual(beforeDisable);
@@ -66,7 +67,7 @@ test.provider(
 
       // Step 3 — a no-op redeploy must not lose the snapshot either.
       const c = yield* stack.deploy(
-        Cloudflare.DeviceSettings("Devices", { disableForTime: 7200 }),
+        Cloudflare.Devices.DeviceSettings("Devices", { disableForTime: 7200 }),
       );
       expect(c.disableForTime).toEqual(7200);
       expect(c.initialSettings.disableForTime ?? null).toEqual(beforeDisable);
@@ -76,4 +77,28 @@ test.provider(
       const after = yield* getSettings(accountId);
       expect(after.disableForTime ?? null).toEqual(beforeDisable);
     }).pipe(logLevel),
+);
+
+// Canonical `list()` test (account-scoped singleton): there is exactly one
+// device-settings object per account and no enumeration API, so `list()`
+// reads the single singleton and returns a one-element Attributes array.
+test.provider("list returns the account's device settings singleton", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Devices.DeviceSettings,
+    );
+    const all = yield* provider.list();
+
+    // Exactly one element — the account-wide singleton — well-typed as
+    // DeviceSettings["Attributes"].
+    expect(all.length).toEqual(1);
+    expect(all[0].accountId).toEqual(accountId);
+    expect(all[0].initialSettings).toBeDefined();
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
 );

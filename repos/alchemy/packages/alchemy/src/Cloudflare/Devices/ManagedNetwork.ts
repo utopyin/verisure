@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -9,8 +10,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const DeviceManagedNetworkTypeId = "Cloudflare.Devices.ManagedNetwork" as const;
-type DeviceManagedNetworkTypeId = typeof DeviceManagedNetworkTypeId;
+const TypeId = "Cloudflare.Devices.ManagedNetwork" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Detection configuration for a managed network: the WARP client opens a
@@ -60,7 +61,7 @@ export type DeviceManagedNetworkAttributes = {
 };
 
 export type DeviceManagedNetwork = Resource<
-  DeviceManagedNetworkTypeId,
+  TypeId,
   DeviceManagedNetworkProps,
   DeviceManagedNetworkAttributes,
   never,
@@ -75,11 +76,13 @@ export type DeviceManagedNetwork = Resource<
  *
  * Name and config are mutable in place (PUT). `tls` is the only network
  * type Cloudflare supports.
- *
+ * @resource
+ * @product Devices
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a managed network
  * @example Detect the office network by TLS fingerprint
  * ```typescript
- * const network = yield* Cloudflare.DeviceManagedNetwork("Office", {
+ * const network = yield* Cloudflare.Devices.DeviceManagedNetwork("Office", {
  *   config: {
  *     tlsSockaddr: "192.0.2.1:443",
  *     sha256:
@@ -90,7 +93,7 @@ export type DeviceManagedNetwork = Resource<
  *
  * @example Use the network in a custom device profile
  * ```typescript
- * yield* Cloudflare.DeviceCustomProfile("OnPrem", {
+ * yield* Cloudflare.Devices.DeviceCustomProfile("OnPrem", {
  *   match: `network == "${network.name}"`,
  *   precedence: 100,
  *   serviceModeV2: { mode: "proxy", port: 3000 },
@@ -99,9 +102,7 @@ export type DeviceManagedNetwork = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/warp/configure-warp/managed-networks/
  */
-export const DeviceManagedNetwork = Resource<DeviceManagedNetwork>(
-  DeviceManagedNetworkTypeId,
-);
+export const DeviceManagedNetwork = Resource<DeviceManagedNetwork>(TypeId);
 
 /**
  * Returns true if the given value is a DeviceManagedNetwork resource.
@@ -109,12 +110,28 @@ export const DeviceManagedNetwork = Resource<DeviceManagedNetwork>(
 export const isDeviceManagedNetwork = (
   value: unknown,
 ): value is DeviceManagedNetwork =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === DeviceManagedNetworkTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const DeviceManagedNetworkProvider = () =>
   Provider.succeed(DeviceManagedNetwork, {
     stables: ["networkId", "accountId", "type"],
+
+    // Account collection: managed networks are account-scoped and the
+    // distilled list op paginates (items: "result"). Enumerate every page
+    // and hydrate into the exact `read` Attributes shape via `toAttributes`.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* zeroTrust.listDeviceNetworks.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .filter((n) => n.networkId != null)
+              .map((n) => toAttributes(n, accountId)),
+          ),
+        ),
+      );
+    }),
 
     read: Effect.fn(function* ({ id, output, olds }) {
       const { accountId } = yield* yield* CloudflareEnvironment;

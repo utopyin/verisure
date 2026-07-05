@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as cloudforceOne from "@distilled.cloud/cloudflare/cloudforce-one";
 import { expect } from "@effect/vitest";
@@ -94,7 +95,7 @@ test.provider.skipIf(!entitled)(
 
       // Create — one-off scan of a single documentation address.
       const created = yield* stack.deploy(
-        Cloudflare.CloudforceOneScanConfig("TestScanConfig", {
+        Cloudflare.CloudforceOne.ScanConfig("TestScanConfig", {
           ips: ["1.1.1.1/32"],
           frequency: 0,
         }),
@@ -110,7 +111,7 @@ test.provider.skipIf(!entitled)(
 
       // In-place update — change the port list; the config id is stable.
       const updated = yield* stack.deploy(
-        Cloudflare.CloudforceOneScanConfig("TestScanConfig", {
+        Cloudflare.CloudforceOne.ScanConfig("TestScanConfig", {
           ips: ["1.1.1.1/32"],
           frequency: 0,
           ports: ["1-80", "443"],
@@ -121,7 +122,7 @@ test.provider.skipIf(!entitled)(
 
       // No-op redeploy — same props, same config id.
       const noop = yield* stack.deploy(
-        Cloudflare.CloudforceOneScanConfig("TestScanConfig", {
+        Cloudflare.CloudforceOne.ScanConfig("TestScanConfig", {
           ips: ["1.1.1.1/32"],
           frequency: 0,
           ports: ["1-80", "443"],
@@ -134,6 +135,49 @@ test.provider.skipIf(!entitled)(
       yield* expectGone(accountId, created.configId);
 
       // Destroy again — delete is idempotent (typed ScanConfigNotFound).
+      yield* stack.destroy();
+    }).pipe(logLevel),
+);
+
+// Read-only list assertion — always runs. On unentitled accounts the provider's
+// list() catches the typed `Unauthorized` (needs cfone.port_scan) and returns
+// [], so this stays green everywhere.
+test.provider("list returns an array of scan configs", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.CloudforceOne.ScanConfig,
+    );
+    const all = yield* provider.list();
+    expect(Array.isArray(all)).toBe(true);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+// Full enumeration — gated on the cfone.port_scan entitlement. Unlock with
+// CLOUDFLARE_TEST_CLOUDFORCE_ONE=1. Unentitled accounts surface the typed
+// Unauthorized on the deploy (createScanConfig), so the mutation is gated.
+test.provider.skipIf(!entitled)(
+  "list enumerates the deployed scan config",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.CloudforceOne.ScanConfig("ListScanConfig", {
+          ips: ["1.1.1.1/32"],
+          frequency: 0,
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.CloudforceOne.ScanConfig,
+      );
+      const all = yield* provider.list();
+      expect(all.some((c) => c.configId === deployed.configId)).toBe(true);
+
       yield* stack.destroy();
     }).pipe(logLevel),
 );

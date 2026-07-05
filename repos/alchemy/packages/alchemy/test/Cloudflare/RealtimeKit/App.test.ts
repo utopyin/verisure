@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as realtimeKit from "@distilled.cloud/cloudflare/realtime-kit";
 import { expect } from "@effect/vitest";
@@ -105,7 +106,7 @@ test.provider(
       // Create — or adopt the app left over from a previous run (apps can
       // never be deleted, so adoption-by-name is the designed behavior).
       const app = yield* stack.deploy(
-        Cloudflare.RealtimeKitApp("App", { name: APP_NAME }),
+        Cloudflare.RealtimeKit.App("App", { name: APP_NAME }),
       );
 
       expect(app.appId).toBeTruthy();
@@ -123,7 +124,7 @@ test.provider(
 
       // Re-deploy is a no-op update — same app, same id.
       const again = yield* stack.deploy(
-        Cloudflare.RealtimeKitApp("App", { name: APP_NAME }),
+        Cloudflare.RealtimeKit.App("App", { name: APP_NAME }),
       );
       expect(again.appId).toEqual(app.appId);
 
@@ -141,10 +142,49 @@ test.provider(
       // adoption-by-name existed).
       const expectedAdoptee = oldestNamed(yield* listApps(accountId));
       const adopted = yield* stack.deploy(
-        Cloudflare.RealtimeKitApp("App", { name: APP_NAME }),
+        Cloudflare.RealtimeKit.App("App", { name: APP_NAME }),
       );
       expect(adopted.appId).toEqual(expectedAdoptee?.id);
 
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+test.provider(
+  "list enumerates the deployed RealtimeKit app",
+  (stack) =>
+    Effect.gen(function* () {
+      const entitled = yield* probeEntitlement;
+      if (!entitled) {
+        // RealtimeKit beta is entitlement-gated: an unentitled account gets the
+        // typed `Forbidden` (403) on `getApp`, which `list()` propagates. Skip
+        // the live assertion; the probe test above pins the typed tag.
+        yield* Effect.logInfo(
+          "account is not RealtimeKit-entitled; skipping list",
+        );
+        return;
+      }
+
+      yield* stack.destroy();
+
+      // Create — or adopt the same-named app left over from a previous run
+      // (apps can never be deleted, so adoption-by-name is the designed
+      // behavior).
+      const deployed = yield* stack.deploy(
+        Cloudflare.RealtimeKit.App("App", { name: APP_NAME }),
+      );
+
+      const provider = yield* Provider.findProvider(Cloudflare.RealtimeKit.App);
+      const all = yield* provider.list();
+
+      expect(all.some((a) => a.appId === deployed.appId)).toBe(true);
+      const found = all.find((a) => a.appId === deployed.appId);
+      expect(found?.name).toEqual(APP_NAME);
+      expect(found?.accountId).toEqual(deployed.accountId);
+
+      // Destroy only forgets the app (no delete API) — it still exists, so a
+      // subsequent list() would still observe it. That's the expected residue.
       yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },

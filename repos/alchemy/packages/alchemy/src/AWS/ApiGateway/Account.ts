@@ -13,6 +13,7 @@ export interface AccountProps {
   cloudwatchRoleArn?: string;
 }
 
+/** @resource */
 export interface Account extends Resource<
   "AWS.ApiGateway.Account",
   AccountProps,
@@ -75,6 +76,19 @@ export const AccountProvider = () =>
             managesCloudwatchRoleArn: output?.managesCloudwatchRoleArn ?? false,
           };
         }),
+        // Account settings are an account/region singleton — there is no
+        // collection API, only `getAccount`. Return the single instance as a
+        // one-element array (account singleton pattern).
+        list: () =>
+          ag.getAccount({}).pipe(
+            Effect.map((a) => [
+              {
+                cloudwatchRoleArn: a.cloudwatchRoleArn,
+                managesCloudwatchRoleArn: false,
+              },
+            ]),
+            Effect.catchTag("NotFoundException", () => Effect.succeed([])),
+          ),
         reconcile: Effect.fn(function* ({ news: newsIn, session }) {
           if (!isResolved(newsIn)) {
             return yield* Effect.die("Account props were not resolved");

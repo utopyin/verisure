@@ -1,6 +1,7 @@
 import * as intel from "@distilled.cloud/cloudflare/intel";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 import crypto from "node:crypto";
 
 import { isResolved } from "../../Diff.ts";
@@ -10,8 +11,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const IndicatorFeedTypeId = "Cloudflare.Intel.IndicatorFeed" as const;
-type IndicatorFeedTypeId = typeof IndicatorFeedTypeId;
+const TypeId = "Cloudflare.Intel.IndicatorFeed" as const;
+type TypeId = typeof TypeId;
 
 export interface IndicatorFeedProps {
   /**
@@ -83,7 +84,7 @@ export interface IndicatorFeedAttributes {
 }
 
 export type IndicatorFeed = Resource<
-  IndicatorFeedTypeId,
+  TypeId,
   IndicatorFeedProps,
   IndicatorFeedAttributes,
   never,
@@ -106,18 +107,20 @@ export type IndicatorFeed = Resource<
  * adopts an existing feed with the same name instead of creating a
  * duplicate.
  * :::
- *
+ * @resource
+ * @product Intel
+ * @category Observability & Analytics
  * @section Creating a Feed
  * @example Basic feed
  * ```typescript
- * const feed = yield* Cloudflare.IndicatorFeed("threat-feed", {
+ * const feed = yield* Cloudflare.Intel.IndicatorFeed("threat-feed", {
  *   description: "Indicators observed by our honeypots",
  * });
  * ```
  *
  * @example Public, downloadable feed
  * ```typescript
- * const feed = yield* Cloudflare.IndicatorFeed("public-feed", {
+ * const feed = yield* Cloudflare.Intel.IndicatorFeed("public-feed", {
  *   name: "acme-public-indicators",
  *   description: "Acme Corp public threat indicators",
  *   isPublic: true,
@@ -129,7 +132,7 @@ export type IndicatorFeed = Resource<
  * @section Publishing Indicators
  * @example Upload a STIX 2.x snapshot inline
  * ```typescript
- * const feed = yield* Cloudflare.IndicatorFeed("threat-feed", {
+ * const feed = yield* Cloudflare.Intel.IndicatorFeed("threat-feed", {
  *   description: "Indicators observed by our honeypots",
  *   snapshot: JSON.stringify({
  *     type: "bundle",
@@ -142,7 +145,7 @@ export type IndicatorFeed = Resource<
  * @section Sharing a Feed
  * @example Grant another account access
  * ```typescript
- * yield* Cloudflare.IndicatorFeedPermission("partner-access", {
+ * yield* Cloudflare.Intel.IndicatorFeedPermission("partner-access", {
  *   feedId: feed.feedId,
  *   accountTag: "023e105f4ecef8ad9ca31a8372d0c353",
  * });
@@ -150,17 +153,56 @@ export type IndicatorFeed = Resource<
  *
  * @see https://developers.cloudflare.com/security-center/indicator-feeds/
  */
-export const IndicatorFeed = Resource<IndicatorFeed>(IndicatorFeedTypeId);
+export const IndicatorFeed = Resource<IndicatorFeed>(TypeId);
 
 /**
  * Returns true if the given value is an IndicatorFeed resource.
  */
 export const isIndicatorFeed = (value: unknown): value is IndicatorFeed =>
-  Predicate.hasProperty(value, "Type") && value.Type === IndicatorFeedTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const IndicatorFeedProvider = () =>
   Provider.succeed(IndicatorFeed, {
     stables: ["feedId", "accountId", "createdOn"],
+
+    // Account collection — enumerate every indicator feed owned by the
+    // ambient account. The list endpoint returns a thin row (no
+    // `latestUploadStatus`), so hydrate each id via `getFeed` to produce the
+    // exact `read` Attributes shape. Accounts without the Cloudforce One feed
+    // entitlement are rejected with the typed `Forbidden` tag — treat that as
+    // an empty collection rather than failing the enumeration.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const ids = yield* intel.listIndicatorFeeds.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .map((f) => f.id)
+              .filter((id): id is number => id != null),
+          ),
+        ),
+        Effect.catchTag("Forbidden", () => Effect.succeed([] as number[])),
+      );
+      const rows = yield* Effect.forEach(
+        ids,
+        (feedId) =>
+          getFeed(accountId, feedId).pipe(
+            Effect.map((observed) =>
+              observed
+                ? toAttributes(observed, accountId, undefined)
+                : undefined,
+            ),
+            // A feed may vanish between list and get, or the account may
+            // lack access to an individual feed — skip either case.
+            Effect.catchTag("Forbidden", () => Effect.succeed(undefined)),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is IndicatorFeedAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;

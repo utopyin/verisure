@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as intel from "@distilled.cloud/cloudflare/intel";
 import { expect } from "@effect/vitest";
@@ -88,6 +89,66 @@ test.provider.skipIf(entitled)(
   { timeout: 120_000 },
 );
 
+// Canonical `list()` test (account collection). Enumeration is NOT gated by
+// the feed-provider entitlement (only creation is), so this runs on the
+// standard testing account and returns a well-typed (typically empty) array.
+// On an unentitled account the account simply owns no feeds.
+test.provider(
+  "list returns a well-typed array of indicator feeds",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Intel.IndicatorFeed,
+      );
+      const all = yield* provider.list();
+
+      expect(Array.isArray(all)).toBe(true);
+      // Every element is the exact `read` Attributes shape.
+      for (const feed of all) {
+        expect(typeof feed.feedId).toEqual("number");
+        expect(feed.accountId).toBeTruthy();
+      }
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Requires a Cloudforce One feed-provider account to create the feed under
+// test; unlock with CLOUDFLARE_TEST_INTEL_FEEDS=1. Asserts the deployed feed
+// is present in the exhaustively-paginated list().
+test.provider.skipIf(!entitled)(
+  "list enumerates the deployed indicator feed",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const feed = yield* stack.deploy(
+        Cloudflare.Intel.IndicatorFeed("ListFeed", {
+          name: FEED_NAME,
+          description: "alchemy intel list feed",
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Intel.IndicatorFeed,
+      );
+      const all = yield* provider.list();
+
+      const found = all.find((f) => f.feedId === feed.feedId);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(accountId);
+      expect(found?.name).toEqual(FEED_NAME);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 // Requires a Cloudforce One feed-provider account — unentitled accounts fail with
 // the typed IndicatorFeedsNotEntitled (HTTP 403). Unlock with CLOUDFLARE_TEST_INTEL_FEEDS=1.
 test.provider.skipIf(!entitled)(
@@ -99,7 +160,7 @@ test.provider.skipIf(!entitled)(
       yield* stack.destroy();
 
       const feed = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("TestFeed", {
+        Cloudflare.Intel.IndicatorFeed("TestFeed", {
           name: FEED_NAME,
           description: "alchemy intel lifecycle feed",
         }),
@@ -118,7 +179,7 @@ test.provider.skipIf(!entitled)(
 
       // In-place update: description + visibility flags, same id.
       const updated = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("TestFeed", {
+        Cloudflare.Intel.IndicatorFeed("TestFeed", {
           name: FEED_NAME,
           description: "alchemy intel lifecycle feed v2",
           isAttributable: true,
@@ -138,7 +199,7 @@ test.provider.skipIf(!entitled)(
 
       // No-op redeploy keeps the same feed.
       const noop = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("TestFeed", {
+        Cloudflare.Intel.IndicatorFeed("TestFeed", {
           name: FEED_NAME,
           description: "alchemy intel lifecycle feed v2",
           isAttributable: true,
@@ -155,7 +216,7 @@ test.provider.skipIf(!entitled)(
       expect(orphan.id).toEqual(feed.feedId);
 
       const adopted = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("TestFeed", {
+        Cloudflare.Intel.IndicatorFeed("TestFeed", {
           name: FEED_NAME,
           description: "alchemy intel lifecycle feed v2",
           isAttributable: true,
@@ -197,7 +258,7 @@ test.provider.skipIf(!entitled)(
       });
 
       const feed = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("SnapshotFeed", {
+        Cloudflare.Intel.IndicatorFeed("SnapshotFeed", {
           name: FEED_NAME,
           description: "alchemy intel snapshot feed",
           snapshot,
@@ -207,7 +268,7 @@ test.provider.skipIf(!entitled)(
 
       // Re-deploying the identical snapshot is a no-op (same hash).
       const noop = yield* stack.deploy(
-        Cloudflare.IndicatorFeed("SnapshotFeed", {
+        Cloudflare.Intel.IndicatorFeed("SnapshotFeed", {
           name: FEED_NAME,
           description: "alchemy intel snapshot feed",
           snapshot,
@@ -218,7 +279,7 @@ test.provider.skipIf(!entitled)(
 
       if (consumer) {
         const grant = yield* stack.deploy(
-          Cloudflare.IndicatorFeedPermission("ConsumerGrant", {
+          Cloudflare.Intel.IndicatorFeedPermission("ConsumerGrant", {
             feedId: feed.feedId,
             accountTag: consumer,
           }),

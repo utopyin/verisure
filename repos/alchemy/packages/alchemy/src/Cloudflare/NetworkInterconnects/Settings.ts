@@ -7,10 +7,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const NetworkInterconnectSettingsTypeId =
-  "Cloudflare.NetworkInterconnects.Settings" as const;
-type NetworkInterconnectSettingsTypeId =
-  typeof NetworkInterconnectSettingsTypeId;
+const TypeId = "Cloudflare.NetworkInterconnects.Settings" as const;
+type TypeId = typeof TypeId;
 
 export interface NetworkInterconnectSettingsProps {
   /**
@@ -37,7 +35,7 @@ export interface NetworkInterconnectSettingsAttributes {
 }
 
 export type NetworkInterconnectSettings = Resource<
-  NetworkInterconnectSettingsTypeId,
+  TypeId,
   NetworkInterconnectSettingsProps,
   NetworkInterconnectSettingsAttributes,
   never,
@@ -57,18 +55,20 @@ export type NetworkInterconnectSettings = Resource<
  * CNI is an enterprise feature — on accounts without the Network
  * Interconnect entitlement the endpoint fails with the typed `Forbidden`
  * error.
- *
+ * @resource
+ * @product Network Interconnects
+ * @category Network
  * @section Managing the default ASN
  * @example Pin the account's default ASN
  * ```typescript
- * yield* Cloudflare.NetworkInterconnectSettings("CniSettings", {
+ * yield* Cloudflare.NetworkInterconnects.NetworkInterconnectSettings("CniSettings", {
  *   defaultAsn: 65000,
  * });
  * ```
  *
  * @example Use a private 32-bit ASN
  * ```typescript
- * yield* Cloudflare.NetworkInterconnectSettings("CniSettings", {
+ * yield* Cloudflare.NetworkInterconnects.NetworkInterconnectSettings("CniSettings", {
  *   defaultAsn: 4200000001,
  * });
  * ```
@@ -76,7 +76,7 @@ export type NetworkInterconnectSettings = Resource<
  * @see https://developers.cloudflare.com/network-interconnect/
  */
 export const NetworkInterconnectSettings =
-  Resource<NetworkInterconnectSettings>(NetworkInterconnectSettingsTypeId);
+  Resource<NetworkInterconnectSettings>(TypeId);
 
 /**
  * Returns true if the given value is a NetworkInterconnectSettings resource.
@@ -84,12 +84,33 @@ export const NetworkInterconnectSettings =
 export const isNetworkInterconnectSettings = (
   value: unknown,
 ): value is NetworkInterconnectSettings =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === NetworkInterconnectSettingsTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const NetworkInterconnectSettingsProvider = () =>
   Provider.succeed(NetworkInterconnectSettings, {
+    nuke: { singleton: true },
     stables: ["accountId", "initialDefaultAsn"],
+
+    // Account singleton — there is no enumeration API, just the single
+    // `/accounts/{account_id}/cni/settings` object. Read it and return a
+    // one-element array (mirroring `read` with no prior output, so
+    // `initialDefaultAsn` is the observed value). CNI is an enterprise
+    // feature: accounts without the entitlement reject the route with the
+    // typed `Forbidden` error — treat that as "unset" and return `[]`.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const observed = yield* cni
+        .getSetting({ accountId })
+        .pipe(Effect.catchTag("Forbidden", () => Effect.succeed(undefined)));
+      if (observed === undefined) return [];
+      return [
+        {
+          accountId,
+          defaultAsn: observed.defaultAsn,
+          initialDefaultAsn: observed.defaultAsn,
+        },
+      ];
+    }),
 
     read: Effect.fn(function* ({ output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;

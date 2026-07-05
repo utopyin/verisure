@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -9,8 +10,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const DeviceDexTestTypeId = "Cloudflare.Devices.DexTest" as const;
-type DeviceDexTestTypeId = typeof DeviceDexTestTypeId;
+const TypeId = "Cloudflare.Devices.DexTest" as const;
+type TypeId = typeof TypeId;
 
 /**
  * What the WARP client probes when the test runs.
@@ -91,7 +92,7 @@ export type DeviceDexTestAttributes = {
 };
 
 export type DeviceDexTest = Resource<
-  DeviceDexTestTypeId,
+  TypeId,
   DeviceDexTestProps,
   DeviceDexTestAttributes,
   never,
@@ -106,11 +107,13 @@ export type DeviceDexTest = Resource<
  *
  * Requires the DEX entitlement on the account (the API rejects writes
  * with `Forbidden` / `dex.api.entitlements.missing` otherwise).
- *
+ * @resource
+ * @product Devices
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a DEX test
  * @example HTTP probe every 30 minutes
  * ```typescript
- * const test = yield* Cloudflare.DeviceDexTest("AppHealth", {
+ * const test = yield* Cloudflare.Devices.DeviceDexTest("AppHealth", {
  *   data: { host: "https://app.example.com/health", kind: "http", method: "GET" },
  *   interval: "0h30m0s",
  *   description: "Internal app reachability",
@@ -119,7 +122,7 @@ export type DeviceDexTest = Resource<
  *
  * @example Traceroute probe targeting specific device profiles
  * ```typescript
- * const trace = yield* Cloudflare.DeviceDexTest("OriginTrace", {
+ * const trace = yield* Cloudflare.Devices.DeviceDexTest("OriginTrace", {
  *   data: { host: "203.0.113.10", kind: "traceroute" },
  *   interval: "0h30m0s",
  *   targeted: true,
@@ -129,17 +132,37 @@ export type DeviceDexTest = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/insights/dex/tests/
  */
-export const DeviceDexTest = Resource<DeviceDexTest>(DeviceDexTestTypeId);
+export const DeviceDexTest = Resource<DeviceDexTest>(TypeId);
 
 /**
  * Returns true if the given value is a DeviceDexTest resource.
  */
 export const isDeviceDexTest = (value: unknown): value is DeviceDexTest =>
-  Predicate.hasProperty(value, "Type") && value.Type === DeviceDexTestTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const DeviceDexTestProvider = () =>
   Provider.succeed(DeviceDexTest, {
     stables: ["testId", "accountId"],
+
+    // Account-scoped collection: paginate the DEX tests list and hydrate each
+    // row (which already carries the full read shape) into Attributes. DEX
+    // requires the Digital Experience Monitoring entitlement; on unentitled
+    // accounts the list rejects with the typed `Forbidden`
+    // (dex.api.entitlements.missing), so treat that as "nothing to enumerate".
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* zeroTrust.listDeviceDexTests.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .filter((t) => t.testId != null)
+              .map((t) => toAttributes(t, accountId)),
+          ),
+        ),
+        Effect.catchTag("Forbidden", () => Effect.succeed([])),
+      );
+    }),
 
     read: Effect.fn(function* ({ id, output, olds }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
