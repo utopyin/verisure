@@ -17,6 +17,7 @@ export default defineConfig({
     "no-shadow": "off",
     "no-use-before-define": "off",
     "oxc/no-barrel-file": "off",
+    "promise/prefer-await-to-callbacks": "off",
     "typescript/ban-types": "off",
     "typescript/no-empty-object-type": "off",
     "unicorn/filename-case": "off",
