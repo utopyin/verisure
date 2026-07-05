@@ -30,3 +30,4 @@
 - Follow-up pass added higher-level findings specifically for layer composition, file structure, and HTTP/RPC error boundaries.
 - Finding 01 has been implemented for representative production boundaries.
 - Finding 02 has migrated domain/server boundary errors from `Data.TaggedError` to `Schema.TaggedErrorClass`.
+- Finding 03 has refactored production `Effect.result`/mutable `lastError` control flow in Verisure transport/auth into typed Effect fallback composition.

@@ -31,6 +31,13 @@ const DEFAULT_BASE_URLS = [
   "https://automation02.verisure.com",
 ] as const;
 
+const canFailoverBaseUrl = (error: VerisureDomainError): boolean => {
+  if (error._tag === "RequestError") {
+    return true;
+  }
+  return error._tag === "ResponseError" && error.statusCode >= 500;
+};
+
 export interface VerisureTransportOptions {
   readonly applicationId?: string;
   readonly baseUrls?: VerisureBaseUrls;
@@ -66,77 +73,96 @@ export class VerisureTransport extends Context.Service<
         const rememberPreferredBaseUrl = (baseUrl: string) =>
           Ref.set(preferredBaseUrl, baseUrl);
 
+        const executeAgainstBaseUrl = Effect.fn(
+          "VerisureTransport.executeAgainstBaseUrl"
+        )(function* (
+          input: HttpClientRequest.HttpClientRequest,
+          baseUrl: string
+        ) {
+          const httpRequest = prepareRequest(input, applicationId, baseUrl);
+          const httpResponse = yield* httpClient
+            .execute(httpRequest)
+            .pipe(Effect.mapError(httpClientErrorToRequestError));
+          const text = yield* httpResponse.text.pipe(
+            Effect.mapError(httpClientErrorToRequestError)
+          );
+
+          if (httpResponse.status >= 500) {
+            return yield* new ResponseError({
+              message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
+              statusCode: httpResponse.status,
+              text,
+            });
+          }
+
+          if (httpResponse.status >= 400) {
+            return yield* classifyHttpError(httpResponse.status, text);
+          }
+
+          if (httpResponse.status < 200 || httpResponse.status >= 300) {
+            return yield* new ResponseError({
+              message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
+              statusCode: httpResponse.status,
+              text,
+            });
+          }
+
+          if (responseSignalsRateLimit(text)) {
+            return yield* classifyHttpError(429, text);
+          }
+
+          if (text.includes("SYS_00004")) {
+            return yield* new ResponseError({
+              message: `Invalid response, status code: 502 - Data: ${text}`,
+              statusCode: 502,
+              text,
+            });
+          }
+
+          yield* rememberPreferredBaseUrl(baseUrl);
+          return httpResponse;
+        });
+
+        const tryBaseUrls = Effect.fn("VerisureTransport.tryBaseUrls")(
+          function* (
+            input: HttpClientRequest.HttpClientRequest,
+            orderedBaseUrls: readonly string[],
+            index = 0
+          ): Generator<
+            Effect.Effect<
+              HttpClientResponse.HttpClientResponse,
+              VerisureDomainError
+            >,
+            HttpClientResponse.HttpClientResponse,
+            never
+          > {
+            const baseUrl = orderedBaseUrls[index];
+            if (baseUrl === undefined) {
+              return yield* new RequestError({
+                message: "Verisure request did not run",
+              });
+            }
+
+            return yield* executeAgainstBaseUrl(input, baseUrl).pipe(
+              Effect.catchAll((error) => {
+                const nextIndex = index + 1;
+                if (
+                  nextIndex < orderedBaseUrls.length &&
+                  canFailoverBaseUrl(error)
+                ) {
+                  return tryBaseUrls(input, orderedBaseUrls, nextIndex);
+                }
+                return Effect.fail(error);
+              })
+            );
+          }
+        );
+
         const request: VerisureTransportShape["request"] = Effect.fn(
           "VerisureTransport.request"
         )(function* request(input) {
           const preferred = yield* Ref.get(preferredBaseUrl);
-          const orderedBaseUrls = orderBaseUrls(baseUrls, preferred);
-          let lastError: VerisureDomainError = new RequestError({
-            message: "Verisure request did not run",
-          });
-
-          for (const baseUrl of orderedBaseUrls) {
-            const httpRequest = prepareRequest(input, applicationId, baseUrl);
-            const attempt = yield* Effect.gen(function* () {
-              const httpResponse = yield* httpClient.execute(httpRequest);
-              const text = yield* httpResponse.text;
-              return { httpResponse, text };
-            }).pipe(
-              Effect.mapError(httpClientErrorToRequestError),
-              Effect.matchEffect({
-                onFailure: (error) =>
-                  Effect.succeed({ _tag: "Failure" as const, error }),
-                onSuccess: (response) =>
-                  Effect.succeed({ _tag: "Success" as const, response }),
-              })
-            );
-
-            if (attempt._tag === "Failure") {
-              lastError = attempt.error;
-              continue;
-            }
-
-            const { httpResponse, text } = attempt.response;
-
-            if (httpResponse.status >= 500) {
-              lastError = new ResponseError({
-                message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
-                statusCode: httpResponse.status,
-                text,
-              });
-              continue;
-            }
-
-            if (httpResponse.status >= 400) {
-              return yield* classifyHttpError(httpResponse.status, text);
-            }
-
-            if (httpResponse.status < 200 || httpResponse.status >= 300) {
-              return yield* new ResponseError({
-                message: `Invalid response, status code: ${httpResponse.status} - Data: ${text}`,
-                statusCode: httpResponse.status,
-                text,
-              });
-            }
-
-            if (responseSignalsRateLimit(text)) {
-              return yield* classifyHttpError(429, text);
-            }
-
-            if (text.includes("SYS_00004")) {
-              lastError = new ResponseError({
-                message: `Invalid response, status code: 502 - Data: ${text}`,
-                statusCode: 502,
-                text,
-              });
-              continue;
-            }
-
-            yield* rememberPreferredBaseUrl(baseUrl);
-            return httpResponse;
-          }
-
-          return yield* lastError;
+          return yield* tryBaseUrls(input, orderBaseUrls(baseUrls, preferred));
         });
 
         const executeGraphQL: VerisureTransportShape["executeGraphQL"] = (

@@ -20,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpHeaders from "effect/unstable/http/Headers";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -264,25 +263,24 @@ export class VerisureAuth extends Context.Service<
 
       const recoverExpiredSnapshot = Effect.fn(
         "VerisureAuth.recoverExpiredSnapshot"
-      )(function* (snapshot: SessionSnapshot) {
-        const refreshed = yield* Effect.result(refreshSession(snapshot));
-        if (Result.isSuccess(refreshed)) {
-          return refreshed.success;
-        }
-        if (!canTryTrustLogin(refreshed.failure)) {
-          return yield* refreshed.failure;
-        }
+      )((snapshot: SessionSnapshot) =>
+        refreshSession(snapshot).pipe(
+          Effect.catchAll((refreshError) => {
+            if (!canTryTrustLogin(refreshError)) {
+              return Effect.fail(refreshError);
+            }
 
-        const trusted = yield* Effect.result(loginWithTrustCookie(snapshot));
-        if (Result.isSuccess(trusted)) {
-          return trusted.success;
-        }
-        if (!canTryBasicLogin(trusted.failure)) {
-          return yield* trusted.failure;
-        }
-
-        return yield* loginWithBasicAuth();
-      });
+            return loginWithTrustCookie(snapshot).pipe(
+              Effect.catchAll((trustError) => {
+                if (!canTryBasicLogin(trustError)) {
+                  return Effect.fail(trustError);
+                }
+                return loginWithBasicAuth();
+              })
+            );
+          })
+        )
+      );
 
       const currentValidSnapshot = Effect.gen(function* () {
         const snapshot = yield* sessions.getSnapshot;
@@ -292,19 +290,12 @@ export class VerisureAuth extends Context.Service<
         return Option.none<SessionSnapshot>();
       }).pipe(Effect.withSpan("VerisureAuth.currentValidSnapshot"));
 
+      const updateStatusAfterError = (error: VerisureAuthError) =>
+        updateStatusForError(error, setStatus).pipe(Effect.ignore);
+
       const withStatusUpdates = Effect.fn("VerisureAuth.withStatusUpdates")(
-        function* <A, E extends VerisureAuthError, R>(
-          effect: Effect.Effect<A, E, R>
-        ) {
-          const result = yield* Effect.result(effect);
-          if (Result.isSuccess(result)) {
-            return result.success;
-          }
-          yield* updateStatusForError(result.failure, setStatus).pipe(
-            Effect.ignore
-          );
-          return yield* result.failure;
-        }
+        <A, E extends VerisureAuthError, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(Effect.tapError(updateStatusAfterError))
       );
 
       const ensureSession = Effect.gen(function* () {
@@ -341,32 +332,27 @@ export class VerisureAuth extends Context.Service<
           });
         }
 
-        let lastError: VerisureAuthError = new LoginError({
-          message: "Failed to request Verisure MFA code",
-        });
-        for (const mfaType of MfaTypes) {
-          const attempt = yield* Effect.result(
+        const requestMfaCode = Effect.fn("VerisureAuth.requestMfaCode")(
+          (mfaType: (typeof MfaTypes)[number]) =>
             transport.request(
               HttpClientRequest.post(`/auth/mfa?type=${mfaType}`, {
                 headers: cookieHeader(loginCookies),
               })
             )
-          );
-          if (Result.isSuccess(attempt)) {
-            const cookies = mergeSessionCookies(
-              loginCookies,
-              yield* responseCookies(attempt.success)
-            );
-            const requestedAt = Date.now();
-            yield* sessions.putMfaState({ cookies, requestedAt });
-            yield* setStatus("mfa_required", "Verisure MFA code requested", {
-              mfaRequestedAt: new Date(requestedAt),
-            });
-            return;
-          }
-          lastError = attempt.failure;
-        }
-        return yield* lastError;
+        );
+
+        const mfaResponse = yield* Effect.firstSuccessOf(
+          MfaTypes.map((mfaType) => requestMfaCode(mfaType))
+        );
+        const cookies = mergeSessionCookies(
+          loginCookies,
+          yield* responseCookies(mfaResponse)
+        );
+        const requestedAt = Date.now();
+        yield* sessions.putMfaState({ cookies, requestedAt });
+        yield* setStatus("mfa_required", "Verisure MFA code requested", {
+          mfaRequestedAt: new Date(requestedAt),
+        });
       }).pipe(
         Effect.withSpan("VerisureAuth.requestMfa"),
         withStatusUpdates,
