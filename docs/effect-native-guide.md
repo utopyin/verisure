@@ -1,4 +1,4 @@
-# Effect-native refactor guide
+# Effect-native guide
 
 This document captures the refactor lessons learned while moving this codebase toward the style used by the Effect HTTP examples in `repos/effect/ai-docs/src/51_http-server` and the underlying Effect source.
 

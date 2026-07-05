@@ -1,6 +1,6 @@
 # Verisure Effect HTTP Server Architecture
 
-This document describes the current architecture of the Verisure server after the Effect-native HTTP/RPC refactor. It is intentionally implementation-facing: use it to understand file boundaries, dependency direction, layer wiring, request flow, and error semantics.
+This document describes the Verisure server architecture. It is implementation-facing: use it to understand file boundaries, dependency direction, layer wiring, request flow, and error semantics.
 
 ## Goals
 
@@ -55,9 +55,9 @@ Infrastructure bindings used by the API layer:
 - Cloudflare Email Send binding through `Cloudflare.Email.SendEmail("Email")` in `packages/server/src/Email/CloudflareEmailLive.ts` when `EmailLive` selects the `cloudflare` driver.
 - Browser/Web Crypto via `@effect/platform-browser/BrowserCrypto`.
 
-`apps/api/src/layers/Infrastructure.ts` also provides KV and Workers RateLimit bindings for Cloudflare compatibility/future use, but the current business services do not depend on KV or a rate-limit service.
+`apps/api/src/layers/Infrastructure.ts` provides the API Worker infrastructure bindings.
 
-## Current package layout
+## Package layout
 
 ```text
 .
@@ -117,8 +117,6 @@ Infrastructure bindings used by the API layer:
     └── test/                               # shared test utilities
 ```
 
-Deleted/obsolete architecture names: `Http/App.ts`, `Http/BetterAuthMount.ts`, `Http/RouteScopes.ts`, web `rpc/client.ts`, web `rpc/query.ts`, web `rpc/mutations.ts`, and server `Security/RequestScope.ts` are no longer part of the codebase.
-
 ## Dependency direction
 
 ```text
@@ -153,8 +151,8 @@ ApiWorkerLayer
 │   ├── VerisureSessionObjectLive
 │   ├── RuntimeConfig.Live
 │   ├── BrowserCrypto layer
-│   ├── KV binding                 # currently not business-critical
-│   └── Workers RateLimit binding  # currently not business-critical
+│   ├── KV binding
+│   └── Workers RateLimit binding
 └── ApplicationLayer
     ├── ApiHttpAppLive
     │   └── ApiHttpRoutes
@@ -162,7 +160,7 @@ ApiWorkerLayer
     │       ├── /api/auth/*        BetterAuthService.fetch
     │       ├── /api/rpc/*         DashboardRpcHttp
     │       ├── /api/v1/*          ShortcutRestHttp
-    │       └── *                  404 JSON fallback
+    │       └── *                  404 JSON for unmatched routes
     ├── ApplicationServicesLayer
     │   ├── Server.ApplicationServicesLive
     │   │   ├── AlarmService.Live
@@ -216,13 +214,13 @@ Services such as `AlarmService` and `DeviceService` consume these context tags i
 
 Shortcut REST is defined schema-first in `apps/api/src/Http/ShortcutApi.ts` and implemented with `HttpApiBuilder` in `ShortcutHandlers.ts`. Middleware is declared through `HttpApiMiddleware`; middleware errors are inferred by Effect HTTP and should not be repeated on every endpoint.
 
-Current endpoints:
+Endpoints:
 
-| Method | Path                                            | Body                  |
-| ------ | ----------------------------------------------- | --------------------- | ------------ | -------------------------------- |
-| `GET`  | `/api/v1/installations/:giid/alarm/status`      | none                  |
-| `POST` | `/api/v1/installations/:giid/alarm/toggle-full` | `{ "code"?: string }` |
-| `POST` | `/api/v1/installations/:giid/alarm/mode`        | `{ "mode": "DISARMED" | "ARMED_AWAY" | "ARMED_HOME", "code"?: string }` |
+| Method | Path                                            | Body                                                                      |
+| ------ | ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/installations/:giid/alarm/status`      | none                                                                      |
+| `POST` | `/api/v1/installations/:giid/alarm/toggle-full` | `{ "code"?: string }`                                                     |
+| `POST` | `/api/v1/installations/:giid/alarm/mode`        | `{ "mode": "DISARMED" \| "ARMED_AWAY" \| "ARMED_HOME", "code"?: string }` |
 
 Route params are intentional: authorization middleware owns installation access and can read `:giid` without decoding endpoint payloads.
 
@@ -345,7 +343,7 @@ Plaintext API tokens are generated once, returned to the user/shortcut export re
 - `toggle-full`: reads `/api/v1/installations/:giid/alarm/status`; if `ARMED_AWAY`, calls mode `DISARMED`; otherwise calls mode `ARMED_AWAY`.
 - `choose-mode`: presents a Shortcuts menu and calls `/api/v1/installations/:giid/alarm/mode` with the selected mode.
 
-The export response contains the API URL, generated bearer token, credential ID, optional GIID, instructions, and template metadata. Shortcut file generation/download URLs remain optional; the stable fallback is guided setup with the generated token and API URL.
+The export response contains the API URL, generated bearer token, credential ID, optional GIID, instructions, template metadata, and optional download URL.
 
 ## Key call graphs
 
@@ -418,7 +416,7 @@ VerisureTransport.request
 
 ## Session storage
 
-The Durable Object replaces Python-style cookie files and serializes per-credential session mutation.
+The Durable Object stores credential-scoped Verisure session state and serializes per-credential session mutation.
 
 ```ts
 type SessionCookie = {
@@ -469,13 +467,13 @@ type SessionMfaState = {
 
 1. **D1/Drizzle for app data**: Better Auth and application tables share D1.
 2. **Effect Config for secrets**: Alchemy records and binds `Config.redacted` values as Worker secrets.
-3. **Dedicated EmailService**: Better Auth depends on email delivery, but email remains an infrastructure service.
+3. **Dedicated EmailService**: Better Auth depends on email delivery, and email is an infrastructure service.
 4. **Context tags for scoped requests**: middleware provides `CurrentUser`, `CurrentCredential`, and `CurrentInstallation`.
 5. **RPC for dashboard, REST for Shortcuts**: Effect RPC powers the dashboard; bearer-token REST powers iPhone Shortcuts.
 6. **Durable Object for Verisure sessions**: per-credential session storage and locking prevents refresh races.
 7. **Schema-first contracts**: RPC and REST contracts are declared before handlers.
 8. **Middleware owns request-derived context**: auth/scope state derived from headers/payload/route params belongs in middleware.
 9. **Transport owns upstream details**: services do not know about Verisure host failover, GraphQL response shape, or HTTP classification.
-10. **Minimal semantic error channels**: services expose scarce semantic errors; adapters translate to HTTP/RPC expected errors; defects remain defects.
+10. **Minimal semantic error channels**: services expose scarce semantic errors; adapters translate to HTTP/RPC expected errors; defects stay defects.
 11. **No central broad mappers**: error handling is endpoint-local or middleware-local.
 12. **Alchemy owns Cloudflare wiring**: `alchemy dev/deploy` is the source of truth for Worker, Vite site, D1, route, Durable Object, and email bindings.
