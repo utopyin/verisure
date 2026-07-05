@@ -6,7 +6,9 @@ import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 const LockdownTypeId = "Cloudflare.Firewall.Lockdown" as const;
 type LockdownTypeId = typeof LockdownTypeId;
@@ -122,11 +124,13 @@ export type Lockdown = Resource<
  * state, `read` scans the zone for an existing rule with the same URL set
  * and reports it as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  * @section Locking down a URL
  * @example Allow a single office IP to reach an admin panel
  * ```typescript
- * yield* Cloudflare.Lockdown("AdminLockdown", {
+ * yield* Cloudflare.Firewall.Lockdown("AdminLockdown", {
  *   zoneId: zone.zoneId,
  *   urls: ["shop.example.com/admin*"],
  *   configurations: [{ target: "ip", value: "198.51.100.4" }],
@@ -136,7 +140,7 @@ export type Lockdown = Resource<
  *
  * @example Allow a CIDR range across multiple URLs
  * ```typescript
- * yield* Cloudflare.Lockdown("StaffOnly", {
+ * yield* Cloudflare.Firewall.Lockdown("StaffOnly", {
  *   zoneId: zone.zoneId,
  *   urls: ["example.com/internal*", "example.com/staging*"],
  *   configurations: [
@@ -149,7 +153,7 @@ export type Lockdown = Resource<
  * @section Pausing a rule
  * @example Temporarily disable a lockdown without deleting it
  * ```typescript
- * yield* Cloudflare.Lockdown("AdminLockdown", {
+ * yield* Cloudflare.Firewall.Lockdown("AdminLockdown", {
  *   zoneId: zone.zoneId,
  *   urls: ["shop.example.com/admin*"],
  *   configurations: [{ target: "ip", value: "198.51.100.4" }],
@@ -277,6 +281,29 @@ export const LockdownProvider = () =>
       }
 
       return toAttributes(observed, zoneId);
+    }),
+
+    // Zone Lockdown rules are zone-scoped: there is no account-wide list, so
+    // enumerate every zone and exhaustively paginate its lockdown rules,
+    // hydrating each into the same Attributes shape `read` returns. Zone
+    // Lockdown is a Pro+ feature, so plan-gated zones reject the route with a
+    // typed `Forbidden` — skip those rather than failing the whole list.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          firewall.listLockdowns.items({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).map((rule) => toAttributes(rule, zone.id)),
+            ),
+            Effect.catchTag("Forbidden", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
 
     delete: Effect.fn(function* ({ output }) {

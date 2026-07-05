@@ -1,6 +1,7 @@
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -10,8 +11,8 @@ import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 import type { DeviceDefaultProfile } from "./DefaultProfile.ts";
 
-const DeviceCustomProfileTypeId = "Cloudflare.Devices.CustomProfile" as const;
-type DeviceCustomProfileTypeId = typeof DeviceCustomProfileTypeId;
+const TypeId = "Cloudflare.Devices.CustomProfile" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Configuration for a WARP custom device profile.
@@ -189,7 +190,7 @@ export type DeviceCustomProfileAttributes = {
 };
 
 export type DeviceCustomProfile = Resource<
-  DeviceCustomProfileTypeId,
+  TypeId,
   DeviceCustomProfileProps,
   DeviceCustomProfileAttributes,
   never,
@@ -206,11 +207,13 @@ export type DeviceCustomProfile = Resource<
  * are replaced via their dedicated endpoints. Deleting the resource
  * deletes the profile; matched devices fall back to the account's default
  * profile.
- *
+ * @resource
+ * @product Devices
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a profile
  * @example Profile for a user group
  * ```typescript
- * const profile = yield* Cloudflare.DeviceCustomProfile("Contractors", {
+ * const profile = yield* Cloudflare.Devices.DeviceCustomProfile("Contractors", {
  *   match: 'identity.groups.name == "contractors"',
  *   precedence: 100,
  *   description: "Locked-down profile for contractors",
@@ -221,7 +224,7 @@ export type DeviceCustomProfile = Resource<
  * @section Split tunneling
  * @example Exclude internal ranges from the tunnel
  * ```typescript
- * yield* Cloudflare.DeviceCustomProfile("Engineering", {
+ * yield* Cloudflare.Devices.DeviceCustomProfile("Engineering", {
  *   match: 'identity.groups.name == "engineering"',
  *   precedence: 50,
  *   exclude: [
@@ -233,7 +236,7 @@ export type DeviceCustomProfile = Resource<
  * @section Fallback domains
  * @example Resolve a private suffix via an on-prem DNS server
  * ```typescript
- * yield* Cloudflare.DeviceCustomProfile("CorpDns", {
+ * yield* Cloudflare.Devices.DeviceCustomProfile("CorpDns", {
  *   match: 'identity.email matches ".*@corp.example.com"',
  *   precedence: 10,
  *   fallbackDomains: [
@@ -244,9 +247,7 @@ export type DeviceCustomProfile = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/warp/configure-warp/device-profiles/
  */
-export const DeviceCustomProfile = Resource<DeviceCustomProfile>(
-  DeviceCustomProfileTypeId,
-);
+export const DeviceCustomProfile = Resource<DeviceCustomProfile>(TypeId);
 
 /**
  * Returns true if the given value is a DeviceCustomProfile resource.
@@ -254,8 +255,7 @@ export const DeviceCustomProfile = Resource<DeviceCustomProfile>(
 export const isDeviceCustomProfile = (
   value: unknown,
 ): value is DeviceCustomProfile =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === DeviceCustomProfileTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const DeviceCustomProfileProvider = () =>
   Provider.succeed(DeviceCustomProfile, {
@@ -489,6 +489,38 @@ export const DeviceCustomProfileProvider = () =>
           policyId: output.policyId,
         })
         .pipe(Effect.catchTag("DevicePolicyNotFound", () => Effect.void));
+    }),
+
+    // Account collection: enumerate every custom device profile in the
+    // ambient account, then hydrate each into the exact `read` Attributes
+    // shape (same `observeProfile` + `buildAttrs` path read uses, so the
+    // per-profile split-tunnel/fallback lists are fetched too). Bounded
+    // concurrency keeps the fan-out polite; a profile that vanishes
+    // mid-enumeration is dropped via the typed `DevicePolicyNotFound` map.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const items = yield* zeroTrust.listDevicePolicyCustoms
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) => page.result ?? []),
+          ),
+        );
+      const rows = yield* Effect.forEach(
+        items.filter((p) => p.policyId != null),
+        (p) =>
+          Effect.gen(function* () {
+            const observed = yield* observeProfile(accountId, p.policyId!);
+            return observed
+              ? yield* buildAttrs(accountId, observed)
+              : undefined;
+          }),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is DeviceCustomProfileAttributes => row !== undefined,
+      );
     }),
   });
 

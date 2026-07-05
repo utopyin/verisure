@@ -1,6 +1,7 @@
 import * as alerting from "@distilled.cloud/cloudflare/alerting";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,9 +9,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const NotificationPolicyTypeId =
-  "Cloudflare.Alerting.NotificationPolicy" as const;
-type NotificationPolicyTypeId = typeof NotificationPolicyTypeId;
+const TypeId = "Cloudflare.Alerting.NotificationPolicy" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The event that triggers a notification dispatch. The full catalog (and
@@ -99,7 +99,7 @@ export interface NotificationPolicyAttributes {
 }
 
 export type NotificationPolicy = Resource<
-  NotificationPolicyTypeId,
+  TypeId,
   NotificationPolicyProps,
   NotificationPolicyAttributes,
   never,
@@ -112,11 +112,13 @@ export type NotificationPolicy = Resource<
  * A notification policy connects an alert type (the event Cloudflare
  * watches for) to one or more destinations — email addresses, webhook
  * destinations, or PagerDuty services — optionally narrowed by filters.
- *
+ * @resource
+ * @product Alerting
+ * @category Observability & Analytics
  * @section Creating a policy
  * @example Email notifications for Universal SSL events
  * ```typescript
- * yield* Cloudflare.NotificationPolicy("SslAlerts", {
+ * yield* Cloudflare.Alerting.NotificationPolicy("SslAlerts", {
  *   alertType: "universal_ssl_event_type",
  *   mechanisms: { email: [{ id: "ops@example.com" }] },
  * });
@@ -124,7 +126,7 @@ export type NotificationPolicy = Resource<
  *
  * @example Disabled policy with a description
  * ```typescript
- * yield* Cloudflare.NotificationPolicy("SslAlerts", {
+ * yield* Cloudflare.Alerting.NotificationPolicy("SslAlerts", {
  *   alertType: "universal_ssl_event_type",
  *   enabled: false,
  *   description: "Paused during migration",
@@ -135,11 +137,11 @@ export type NotificationPolicy = Resource<
  * @section Webhook destinations
  * @example Dispatch to a webhook destination
  * ```typescript
- * const webhook = yield* Cloudflare.NotificationWebhook("AlertsHook", {
+ * const webhook = yield* Cloudflare.Alerting.NotificationWebhook("AlertsHook", {
  *   url: "https://alerts.example.com/cf",
  * });
  *
- * yield* Cloudflare.NotificationPolicy("SslAlerts", {
+ * yield* Cloudflare.Alerting.NotificationPolicy("SslAlerts", {
  *   alertType: "universal_ssl_event_type",
  *   mechanisms: { webhooks: [{ id: webhook.webhookId }] },
  * });
@@ -148,7 +150,7 @@ export type NotificationPolicy = Resource<
  * @section Filters
  * @example Health check alerts for specific zones
  * ```typescript
- * yield* Cloudflare.NotificationPolicy("HealthAlerts", {
+ * yield* Cloudflare.Alerting.NotificationPolicy("HealthAlerts", {
  *   alertType: "health_check_status_notification",
  *   mechanisms: { email: [{ id: "ops@example.com" }] },
  *   filters: {
@@ -160,9 +162,7 @@ export type NotificationPolicy = Resource<
  *
  * @see https://developers.cloudflare.com/notifications/
  */
-export const NotificationPolicy = Resource<NotificationPolicy>(
-  NotificationPolicyTypeId,
-);
+export const NotificationPolicy = Resource<NotificationPolicy>(TypeId);
 
 /**
  * Returns true if the given value is a NotificationPolicy resource.
@@ -170,12 +170,28 @@ export const NotificationPolicy = Resource<NotificationPolicy>(
 export const isNotificationPolicy = (
   value: unknown,
 ): value is NotificationPolicy =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === NotificationPolicyTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const NotificationPolicyProvider = () =>
   Provider.succeed(NotificationPolicy, {
     stables: ["policyId", "accountId", "alertType"],
+
+    // Account-scoped collection: exhaustively paginate the account's
+    // notification policies and hydrate each into the `read` attribute shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* alerting.listPolicies.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? [])
+              .map(narrowPolicy)
+              .filter((p): p is ObservedPolicy => p !== undefined)
+              .map((p) => toPolicyAttributes(p, accountId)),
+          ),
+        ),
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;

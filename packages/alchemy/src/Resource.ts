@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Effectable from "effect/Effectable";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type { Pipeable } from "effect/Pipeable";
 import { AdoptPolicy } from "./AdoptPolicy.ts";
@@ -39,6 +40,26 @@ export type ResourceConstructor<R extends ResourceLike, Req = never> = {
   ): Effect.Effect<R, never, PropsReq | Req>;
 };
 
+export interface ResourceClassLike<R extends ResourceLike> {
+  Type: R["Type"];
+  Props: R["Props"];
+  Self: Self<R>;
+  Provider: Provider<R>;
+}
+
+export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
+  R,
+  R["Providers"] extends undefined ? Provider<R> : R["Providers"]
+> &
+  Effect.Effect<ResourceConstructor<R>> & {
+    Self: Self<R>;
+    Provider: Provider<R>;
+    ref(
+      id: string,
+      options?: { stage?: string; stack?: string },
+    ): Effect.Effect<R>;
+  };
+
 export type ResourceClassWithMethods<
   R extends ResourceLike,
   Methods extends { [key: string]: any },
@@ -54,19 +75,6 @@ export type ResourceClassWithMethods<
       options?: { stage?: string; stack?: string },
     ): Effect.Effect<R>;
   } & Methods;
-
-export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
-  R,
-  R["Providers"] extends undefined ? Provider<R> : R["Providers"]
-> &
-  Effect.Effect<ResourceConstructor<R>> & {
-    Self: Self<R>;
-    Provider: Provider<R>;
-    ref(
-      id: string,
-      options?: { stage?: string; stack?: string },
-    ): Effect.Effect<R>;
-  };
 
 export type LogicalId = string;
 
@@ -276,9 +284,14 @@ export function Resource<R extends ResourceLike>(
             : new Output.PropExpr<any, string>(Output.of(Resource), prop),
       })) as R;
       Resource.Props = Effect.isEffect(props)
-        ? yield* props.pipe(
-            Effect.provideService(Self, Resource),
-            Effect.provideService(Self(type), Resource),
+        ? // @effect-diagnostics-next-line anyUnknownInErrorContext:off
+          yield* props.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(Self, Resource),
+                Layer.succeed(Self(type), Resource),
+              ),
+            ),
           )
         : props;
       return Resource;

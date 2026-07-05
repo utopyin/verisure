@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -95,16 +96,19 @@ test.provider.skipIf(!outgoingEntitled)(
 
       const { outgoing, peer } = yield* stack.deploy(
         Effect.gen(function* () {
-          const peer = yield* Cloudflare.ZoneTransferPeer("OutgoingPeer", {
+          const peer = yield* Cloudflare.DNS.ZoneTransferPeer("OutgoingPeer", {
             name: "alchemy-dnszt-outgoing-peer",
             ip: "192.0.2.53",
             port: 53,
           });
-          const outgoing = yield* Cloudflare.ZoneTransferOutgoing("Outgoing", {
-            zoneId,
-            name: `${zoneName}.`,
-            peers: [peer.peerId],
-          });
+          const outgoing = yield* Cloudflare.DNS.ZoneTransferOutgoing(
+            "Outgoing",
+            {
+              zoneId,
+              name: `${zoneName}.`,
+              peers: [peer.peerId],
+            },
+          );
           return { outgoing, peer };
         }),
       );
@@ -117,17 +121,20 @@ test.provider.skipIf(!outgoingEntitled)(
       // dependency in the same deploy that changes its dependent).
       const disabled = yield* stack.deploy(
         Effect.gen(function* () {
-          const peer = yield* Cloudflare.ZoneTransferPeer("OutgoingPeer", {
+          const peer = yield* Cloudflare.DNS.ZoneTransferPeer("OutgoingPeer", {
             name: "alchemy-dnszt-outgoing-peer",
             ip: "192.0.2.53",
             port: 53,
           });
-          const outgoing = yield* Cloudflare.ZoneTransferOutgoing("Outgoing", {
-            zoneId,
-            name: `${zoneName}.`,
-            peers: [peer.peerId],
-            enabled: false,
-          });
+          const outgoing = yield* Cloudflare.DNS.ZoneTransferOutgoing(
+            "Outgoing",
+            {
+              zoneId,
+              name: `${zoneName}.`,
+              peers: [peer.peerId],
+              enabled: false,
+            },
+          );
           return outgoing;
         }),
       );
@@ -145,4 +152,42 @@ test.provider.skipIf(!outgoingEntitled)(
       yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 300_000 },
+);
+
+// Canonical `list()` test (zone-scoped singleton): there is no account-wide
+// API for the outgoing transfer config, so `list()` enumerates every zone
+// via `listAllZones` and reads the singleton in each, skipping zones that
+// have no config or lack the Secondary DNS entitlement (typed
+// OutgoingZoneTransferNotFound / OutgoingZoneTransfersNotAllowed tags). The
+// read-only assertion (well-typed Attributes[]) always runs; on the
+// unentitled testing account no zone returns a config, so the deployed-
+// presence assertion is gated behind an entitled zone.
+test.provider(
+  "list enumerates the outgoing transfer config per zone",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DNS.ZoneTransferOutgoing,
+      );
+      const all = yield* provider.list();
+
+      // Always-on assertion: list() returns a well-typed Attributes[] and
+      // never throws even when every zone is unconfigured/unentitled.
+      expect(Array.isArray(all)).toBe(true);
+      for (const item of all) {
+        expect(typeof item.zoneId).toBe("string");
+        expect(Array.isArray(item.peers)).toBe(true);
+        expect(typeof item.enabled).toBe("boolean");
+      }
+
+      // Only an entitled+configured zone appears in the enumeration.
+      if (outgoingEntitled) {
+        expect(all.some((o) => o.zoneId === zoneId)).toBe(true);
+      }
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
 );

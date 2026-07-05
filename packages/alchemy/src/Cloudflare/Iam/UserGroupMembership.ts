@@ -1,6 +1,8 @@
 import * as iam from "@distilled.cloud/cloudflare/iam";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,11 +10,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const IamUserGroupMembershipTypeId =
-  "Cloudflare.Iam.UserGroupMembership" as const;
-type IamUserGroupMembershipTypeId = typeof IamUserGroupMembershipTypeId;
+const TypeId = "Cloudflare.Iam.UserGroupMembership" as const;
+type TypeId = typeof TypeId;
 
-export interface IamUserGroupMembershipProps {
+export interface UserGroupMembershipProps {
   /**
    * ID of the user group to add the member to — e.g.
    * `userGroup.userGroupId`. Immutable — changing it triggers a
@@ -27,7 +28,7 @@ export interface IamUserGroupMembershipProps {
   memberId: string;
 }
 
-export interface IamUserGroupMembershipAttributes {
+export interface UserGroupMembershipAttributes {
   /** ID of the user group the member belongs to. */
   userGroupId: string;
   /** Account member ID of the member. */
@@ -40,10 +41,10 @@ export interface IamUserGroupMembershipAttributes {
   status: string | undefined;
 }
 
-export type IamUserGroupMembership = Resource<
-  IamUserGroupMembershipTypeId,
-  IamUserGroupMembershipProps,
-  IamUserGroupMembershipAttributes,
+export type UserGroupMembership = Resource<
+  TypeId,
+  UserGroupMembershipProps,
+  UserGroupMembershipAttributes,
   never,
   Providers
 >;
@@ -59,13 +60,15 @@ export type IamUserGroupMembership = Resource<
  *
  * Account-scoped IAM (user groups and their members) is an Enterprise
  * feature.
- *
+ * @resource
+ * @product IAM
+ * @category Account & Identity
  * @section Adding a Member
  * @example Add an account member to a user group
  * ```typescript
- * const group = yield* Cloudflare.IamUserGroup("Operators", {});
+ * const group = yield* Cloudflare.Iam.UserGroup("Operators", {});
  *
- * yield* Cloudflare.IamUserGroupMembership("SamInOperators", {
+ * yield* Cloudflare.Iam.UserGroupMembership("SamInOperators", {
  *   userGroup: group.userGroupId,
  *   memberId: "b67b4c279ea0177a0ddff0a2ef64b11b",
  * });
@@ -73,22 +76,64 @@ export type IamUserGroupMembership = Resource<
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-members/user-groups/
  */
-export const IamUserGroupMembership = Resource<IamUserGroupMembership>(
-  IamUserGroupMembershipTypeId,
-);
+export const UserGroupMembership = Resource<UserGroupMembership>(TypeId);
 
 /**
- * Returns true if the given value is an IamUserGroupMembership resource.
+ * Returns true if the given value is an UserGroupMembership resource.
  */
-export const isIamUserGroupMembership = (
+export const isUserGroupMembership = (
   value: unknown,
-): value is IamUserGroupMembership =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === IamUserGroupMembershipTypeId;
+): value is UserGroupMembership =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const IamUserGroupMembershipProvider = () =>
-  Provider.succeed(IamUserGroupMembership, {
+export const UserGroupMembershipProvider = () =>
+  Provider.succeed(UserGroupMembership, {
     stables: ["userGroupId", "memberId", "accountId"],
+
+    // Parent fan-out: memberships are keyed by (user group, member) and
+    // there is no account-wide membership enumeration API. Enumerate every
+    // user group in the account (account-scoped), then list each group's
+    // members with bounded concurrency, paginating both levels exhaustively.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const groups = yield* iam.listUserGroups.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.result ?? []),
+        ),
+      );
+      const rows = yield* Effect.forEach(
+        groups,
+        (group) =>
+          iam.listUserGroupMembers
+            .pages({ accountId, userGroupId: group.id })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.result ?? []).map(
+                    (member): UserGroupMembershipAttributes =>
+                      toAttributes(member, group.id, accountId),
+                  ),
+                ),
+              ),
+              // Group removed out-of-band between enumeration and member
+              // listing — skip it.
+              Effect.catchTag("UserGroupNotFound", () =>
+                Effect.succeed([] as UserGroupMembershipAttributes[]),
+              ),
+              // A group whose policy Cloudflare can't validate rejects the
+              // member listing with a 400 ("Policy validation failed"). It's
+              // not ours to enumerate — contribute nothing rather than failing
+              // the whole account-wide listing.
+              Effect.catchTag("PolicyValidationFailed", () =>
+                Effect.succeed([] as UserGroupMembershipAttributes[]),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ olds, news }) {
       if (!isResolved(news)) return undefined;
@@ -113,11 +158,17 @@ export const IamUserGroupMembershipProvider = () =>
       const { accountId } = yield* yield* CloudflareEnvironment;
       const acct = output?.accountId ?? accountId;
       // Cold read falls back to the previous props — the identity is fully
-      // user-specified, so the (group, member) pair is the lookup key.
-      const userGroupId =
-        output?.userGroupId ?? (olds?.userGroup as string | undefined);
-      const memberId =
-        output?.memberId ?? (olds?.memberId as string | undefined);
+      // user-specified, so the (group, member) pair is the lookup key. The
+      // props may still hold an unresolved `Output` (e.g. a reference to a
+      // sibling group's id when state was persisted before reconcile), so
+      // only use them as a lookup key once they're concrete strings —
+      // otherwise there is nothing to read.
+      const oldGroup =
+        typeof olds?.userGroup === "string" ? olds.userGroup : undefined;
+      const oldMember =
+        typeof olds?.memberId === "string" ? olds.memberId : undefined;
+      const userGroupId = output?.userGroupId ?? oldGroup;
+      const memberId = output?.memberId ?? oldMember;
       if (userGroupId === undefined || memberId === undefined) {
         return undefined;
       }
@@ -125,34 +176,59 @@ export const IamUserGroupMembershipProvider = () =>
       return observed ? toAttributes(observed, userGroupId, acct) : undefined;
     }),
 
-    reconcile: Effect.fn(function* ({ news, output }) {
+    reconcile: Effect.fn(function* ({ news }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       // Inputs have been resolved to concrete strings by Plan.
       const userGroupId = news.userGroup as string;
       const memberId = news.memberId as string;
 
-      // Observe — membership is existence-only; if it's already there we
-      // are done.
-      const observed = yield* getMembership(accountId, userGroupId, memberId);
-      if (observed) {
-        return toAttributes(observed, userGroupId, accountId);
-      }
+      // A user group created earlier in the same deploy is eventually
+      // consistent: its `/members` sub-resource API briefly answers GET and
+      // POST with `UserGroupNotFound` (404) until the new group propagates
+      // across Cloudflare's edge. Ride out that window with a bounded retry
+      // — `UserGroupNotFound` here means "the group isn't visible yet", not
+      // "the group is gone" (we are mid-create of its membership).
+      const ensure = Effect.gen(function* () {
+        // Observe — membership is existence-only; if it's already there we
+        // are done. A missing *member* (`UserGroupMemberNotFound`) is the
+        // expected greenfield state; a missing *group* (`UserGroupNotFound`)
+        // bubbles to the retry below.
+        const observed = yield* iam
+          .getUserGroupMember({ accountId, userGroupId, memberId })
+          .pipe(
+            Effect.map((m): ObservedMember | undefined => m),
+            Effect.catchTag("UserGroupMemberNotFound", () =>
+              Effect.succeed(undefined),
+            ),
+          );
+        if (observed) {
+          return toAttributes(observed, userGroupId, accountId);
+        }
 
-      // Ensure — add the member. The batch POST is idempotent for members
-      // already in the group, so a concurrent add is not an error.
-      const created = yield* iam.createUserGroupMember({
-        accountId,
-        userGroupId,
-        members: [{ id: memberId }],
+        // Ensure — add the member. The batch POST is idempotent for members
+        // already in the group, so a concurrent add is not an error.
+        const created = yield* iam.createUserGroupMember({
+          accountId,
+          userGroupId,
+          members: [{ id: memberId }],
+        });
+        const member = created.result.find((m) => m.id === memberId);
+        if (member) {
+          return toAttributes(member, userGroupId, accountId);
+        }
+        // The POST response echoes the full member set; fall back to a read
+        // for the member we just added.
+        const reread = yield* getMembership(accountId, userGroupId, memberId);
+        return toAttributes(reread ?? { id: memberId }, userGroupId, accountId);
       });
-      const member = created.result.find((m) => m.id === memberId);
-      if (member) {
-        return toAttributes(member, userGroupId, accountId);
-      }
-      // The POST response echoes the full member set; fall back to a read
-      // for the member we just added.
-      const reread = yield* getMembership(accountId, userGroupId, memberId);
-      return toAttributes(reread ?? { id: memberId }, userGroupId, accountId);
+
+      return yield* ensure.pipe(
+        Effect.retry({
+          while: (e) => e._tag === "UserGroupNotFound",
+          schedule: Schedule.exponential("500 millis"),
+          times: 8,
+        }),
+      );
     }),
 
     delete: Effect.fn(function* ({ output }) {
@@ -201,7 +277,7 @@ const toAttributes = (
   member: ObservedMember,
   userGroupId: string,
   accountId: string,
-): IamUserGroupMembershipAttributes => ({
+): UserGroupMembershipAttributes => ({
   userGroupId,
   memberId: member.id,
   accountId,

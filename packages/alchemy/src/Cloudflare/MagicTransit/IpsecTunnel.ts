@@ -11,8 +11,8 @@ import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 import type { MagicTunnelBgp, MagicTunnelHealthCheck } from "./GreTunnel.ts";
 
-const IpsecTunnelTypeId = "Cloudflare.MagicTransit.IpsecTunnel" as const;
-type IpsecTunnelTypeId = typeof IpsecTunnelTypeId;
+const TypeId = "Cloudflare.MagicTransit.IpsecTunnel" as const;
+type TypeId = typeof TypeId;
 
 export interface IpsecTunnelProps {
   /**
@@ -111,7 +111,7 @@ export interface IpsecTunnelAttributes {
 }
 
 export type IpsecTunnel = Resource<
-  IpsecTunnelTypeId,
+  TypeId,
   IpsecTunnelProps,
   IpsecTunnelAttributes,
   never,
@@ -129,11 +129,13 @@ export type IpsecTunnel = Resource<
  * The tunnel `name` is unique per account and immutable in practice —
  * changing it triggers a replacement. The `psk` is write-only: Cloudflare
  * never returns it, so the configured value is carried in state.
- *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  * @section Creating an IPsec tunnel
  * @example Basic tunnel with a provided PSK
  * ```typescript
- * const tunnel = yield* Cloudflare.IpsecTunnel("branch", {
+ * const tunnel = yield* Cloudflare.MagicTransit.IpsecTunnel("branch", {
  *   name: "branch-ipsec-1",
  *   cloudflareEndpoint: "203.0.113.1",
  *   customerEndpoint: "198.51.100.1",
@@ -144,7 +146,7 @@ export type IpsecTunnel = Resource<
  *
  * @example Tunnel with replay protection and health checks
  * ```typescript
- * const tunnel = yield* Cloudflare.IpsecTunnel("branch", {
+ * const tunnel = yield* Cloudflare.MagicTransit.IpsecTunnel("branch", {
  *   name: "branch-ipsec-1",
  *   cloudflareEndpoint: "203.0.113.1",
  *   interfaceAddress: "10.213.0.10/31",
@@ -155,13 +157,13 @@ export type IpsecTunnel = Resource<
  *
  * @see https://developers.cloudflare.com/magic-wan/reference/tunnels/
  */
-export const IpsecTunnel = Resource<IpsecTunnel>(IpsecTunnelTypeId);
+export const IpsecTunnel = Resource<IpsecTunnel>(TypeId);
 
 /**
  * Returns true if the given value is an IpsecTunnel resource.
  */
 export const isIpsecTunnel = (value: unknown): value is IpsecTunnel =>
-  Predicate.hasProperty(value, "Type") && value.Type === IpsecTunnelTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const IpsecTunnelProvider = () =>
   Provider.succeed(IpsecTunnel, {
@@ -273,6 +275,28 @@ export const IpsecTunnelProvider = () =>
           xMagicNewHcTarget: true,
         })
         .pipe(Effect.catchTag("IpsecTunnelNotFound", () => Effect.void));
+    }),
+
+    // Account-scoped collection. The list API returns the full tunnel set in
+    // a single response (non-paginated). The PSK is write-only and never
+    // returned, so it is `undefined` here — matching `read`'s cold-read shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* magicTransit
+        .listIpsecTunnels({ accountId, xMagicNewHcTarget: true })
+        .pipe(
+          Effect.map((r) =>
+            (r.ipsecTunnels ?? []).map((tunnel) =>
+              toAttributes(tunnel, accountId, undefined),
+            ),
+          ),
+          // Accounts that aren't onboarded onto Magic Transit (code 1012)
+          // or lack the entitlement can't enumerate tunnels — treat as none.
+          Effect.catchTag(
+            ["MagicTransitNotOnboarded", "Forbidden"],
+            (): Effect.Effect<IpsecTunnelAttributes[]> => Effect.succeed([]),
+          ),
+        );
     }),
   });
 

@@ -1,6 +1,7 @@
 import * as originCa from "@distilled.cloud/cloudflare/origin-ca-certificates";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
@@ -8,27 +9,24 @@ import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
-import { findZoneByName } from "../Zone/lookup.ts";
+import { findZoneByName, listAllZones } from "../Zone/lookup.ts";
 
-const OriginCaCertificateTypeId = "Cloudflare.OriginCaCertificate" as const;
-type OriginCaCertificateTypeId = typeof OriginCaCertificateTypeId;
+const TypeId = "Cloudflare.OriginCaCertificate.OriginCaCertificate" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Signature type requested on the certificate: `origin-rsa` (RSA),
  * `origin-ecc` (ECDSA), or `keyless-certificate` (for Keyless SSL servers).
  */
-export type OriginCaCertificateRequestType =
-  | "origin-rsa"
-  | "origin-ecc"
-  | "keyless-certificate";
+export type RequestType = "origin-rsa" | "origin-ecc" | "keyless-certificate";
 
 /**
  * Number of days the certificate should be valid for. Cloudflare only
  * accepts this fixed set of validity periods.
  */
-export type OriginCaCertificateValidity = 7 | 30 | 90 | 365 | 730 | 1095 | 5475;
+export type Validity = 7 | 30 | 90 | 365 | 730 | 1095 | 5475;
 
-export interface OriginCaCertificateProps {
+export interface Props {
   /**
    * The Certificate Signing Request (CSR) in PEM format (newline-encoded).
    * The CSR's key is yours; Cloudflare only signs it. Immutable — changing
@@ -48,16 +46,16 @@ export interface OriginCaCertificateProps {
    * `origin-ecc` (ECDSA), or `keyless-certificate` (for Keyless SSL
    * servers). Immutable — changing the request type triggers a replacement.
    */
-  requestType: OriginCaCertificateRequestType;
+  requestType: RequestType;
   /**
    * The number of days for which the certificate should be valid.
    * Immutable — changing the validity triggers a replacement.
    * @default 5475
    */
-  requestedValidity?: OriginCaCertificateValidity;
+  requestedValidity?: Validity;
 }
 
-export interface OriginCaCertificateAttributes {
+export interface Attributes {
   /**
    * Cloudflare-assigned identifier of the certificate (a long decimal
    * serial string). Stable for the lifetime of the certificate.
@@ -80,7 +78,7 @@ export interface OriginCaCertificateAttributes {
   /**
    * Signature type on the certificate.
    */
-  requestType: OriginCaCertificateRequestType;
+  requestType: RequestType;
   /**
    * The number of days the certificate was requested to be valid for.
    */
@@ -92,9 +90,9 @@ export interface OriginCaCertificateAttributes {
 }
 
 export type OriginCaCertificate = Resource<
-  OriginCaCertificateTypeId,
-  OriginCaCertificateProps,
-  OriginCaCertificateAttributes,
+  TypeId,
+  Props,
+  Attributes,
   never,
   Providers
 >;
@@ -114,11 +112,13 @@ export type OriginCaCertificate = Resource<
  * Certificates are fully immutable: there is no update API, so changing any
  * property triggers a replacement (a new certificate is issued, then the
  * old one is revoked). Destroying the resource revokes the certificate.
- *
+ * @resource
+ * @product Origin CA Certificates
+ * @category SSL/TLS & Certificates
  * @section Issuing a certificate
  * @example RSA certificate for a single hostname
  * ```typescript
- * const cert = yield* Cloudflare.OriginCaCertificate("origin-cert", {
+ * const cert = yield* Cloudflare.OriginCaCertificate.OriginCaCertificate("origin-cert", {
  *   csr: originCsrPem,
  *   hostnames: ["origin.example.com"],
  *   requestType: "origin-rsa",
@@ -128,7 +128,7 @@ export type OriginCaCertificate = Resource<
  *
  * @example Wildcard ECDSA certificate with the default 15-year validity
  * ```typescript
- * const cert = yield* Cloudflare.OriginCaCertificate("wildcard-cert", {
+ * const cert = yield* Cloudflare.OriginCaCertificate.OriginCaCertificate("wildcard-cert", {
  *   csr: wildcardCsrPem,
  *   hostnames: ["example.com", "*.example.com"],
  *   requestType: "origin-ecc",
@@ -145,9 +145,7 @@ export type OriginCaCertificate = Resource<
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/
  */
-export const OriginCaCertificate = Resource<OriginCaCertificate>(
-  OriginCaCertificateTypeId,
-);
+export const OriginCaCertificate = Resource<OriginCaCertificate>(TypeId);
 
 /**
  * Returns true if the given value is an OriginCaCertificate resource.
@@ -155,8 +153,7 @@ export const OriginCaCertificate = Resource<OriginCaCertificate>(
 export const isOriginCaCertificate = (
   value: unknown,
 ): value is OriginCaCertificate =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === OriginCaCertificateTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const OriginCaCertificateProvider = () =>
   Provider.succeed(OriginCaCertificate, {
@@ -172,9 +169,41 @@ export const OriginCaCertificateProvider = () =>
       "expiresOn",
     ],
 
+    // Origin CA certificates are enumerated per zone (the list endpoint
+    // requires a `zone_id` query param). Fan out across every zone on the
+    // account and flatten. The list response omits the csr and requested
+    // validity, so `toAttributes` fills them with the defaults — matching the
+    // cold/unowned `read` shape. Origin CA endpoints may require the special
+    // Origin CA Key auth; a zone we can't enumerate rejects with `Forbidden`,
+    // which we skip rather than fail (the array stays as complete as the
+    // credentials allow).
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          originCa.listOriginCaCertificates.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? [])
+                  .filter((cert) => cert.id != null)
+                  .map((cert): Attributes => toAttributes(cert)),
+              ),
+            ),
+            Effect.catchTag("Forbidden", () =>
+              Effect.succeed([] as Attributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
+
     diff: Effect.fn(function* ({ olds, news }) {
-      const o = olds as OriginCaCertificateProps | undefined;
-      const n = news as OriginCaCertificateProps;
+      const o = olds as Props | undefined;
+      const n = news as Props;
       // No prior props to compare against — let the engine decide.
       if (o?.csr === undefined) return undefined;
       // There is no update API for Origin CA certificates — every change
@@ -247,11 +276,32 @@ export const OriginCaCertificateProvider = () =>
     delete: Effect.fn(function* ({ output }) {
       // Delete = revoke. Idempotent: an unknown id (1101) or an
       // already-revoked certificate (1014) both mean "gone".
+      //
+      // `CertificateRevocationFailed` (code 1000) is the dual-use generic
+      // "API errors encountered" Cloudflare returns when a revoke blips —
+      // most often during the replace-time GC delete, when the old
+      // certificate is revoked right after its replacement was issued.
+      // Left untyped it surfaced as `UnknownCloudflareError` and aborted the
+      // delete, orphaning the old certificate (it is no longer in state, so
+      // a later `stack.destroy()` cannot reclaim it). Bounded-retry the
+      // transient failure, then read back: a revoked/absent certificate
+      // counts as deleted; a still-live one re-raises so the leak is never
+      // silent.
       yield* originCa
         .deleteOriginCaCertificate({ certificateId: output.certificateId })
         .pipe(
+          Effect.retry({
+            while: (e) => e._tag === "CertificateRevocationFailed",
+            schedule: Schedule.exponential("500 millis"),
+            times: 6,
+          }),
           Effect.catchTag("CertificateNotFound", () => Effect.void),
           Effect.catchTag("CertificateAlreadyRevoked", () => Effect.void),
+          Effect.catchTag("CertificateRevocationFailed", (e) =>
+            getCertificate(output.certificateId).pipe(
+              Effect.flatMap((cert) => (cert ? Effect.fail(e) : Effect.void)),
+            ),
+          ),
         );
     }),
   });
@@ -333,17 +383,17 @@ const toAttributes = (
   cert: CertificateShape,
   fallback?: {
     csr?: string;
-    requestType?: OriginCaCertificateRequestType;
+    requestType?: RequestType;
     requestedValidity?: number;
   },
-): OriginCaCertificateAttributes => ({
+): Attributes => ({
   certificateId: cert.id!,
   certificate: cert.certificate ?? "",
   csr: cert.csr ?? fallback?.csr ?? "",
   hostnames: [...cert.hostnames],
   requestType: (cert.requestType ??
     fallback?.requestType ??
-    "origin-rsa") as OriginCaCertificateRequestType,
+    "origin-rsa") as RequestType,
   requestedValidity:
     cert.requestedValidity ?? fallback?.requestedValidity ?? DEFAULT_VALIDITY,
   expiresOn: cert.expiresOn ?? undefined,

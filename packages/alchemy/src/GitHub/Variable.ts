@@ -52,7 +52,7 @@ export interface Variable extends Resource<
  * by `GitHub.providers()` (which uses the Alchemy AuthProvider — env,
  * stored PAT, `gh` CLI, or OAuth). The token needs `repo` scope for
  * private repositories or `public_repo` for public ones.
- *
+ * @resource
  * @section Repository Variables
  * Store variables accessible to all GitHub Actions workflows in the
  * repository.
@@ -154,6 +154,60 @@ export const VariableProvider = () =>
         );
       }
       return { updatedAt: new Date().toISOString() };
+    }),
+
+    // Enumerate every Actions variable visible to the authenticated token.
+    // GitHub variables are keyed by {owner, repository, name} and there is no
+    // account-wide "list all variables" endpoint, so the ambient scope is the
+    // authenticated account: list every repository the token can see, then
+    // exhaustively paginate each repo's variables and hydrate into the same
+    // `Attributes` shape `reconcile` returns. Variable values are readable
+    // (unlike secrets), but the resource's `Attributes` only exposes
+    // `updatedAt`, so that's all we surface here.
+    list: Effect.fn(function* () {
+      const octokit = yield* Octokit;
+
+      // `octokit.paginate` walks every page and flattens to a single array.
+      const repos = yield* Effect.tryPromise({
+        try: () =>
+          octokit.paginate(octokit.rest.repos.listForAuthenticatedUser, {
+            per_page: 100,
+          }),
+        catch: (e) => e as Error,
+      });
+
+      const perRepo = yield* Effect.forEach(
+        repos,
+        (repo) =>
+          Effect.tryPromise({
+            try: async () => {
+              try {
+                const variables = await octokit.paginate(
+                  octokit.rest.actions.listRepoVariables,
+                  {
+                    owner: repo.owner.login,
+                    repo: repo.name,
+                    per_page: 100,
+                  },
+                );
+                return variables.map((v) => ({ updatedAt: v.updated_at }));
+              } catch (error: any) {
+                // Repos with Actions disabled, or where the token lacks the
+                // `repo`/`actions` scope, reject the variables endpoint with
+                // 403/404 — skip them per the per-item not-found rule rather
+                // than failing the whole enumeration.
+                if (error.status === 403 || error.status === 404) {
+                  return [];
+                }
+                throw error;
+              }
+            },
+            catch: (e) => e as Error,
+          }),
+        { concurrency: 10 },
+      );
+
+      return perRepo.flat();
     }),
 
     delete: Effect.fn(function* ({ olds }) {

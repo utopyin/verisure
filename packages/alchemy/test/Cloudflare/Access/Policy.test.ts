@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -24,7 +25,7 @@ test.provider("create and delete basic allow policy", (stack) =>
 
     const policy = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessPolicy("BasicAllowPolicy", {
+        return yield* Cloudflare.Access.Policy("BasicAllowPolicy", {
           decision: "allow",
           include: [{ emailDomain: { domain: "example.com" } }],
         });
@@ -60,7 +61,7 @@ test.provider("update mutates includes without replacing", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessPolicy("UpdatePolicy", {
+        return yield* Cloudflare.Access.Policy("UpdatePolicy", {
           decision: "allow",
           include: [{ emailDomain: { domain: "example.com" } }],
           adopt: true,
@@ -72,7 +73,7 @@ test.provider("update mutates includes without replacing", (stack) =>
 
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessPolicy("UpdatePolicy", {
+        return yield* Cloudflare.Access.Policy("UpdatePolicy", {
           decision: "allow",
           include: [
             { emailDomain: { domain: "example.com" } },
@@ -113,7 +114,7 @@ test.provider("adopts an out-of-band reusable policy", (stack) =>
 
     const adopted = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessPolicy("AdoptPolicy", {
+        return yield* Cloudflare.Access.Policy("AdoptPolicy", {
           name,
           decision: "allow",
           include: [{ emailDomain: { domain: "example.com" } }],
@@ -131,5 +132,32 @@ test.provider("adopts an out-of-band reusable policy", (stack) =>
       .getAccessPolicy({ accountId, policyId: preExisting.id! })
       .pipe(Effect.catch(() => Effect.succeed(undefined)));
     expect(afterDestroy).toBeUndefined();
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed reusable policy", (stack) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+
+    yield* stack.destroy();
+
+    const policy = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Access.Policy("ListPolicy", {
+          decision: "allow",
+          include: [{ emailDomain: { domain: "example.com" } }],
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Access.Policy);
+    const all = yield* provider.list();
+
+    const match = all.find((p) => p.policyId === policy.policyId);
+    expect(match).toBeDefined();
+    expect(match?.accountId).toEqual(accountId);
+    expect(match?.decision).toEqual("allow");
+
+    yield* stack.destroy();
   }).pipe(logLevel),
 );

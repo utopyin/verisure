@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zones from "@distilled.cloud/cloudflare/zones";
 import { expect } from "@effect/vitest";
@@ -98,6 +99,28 @@ test.provider(
     }).pipe(logLevel),
 );
 
+// Canonical `list()` test (zone-scoped singleton): a hold is a per-zone
+// singleton — `getHold` returns a record for every zone — and there is no
+// account-wide enumeration API, so `list()` enumerates every zone via
+// `listAllZones` and reads the hold state in each. Assert the result is
+// non-empty and contains the standing test zone. This works on any plan
+// (reading the hold state needs no Enterprise entitlement).
+test.provider("list enumerates the hold state across all zones", (stack) =>
+  Effect.gen(function* () {
+    const zoneId = yield* resolveZoneId;
+
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(Cloudflare.Zone.Hold);
+    const all = yield* provider.list();
+
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.some((h) => h.zoneId === zoneId)).toBe(true);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 test.provider.skipIf(!enterpriseZoneId)(
   "places a hold, updates includeSubdomains in place, and removes it on destroy",
   (stack) =>
@@ -110,7 +133,7 @@ test.provider.skipIf(!enterpriseZoneId)(
 
       const hold = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ZoneHold("Hold", {
+          return yield* Cloudflare.Zone.Hold("Hold", {
             zoneId,
           });
         }),
@@ -128,7 +151,7 @@ test.provider.skipIf(!enterpriseZoneId)(
       // Update in place — extend the hold to subdomains via patchHold.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ZoneHold("Hold", {
+          return yield* Cloudflare.Zone.Hold("Hold", {
             zoneId,
             includeSubdomains: true,
           });

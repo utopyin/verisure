@@ -2,6 +2,7 @@ import { adopt, OwnedBySomeoneElse } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as healthchecks from "@distilled.cloud/cloudflare/healthchecks";
 import { expect } from "@effect/vitest";
@@ -28,6 +29,7 @@ const NAME_UPDATE = "alchemy-healthcheck-update";
 const NAME_UPDATE_V2 = "alchemy-healthcheck-update-v2";
 const NAME_TYPE = "alchemy-healthcheck-type";
 const NAME_ADOPT = "alchemy-healthcheck-adopt";
+const NAME_LIST = "alchemy-healthcheck-list";
 
 const resolveZoneId = Effect.gen(function* () {
   const { accountId } = yield* yield* CloudflareEnvironment;
@@ -112,7 +114,7 @@ test.provider(
       yield* stack.destroy();
 
       const check = yield* stack.deploy(
-        Cloudflare.Healthcheck("DefaultCheck", {
+        Cloudflare.Healthcheck.Healthcheck("DefaultCheck", {
           zoneId,
           address: "www.cloudflare.com",
         }),
@@ -156,7 +158,7 @@ test.provider(
       yield* purgeByName(zoneId, NAME_UPDATE_V2);
 
       const initial = yield* stack.deploy(
-        Cloudflare.Healthcheck("UpdateCheck", {
+        Cloudflare.Healthcheck.Healthcheck("UpdateCheck", {
           zoneId,
           name: NAME_UPDATE,
           address: "www.cloudflare.com",
@@ -172,7 +174,7 @@ test.provider(
       expect(initial.suspended).toEqual(false);
 
       const updated = yield* stack.deploy(
-        Cloudflare.Healthcheck("UpdateCheck", {
+        Cloudflare.Healthcheck.Healthcheck("UpdateCheck", {
           zoneId,
           name: NAME_UPDATE_V2,
           address: "www.cloudflare.com",
@@ -199,7 +201,7 @@ test.provider(
 
       // Redeploying identical props is a no-op (still the same check).
       const noop = yield* stack.deploy(
-        Cloudflare.Healthcheck("UpdateCheck", {
+        Cloudflare.Healthcheck.Healthcheck("UpdateCheck", {
           zoneId,
           name: NAME_UPDATE_V2,
           address: "www.cloudflare.com",
@@ -228,7 +230,7 @@ test.provider(
       yield* purgeByName(zoneId, NAME_TYPE);
 
       const initial = yield* stack.deploy(
-        Cloudflare.Healthcheck("TypeCheck", {
+        Cloudflare.Healthcheck.Healthcheck("TypeCheck", {
           zoneId,
           name: NAME_TYPE,
           address: "www.cloudflare.com",
@@ -239,7 +241,7 @@ test.provider(
       expect(initial.type).toEqual("HTTP");
 
       const switched = yield* stack.deploy(
-        Cloudflare.Healthcheck("TypeCheck", {
+        Cloudflare.Healthcheck.Healthcheck("TypeCheck", {
           zoneId,
           name: NAME_TYPE,
           address: "www.cloudflare.com",
@@ -308,7 +310,7 @@ test.provider(
       // engine cannot prove we created it and refuses to take it over.
       const error = yield* stack
         .deploy(
-          Cloudflare.Healthcheck("AdoptedCheck", {
+          Cloudflare.Healthcheck.Healthcheck("AdoptedCheck", {
             zoneId,
             name: NAME_ADOPT,
             address: "www.cloudflare.com",
@@ -325,7 +327,7 @@ test.provider(
       // (same physical id) and converges it to the desired props.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.Healthcheck("AdoptedCheck", {
+          return yield* Cloudflare.Healthcheck.Healthcheck("AdoptedCheck", {
             zoneId,
             name: NAME_ADOPT,
             address: "www.cloudflare.com",
@@ -344,6 +346,46 @@ test.provider(
 
       const gone = yield* findByName(zoneId, NAME_ADOPT);
       expect(gone).toBeUndefined();
+    }).pipe(logLevel),
+);
+
+test.provider(
+  "list enumerates the deployed health check across zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      yield* stack.destroy();
+      yield* purgeByName(zoneId, NAME_LIST);
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.Healthcheck.Healthcheck("ListCheck", {
+          zoneId,
+          name: NAME_LIST,
+          address: "www.cloudflare.com",
+        }),
+      );
+
+      // Resolve the provider with the typed helper so list()'s element type
+      // is exactly the resource's Attributes (no `any`).
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Healthcheck.Healthcheck,
+      );
+      const all = yield* provider.list();
+
+      // The exhaustively-paginated, all-zones result must contain the check we
+      // just deployed in the standing test zone.
+      expect(all.some((h) => h.healthcheckId === deployed.healthcheckId)).toBe(
+        true,
+      );
+      const found = all.find((h) => h.healthcheckId === deployed.healthcheckId);
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.name).toEqual(NAME_LIST);
+      expect(found?.address).toEqual("www.cloudflare.com");
+
+      yield* stack.destroy();
+
+      yield* expectGone(zoneId, deployed.healthcheckId);
     }).pipe(logLevel),
 );
 

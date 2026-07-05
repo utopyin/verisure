@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as customNameservers from "@distilled.cloud/cloudflare/custom-nameservers";
 import { expect } from "@effect/vitest";
@@ -76,6 +77,53 @@ test.provider(
     }).pipe(logLevel),
 );
 
+// Canonical `list()` test (account collection). On the unentitled testing
+// account the collection endpoint rejects with `CustomNameserversNotEnabled`,
+// which `list()` maps to an empty collection — so the read-only assertion is
+// "list returns a well-typed array" (here, `[]`). An entitled account also
+// runs the deploy+presence variant below.
+test.provider("list enumerates account custom nameservers", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.CustomNameserver.CustomNameserver,
+    );
+    const all = yield* provider.list();
+
+    // Always a well-typed array; `[]` on unentitled accounts.
+    expect(Array.isArray(all)).toBe(true);
+    if (!entitled) {
+      expect(all).toEqual([]);
+    }
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+test.provider.skipIf(!entitled)(
+  "list includes a deployed custom nameserver",
+  (stack) =>
+    Effect.gen(function* () {
+      const nsName = `alchemy-ns-list.${zoneName}`;
+
+      yield* stack.destroy();
+
+      const ns = yield* stack.deploy(
+        Cloudflare.CustomNameserver.CustomNameserver("NsList", { nsName }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.CustomNameserver.CustomNameserver,
+      );
+      const all = yield* provider.list();
+      expect(all.some((x) => x.nsName === ns.nsName)).toBe(true);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!entitled)(
   "create, replace on nsSet change, and destroy a custom nameserver",
   (stack) =>
@@ -87,7 +135,7 @@ test.provider.skipIf(!entitled)(
 
       // Create on the default set.
       const ns = yield* stack.deploy(
-        Cloudflare.CustomNameserver("Ns", { nsName }),
+        Cloudflare.CustomNameserver.CustomNameserver("Ns", { nsName }),
       );
       expect(ns.nsName).toEqual(nsName);
       expect(ns.accountId).toEqual(accountId);
@@ -101,14 +149,17 @@ test.provider.skipIf(!entitled)(
       // Redeploying identical props is a no-op (reconcile observes the
       // existing nameserver and converges without an API write).
       const noop = yield* stack.deploy(
-        Cloudflare.CustomNameserver("Ns", { nsName }),
+        Cloudflare.CustomNameserver.CustomNameserver("Ns", { nsName }),
       );
       expect(noop.nsName).toEqual(nsName);
       expect(noop.zoneTag).toEqual(ns.zoneTag);
 
       // nsSet is immutable — changing it must replace the nameserver.
       const replaced = yield* stack.deploy(
-        Cloudflare.CustomNameserver("Ns", { nsName, nsSet: 2 }),
+        Cloudflare.CustomNameserver.CustomNameserver("Ns", {
+          nsName,
+          nsSet: 2,
+        }),
       );
       expect(replaced.nsName).toEqual(nsName);
       expect(replaced.nsSet).toEqual(2);

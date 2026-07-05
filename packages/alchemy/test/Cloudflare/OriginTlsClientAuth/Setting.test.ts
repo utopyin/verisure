@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as originTls from "@distilled.cloud/cloudflare/origin-tls-client-auth";
 import { expect } from "@effect/vitest";
@@ -71,7 +72,7 @@ describe.sequential("Setting", () => {
         yield* setBaseline(zoneId, false);
 
         const setting = yield* stack.deploy(
-          Cloudflare.OriginTlsClientAuthSetting("Aop", {
+          Cloudflare.OriginTlsClientAuth.Setting("Aop", {
             zoneId,
             enabled: true,
           }),
@@ -101,7 +102,7 @@ describe.sequential("Setting", () => {
       yield* setBaseline(zoneId, false);
 
       const enabled = yield* stack.deploy(
-        Cloudflare.OriginTlsClientAuthSetting("AopUpdate", {
+        Cloudflare.OriginTlsClientAuth.Setting("AopUpdate", {
           zoneId,
           enabled: true,
         }),
@@ -111,7 +112,7 @@ describe.sequential("Setting", () => {
 
       // In-place update — the singleton is never replaced.
       const disabled = yield* stack.deploy(
-        Cloudflare.OriginTlsClientAuthSetting("AopUpdate", {
+        Cloudflare.OriginTlsClientAuth.Setting("AopUpdate", {
           zoneId,
           enabled: false,
         }),
@@ -127,6 +128,36 @@ describe.sequential("Setting", () => {
 
       const restored = yield* getSetting(zoneId);
       expect(restored.enabled).toEqual(false);
+    }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+  // API for this per-zone setting, so `list()` enumerates every zone via
+  // `listAllZones` and reads the singleton in each. Assert the result is
+  // non-empty and contains the standing test zone.
+  test.provider("list enumerates the setting across all zones", (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.OriginTlsClientAuth.Setting,
+      );
+      // Ride out fresh-token 403 blips on the account-wide enumeration, like
+      // every other out-of-band call in this suite.
+      const all = yield* provider.list().pipe(
+        Effect.retry({
+          while: (e) => e._tag === "Forbidden",
+          schedule: forbiddenRetrySchedule,
+          times: 8,
+        }),
+      );
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+      // `stack` is unused here (the singleton always exists on every zone),
+      // but keep the destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
     }).pipe(logLevel),
   );
 });

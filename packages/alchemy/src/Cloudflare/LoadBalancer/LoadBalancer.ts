@@ -8,15 +8,17 @@ import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const LoadBalancerTypeId = "Cloudflare.LoadBalancer" as const;
-type LoadBalancerTypeId = typeof LoadBalancerTypeId;
+const TypeId = "Cloudflare.LoadBalancer.LoadBalancer" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Steering policy for a Load Balancer.
  */
-export type LoadBalancerSteeringPolicy =
+export type SteeringPolicy =
   | "off"
   | "geo"
   | "random"
@@ -29,16 +31,12 @@ export type LoadBalancerSteeringPolicy =
 /**
  * Session affinity mode for a Load Balancer.
  */
-export type LoadBalancerSessionAffinity =
-  | "none"
-  | "cookie"
-  | "ip_cookie"
-  | "header";
+export type SessionAffinity = "none" | "cookie" | "ip_cookie" | "header";
 
 /**
  * Session affinity attributes for a Load Balancer.
  */
-export interface LoadBalancerSessionAffinityAttributes {
+export interface SessionAffinityAttributes {
   /** Seconds to drain an origin of affine sessions before removal. */
   drainDuration?: number;
   /** Headers to base header-mode session affinity on. */
@@ -56,14 +54,14 @@ export interface LoadBalancerSessionAffinityAttributes {
 /**
  * Location strategy for non-proxied (DNS-steered) Load Balancers.
  */
-export interface LoadBalancerLocationStrategy {
+export interface LocationStrategy {
   /** Resolution mode used to determine the client's location. */
   mode?: "pop" | "resolver_ip";
   /** When to prefer the EDNS Client Subnet over the resolver IP. */
   preferEcs?: "always" | "never" | "proximity" | "geo";
 }
 
-export interface LoadBalancerProps {
+export interface Props {
   /**
    * Zone the load balancer lives in. Stable — changing the zone triggers
    * replacement.
@@ -105,12 +103,12 @@ export interface LoadBalancerProps {
    * Steering policy for this load balancer.
    * @default ""
    */
-  steeringPolicy?: LoadBalancerSteeringPolicy;
+  steeringPolicy?: SteeringPolicy;
   /**
    * Type of session affinity to use.
    * @default "none"
    */
-  sessionAffinity?: LoadBalancerSessionAffinity;
+  sessionAffinity?: SessionAffinity;
   /**
    * Time, in seconds, until a client's session expires after being
    * created.
@@ -120,7 +118,7 @@ export interface LoadBalancerProps {
   /**
    * Attributes configuring session affinity behavior.
    */
-  sessionAffinityAttributes?: LoadBalancerSessionAffinityAttributes;
+  sessionAffinityAttributes?: SessionAffinityAttributes;
   /**
    * Routing modifications in response to dynamic conditions (e.g.
    * zero-downtime failover between health probes).
@@ -129,7 +127,7 @@ export interface LoadBalancerProps {
   /**
    * Location-based steering behavior for non-proxied requests.
    */
-  locationStrategy?: LoadBalancerLocationStrategy;
+  locationStrategy?: LocationStrategy;
   /**
    * Pool weights for `random` / `least_outstanding_requests` /
    * `least_connections` steering.
@@ -155,7 +153,7 @@ export interface LoadBalancerProps {
   popPools?: Record<string, ReadonlyArray<string>>;
 }
 
-export interface LoadBalancerAttributes {
+export interface Attributes {
   /** Cloudflare-assigned load balancer identifier. */
   loadBalancerId: string;
   /** Zone that owns the load balancer. */
@@ -179,26 +177,28 @@ export interface LoadBalancerAttributes {
 }
 
 export type LoadBalancer = Resource<
-  LoadBalancerTypeId,
-  LoadBalancerProps,
-  LoadBalancerAttributes,
+  TypeId,
+  Props,
+  Attributes,
   never,
   Providers
 >;
 
 /**
  * A Cloudflare Load Balancer — a zone-level DNS hostname that distributes
- * traffic across {@link LoadBalancerPool}s with health-based failover,
+ * traffic across {@link Pool}s with health-based failover,
  * geo/latency steering, and session affinity.
  *
  * Requires the Load Balancing subscription to be enabled for the zone;
  * without it, creation fails with the typed `LoadBalancingNotEnabledForZone`
  * error.
- *
+ * @resource
+ * @product Load Balancers
+ * @category Performance & Reliability
  * @section Creating a Load Balancer
  * @example DNS-only (unproxied) load balancer
  * ```typescript
- * const lb = yield* Cloudflare.LoadBalancer("ApiLb", {
+ * const lb = yield* Cloudflare.LoadBalancer.LoadBalancer("ApiLb", {
  *   zoneId: zone.zoneId,
  *   name: "api.example.com",
  *   defaultPools: [pool.poolId],
@@ -210,7 +210,7 @@ export type LoadBalancer = Resource<
  *
  * @example Proxied load balancer with steering and affinity
  * ```typescript
- * const lb = yield* Cloudflare.LoadBalancer("AppLb", {
+ * const lb = yield* Cloudflare.LoadBalancer.LoadBalancer("AppLb", {
  *   zoneId: zone.zoneId,
  *   name: "app.example.com",
  *   defaultPools: [primary.poolId, secondary.poolId],
@@ -224,7 +224,7 @@ export type LoadBalancer = Resource<
  * @section Geo steering
  * @example Region pools
  * ```typescript
- * yield* Cloudflare.LoadBalancer("GeoLb", {
+ * yield* Cloudflare.LoadBalancer.LoadBalancer("GeoLb", {
  *   zoneId: zone.zoneId,
  *   name: "geo.example.com",
  *   defaultPools: [us.poolId],
@@ -239,13 +239,13 @@ export type LoadBalancer = Resource<
  *
  * @see https://developers.cloudflare.com/load-balancing/
  */
-export const LoadBalancer = Resource<LoadBalancer>(LoadBalancerTypeId);
+export const LoadBalancer = Resource<LoadBalancer>(TypeId);
 
 /**
  * Returns true if the given value is a LoadBalancer resource.
  */
 export const isLoadBalancer = (value: unknown): value is LoadBalancer =>
-  Predicate.hasProperty(value, "Type") && value.Type === LoadBalancerTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const LoadBalancerProvider = () =>
   Provider.succeed(LoadBalancer, {
@@ -328,12 +328,36 @@ export const LoadBalancerProvider = () =>
         })
         .pipe(Effect.catchTag("LoadBalancerNotFound", () => Effect.void));
     }),
+
+    // Load balancers are zone-scoped; enumerate every zone in the account and
+    // exhaustively paginate each zone's load balancers, hydrating each into the
+    // same Attributes shape `read` returns. Zones without the Load Balancing
+    // subscription reject the route (Forbidden) and are skipped.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          loadBalancers.listLoadBalancers.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((lb) => toAttributes(lb, zone.id)),
+              ),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
   });
 
 type ObservedLoadBalancer =
   | loadBalancers.GetLoadBalancerResponse
   | loadBalancers.CreateLoadBalancerResponse
-  | loadBalancers.UpdateLoadBalancerResponse;
+  | loadBalancers.UpdateLoadBalancerResponse
+  | loadBalancers.ListLoadBalancersResponse["result"][number];
 
 /**
  * Read a load balancer by id, mapping "gone" (`LoadBalancerNotFound`,
@@ -365,7 +389,7 @@ const resolvePools = (
         Object.entries(pools).map(([k, v]) => [k, v as string[]]),
       );
 
-const buildBody = (news: LoadBalancerProps) => ({
+const buildBody = (news: Props) => ({
   name: news.name,
   defaultPools: news.defaultPools as string[],
   fallbackPool: news.fallbackPool as string,
@@ -436,7 +460,7 @@ const loadBalancerDirty = (
 const toAttributes = (
   lb: ObservedLoadBalancer,
   zoneId: string,
-): LoadBalancerAttributes => ({
+): Attributes => ({
   loadBalancerId: lb.id ?? "",
   zoneId,
   name: lb.name ?? "",

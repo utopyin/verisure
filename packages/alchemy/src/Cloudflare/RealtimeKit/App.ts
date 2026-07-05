@@ -9,10 +9,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const RealtimeKitAppTypeId = "Cloudflare.RealtimeKit.App" as const;
-type RealtimeKitAppTypeId = typeof RealtimeKitAppTypeId;
+const TypeId = "Cloudflare.RealtimeKit.App" as const;
+type TypeId = typeof TypeId;
 
-export type RealtimeKitAppProps = {
+export type AppProps = {
   /**
    * Human readable app name. App names are not unique on Cloudflare's side.
    * If omitted, a unique name is generated from the app, stage, and logical
@@ -27,7 +27,7 @@ export type RealtimeKitAppProps = {
   name?: string;
 };
 
-export type RealtimeKitAppAttributes = {
+export type AppAttributes = {
   /**
    * Server-generated app identifier (also called the organization id).
    * Stable for the lifetime of the app.
@@ -47,13 +47,7 @@ export type RealtimeKitAppAttributes = {
   createdAt: string;
 };
 
-export type RealtimeKitApp = Resource<
-  RealtimeKitAppTypeId,
-  RealtimeKitAppProps,
-  RealtimeKitAppAttributes,
-  never,
-  Providers
->;
+export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
 
 /**
  * A Cloudflare RealtimeKit app — the organizational container for RealtimeKit
@@ -65,20 +59,22 @@ export type RealtimeKitApp = Resource<
  * (with a warning) — the app itself remains on the account until Cloudflare
  * ships a delete API. Because of this, an existing app with the same name is
  * adopted rather than duplicated.
- *
+ * @resource
+ * @product Realtime Kit
+ * @category Media
  * @section Creating an App
  * @example Basic app
  * ```typescript
- * const app = yield* Cloudflare.RealtimeKitApp("Meetings", {
+ * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {
  *   name: "my-meetings-app",
  * });
  * ```
  *
  * @example Child resources
  * ```typescript
- * const app = yield* Cloudflare.RealtimeKitApp("Meetings", {});
+ * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {});
  *
- * const webhook = yield* Cloudflare.RealtimeKitWebhook("Events", {
+ * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Events", {
  *   appId: app.appId,
  *   url: "https://example.com/webhook",
  *   events: ["meeting.started", "meeting.ended"],
@@ -87,16 +83,16 @@ export type RealtimeKitApp = Resource<
  *
  * @see https://developers.cloudflare.com/realtime/realtimekit/
  */
-export const RealtimeKitApp = Resource<RealtimeKitApp>(RealtimeKitAppTypeId);
+export const App = Resource<App>(TypeId);
 
 /**
- * Returns true if the given value is a RealtimeKitApp resource.
+ * Returns true if the given value is a App resource.
  */
-export const isRealtimeKitApp = (value: unknown): value is RealtimeKitApp =>
-  Predicate.hasProperty(value, "Type") && value.Type === RealtimeKitAppTypeId;
+export const isApp = (value: unknown): value is App =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const RealtimeKitAppProvider = () =>
-  Provider.succeed(RealtimeKitApp, {
+export const AppProvider = () =>
+  Provider.succeed(App, {
     stables: ["appId", "accountId", "name", "createdAt"],
     diff: Effect.fn(function* ({ olds, news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
@@ -155,7 +151,7 @@ export const RealtimeKitAppProvider = () =>
       // is the name; fail loudly instead of silently ignoring drift.
       if ((observed.name ?? "") !== name) {
         return yield* Effect.fail(
-          new RealtimeKitAppRenameNotSupported({
+          new AppRenameNotSupported({
             appId: observed.id ?? "",
             currentName: observed.name ?? "",
             desiredName: name,
@@ -165,6 +161,10 @@ export const RealtimeKitAppProvider = () =>
       }
       return toAttributes(observed, observed.accountId);
     }),
+    // No delete API exists, so `delete` cannot actually remove the app — it
+    // would re-appear on every `nuke` scan. Skip it in account-wide teardown
+    // instead of falsely reporting it deleted.
+    nuke: { skip: true },
     delete: Effect.fn(function* ({ output }) {
       // RealtimeKit ships no delete API. Forget the app from state and warn —
       // the app remains on the account until Cloudflare adds deletion.
@@ -172,6 +172,54 @@ export const RealtimeKitAppProvider = () =>
         `Cloudflare RealtimeKit has no delete API — app "${output.name}" (${output.appId}) was removed from state but still exists on account ${output.accountId}.`,
       );
     }),
+    // Account-scoped collection: enumerate every RealtimeKit app on the
+    // account, exhaustively paginated, and hydrate each into the exact `read`
+    // Attributes shape. Unentitled accounts reject the list with the typed
+    // `Forbidden` (403) which propagates — the suite gates the live assertion
+    // behind an entitlement probe.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const apps = yield* listAllApps(accountId);
+      return apps.map((app) => toAttributes({ ...app, accountId }, accountId));
+    }),
+  });
+
+const LIST_PER_PAGE = 100;
+
+/**
+ * Exhaustively enumerate every RealtimeKit app in the account. The list op is
+ * not generated as a paginated method, so fetch the first page, derive the
+ * page count from `paging.totalCount`, then fan out the remaining pages with
+ * bounded concurrency.
+ */
+const listAllApps = (accountId: string) =>
+  Effect.gen(function* () {
+    const first = yield* realtimeKit.getApp({
+      accountId,
+      pageNo: 1,
+      perPage: LIST_PER_PAGE,
+    });
+    const apps = (first.data ?? []).filter(
+      (a): a is NonNullable<typeof a> => a !== null,
+    );
+    const total = first.paging?.totalCount ?? apps.length;
+    const pages = Math.ceil(total / LIST_PER_PAGE);
+    if (pages <= 1) return apps;
+    const rest = yield* Effect.forEach(
+      Array.from({ length: pages - 1 }, (_, i) => i + 2),
+      (pageNo) =>
+        realtimeKit
+          .getApp({ accountId, pageNo, perPage: LIST_PER_PAGE })
+          .pipe(
+            Effect.map((res) =>
+              (res.data ?? []).filter(
+                (a): a is NonNullable<typeof a> => a !== null,
+              ),
+            ),
+          ),
+      { concurrency: 10 },
+    );
+    return [...apps, ...rest.flat()];
   });
 
 /**
@@ -179,8 +227,8 @@ export const RealtimeKitAppProvider = () =>
  * has neither an update endpoint (to rename in place) nor a delete endpoint
  * (to model the change as a replacement).
  */
-export class RealtimeKitAppRenameNotSupported extends Data.TaggedError(
-  "RealtimeKitAppRenameNotSupported",
+export class AppRenameNotSupported extends Data.TaggedError(
+  "AppRenameNotSupported",
 )<{
   readonly appId: string;
   readonly currentName: string;
@@ -229,10 +277,7 @@ const createAppName = (id: string, name: string | undefined) =>
     return name ?? (yield* createPhysicalName({ id, lowercase: true }));
   });
 
-const toAttributes = (
-  app: ObservedApp,
-  accountId: string,
-): RealtimeKitAppAttributes => ({
+const toAttributes = (app: ObservedApp, accountId: string): AppAttributes => ({
   appId: app.id ?? "",
   accountId,
   name: app.name ?? "",

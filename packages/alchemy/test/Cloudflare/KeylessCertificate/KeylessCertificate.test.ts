@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as keylessCertificates from "@distilled.cloud/cloudflare/keyless-certificates";
 import { expect } from "@effect/vitest";
@@ -146,6 +147,80 @@ test.provider(
     }).pipe(logLevel),
 );
 
+// `list()` enumerates every zone in the account and lists its Keyless SSL
+// configurations (zone-scoped collection, pattern (c)). This read-only
+// assertion runs on every plan: the testing account has no Keyless SSL
+// configurations (Enterprise-only), so the exhaustively-paginated result is a
+// well-typed (possibly empty) array whose elements match `read`'s Attributes.
+test.provider("list enumerates keyless certificates across zones", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.KeylessCertificate.KeylessCertificate,
+    );
+    const all = yield* provider.list().pipe(
+      Effect.retry({
+        while: (e) => e._tag === "Forbidden",
+        schedule: forbiddenRetrySchedule,
+        times: 8,
+      }),
+    );
+
+    expect(Array.isArray(all)).toBe(true);
+    for (const item of all) {
+      expect(typeof item.keylessCertificateId).toBe("string");
+      expect(typeof item.zoneId).toBe("string");
+      expect(item.status).not.toEqual("deleted");
+    }
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+// On an entitled Enterprise zone, the deployed configuration must appear in the
+// exhaustively-paginated `list()` result. Gated behind an Enterprise zone id
+// (creation otherwise fails with the typed `KeylessSslNotAvailable`, code 1067).
+test.provider.skipIf(!enterpriseZoneId)(
+  "list includes a deployed keyless certificate",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = enterpriseZoneId!;
+
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.KeylessCertificate.KeylessCertificate("ListKeyless", {
+          zoneId,
+          certificate: CERT_1,
+          host: `keyless.${zoneName}`,
+          port: 24008,
+          name: "alchemy-keyless-list",
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.KeylessCertificate.KeylessCertificate,
+      );
+      const all = yield* provider.list().pipe(
+        Effect.retry({
+          while: (e) => e._tag === "Forbidden",
+          schedule: forbiddenRetrySchedule,
+          times: 8,
+        }),
+      );
+
+      expect(
+        all.some(
+          (k) => k.keylessCertificateId === deployed.keylessCertificateId,
+        ),
+      ).toBe(true);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
 test.provider.skipIf(!enterpriseZoneId)(
   "creates, updates in place, replaces on certificate change, and destroys",
   (stack) =>
@@ -156,7 +231,7 @@ test.provider.skipIf(!enterpriseZoneId)(
 
       // Create with an explicit name and conventional port.
       const created = yield* stack.deploy(
-        Cloudflare.KeylessCertificate("Keyless", {
+        Cloudflare.KeylessCertificate.KeylessCertificate("Keyless", {
           zoneId,
           certificate: CERT_1,
           host: `keyless.${zoneName}`,
@@ -180,7 +255,7 @@ test.provider.skipIf(!enterpriseZoneId)(
 
       // Update mutable props in place — same identifier.
       const updated = yield* stack.deploy(
-        Cloudflare.KeylessCertificate("Keyless", {
+        Cloudflare.KeylessCertificate.KeylessCertificate("Keyless", {
           zoneId,
           certificate: CERT_1,
           host: `keyless2.${zoneName}`,
@@ -208,7 +283,7 @@ test.provider.skipIf(!enterpriseZoneId)(
       // Changing the certificate replaces the configuration (the PATCH API
       // has no certificate field) — a new identifier is assigned.
       const replaced = yield* stack.deploy(
-        Cloudflare.KeylessCertificate("Keyless", {
+        Cloudflare.KeylessCertificate.KeylessCertificate("Keyless", {
           zoneId,
           certificate: CERT_2,
           host: `keyless2.${zoneName}`,

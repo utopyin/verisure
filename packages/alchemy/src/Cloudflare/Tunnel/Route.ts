@@ -9,7 +9,7 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-export type TunnelRouteProps = {
+export type RouteProps = {
   /**
    * UUID of the `cfd_tunnel` this route attaches to.
    *
@@ -48,9 +48,9 @@ export type TunnelRouteProps = {
   adopt?: boolean;
 };
 
-export type TunnelRoute = Resource<
-  "Cloudflare.TunnelRoute",
-  TunnelRouteProps,
+export type Route = Resource<
+  "Cloudflare.Tunnel.Route",
+  RouteProps,
   {
     /**
      * UUID of the route, assigned by Cloudflare.
@@ -90,12 +90,14 @@ export type TunnelRoute = Resource<
  * A Cloudflare Tunnel Route attaches a private CIDR to a `cfd_tunnel` so that
  * WARP clients (and other Zero Trust egress paths) can reach private IPs
  * through the tunnel.
- *
+ * @resource
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a Route
  * @example Basic route
  * ```typescript
- * const tunnel = yield* Cloudflare.Tunnel("MyTunnel");
- * const route = yield* Cloudflare.TunnelRoute("PrivateNet", {
+ * const tunnel = yield* Cloudflare.Tunnel.Tunnel("MyTunnel");
+ * const route = yield* Cloudflare.Tunnel.Route("PrivateNet", {
  *   tunnelId: tunnel.tunnelId,
  *   network: "10.4.0.0/16",
  * });
@@ -103,7 +105,7 @@ export type TunnelRoute = Resource<
  *
  * @example Route with a comment and explicit virtual network
  * ```typescript
- * const route = yield* Cloudflare.TunnelRoute("DcRoute", {
+ * const route = yield* Cloudflare.Tunnel.Route("DcRoute", {
  *   tunnelId: tunnel.tunnelId,
  *   network: "10.50.0.0/16",
  *   comment: "Datacenter A private subnet",
@@ -112,10 +114,10 @@ export type TunnelRoute = Resource<
  * });
  * ```
  */
-export const TunnelRoute = Resource<TunnelRoute>("Cloudflare.TunnelRoute");
+export const Route = Resource<Route>("Cloudflare.Tunnel.Route");
 
-export const TunnelRouteProvider = () =>
-  Provider.succeed(TunnelRoute, {
+export const RouteProvider = () =>
+  Provider.succeed(Route, {
     stables: [
       "routeId",
       "accountId",
@@ -215,7 +217,7 @@ export const TunnelRouteProvider = () =>
 
       if (!observed) {
         return yield* Effect.die(
-          `TunnelRoute create returned no id for network ${network} on tunnel ${tunnelId}`,
+          `Route create returned no id for network ${network} on tunnel ${tunnelId}`,
         );
       }
 
@@ -268,6 +270,36 @@ export const TunnelRouteProvider = () =>
           // teamnet/routes/{id}, so we swallow read-side failure
           // wholesale. A "delete a deleted route" is not an error.
           Effect.catch(() => Effect.succeed(undefined)),
+        );
+    }),
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection: enumerate every Zero Trust network
+      // route in the account, exhaustively paginating. Drop soft-deleted
+      // routes and anything missing an id, then hydrate into the exact
+      // `read` Attributes shape so each element is delete-ready.
+      return yield* zeroTrust.listNetworkRoutes
+        .pages({ accountId, isDeleted: false })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? [])
+                .filter(
+                  (r): r is typeof r & { id: string } =>
+                    r.id != null && !r.deletedAt,
+                )
+                .map((r) => ({
+                  routeId: r.id,
+                  network: normalize(r.network) ?? "",
+                  tunnelId: normalize(r.tunnelId) ?? "",
+                  accountId,
+                  comment: normalize(r.comment),
+                  virtualNetworkId: normalize(r.virtualNetworkId),
+                  createdAt: normalize(r.createdAt),
+                })),
+            ),
+          ),
         );
     }),
     read: Effect.fn(function* ({ olds, output }) {

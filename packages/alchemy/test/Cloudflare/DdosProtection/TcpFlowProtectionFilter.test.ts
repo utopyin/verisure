@@ -1,4 +1,5 @@
 import * as Cloudflare from "@/Cloudflare";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as ddos from "@distilled.cloud/cloudflare/ddos-protection";
 import { expect } from "@effect/vitest";
@@ -35,10 +36,13 @@ test.provider.skipIf(!magicTransit)(
       // Create.
       const filter = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.TcpFlowProtectionFilter("Filter", {
-            expression: "tcp.dstport in {443}",
-            mode: "monitoring",
-          });
+          return yield* Cloudflare.DdosProtection.TcpFlowProtectionFilter(
+            "Filter",
+            {
+              expression: "tcp.dstport in {443}",
+              mode: "monitoring",
+            },
+          );
         }),
       );
       expect(filter.expression).toEqual("tcp.dstport in {443}");
@@ -55,10 +59,13 @@ test.provider.skipIf(!magicTransit)(
       // In-place update — expression and mode are patched, id is stable.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.TcpFlowProtectionFilter("Filter", {
-            expression: "tcp.srcport in {179}",
-            mode: "enabled",
-          });
+          return yield* Cloudflare.DdosProtection.TcpFlowProtectionFilter(
+            "Filter",
+            {
+              expression: "tcp.srcport in {179}",
+              mode: "enabled",
+            },
+          );
         }),
       );
       expect(updated.filterId).toEqual(filter.filterId);
@@ -76,6 +83,55 @@ test.provider.skipIf(!magicTransit)(
         })
         .pipe(Effect.flip);
       expect(error._tag).toEqual("TcpFlowProtectionFilterNotFound");
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Read-only: list() enumerates account-scoped filters. On accounts without
+// the Magic Transit / Advanced TCP Protection entitlement the underlying
+// enumeration API rejects with the typed `AdvancedTcpProtectionNotEntitled`
+// error; list() swallows it and returns a well-typed empty array, so this
+// runs unconditionally and never crashes the engine.
+test.provider("list returns the account's TCP flow protection filters", () =>
+  Effect.gen(function* () {
+    const provider = yield* Provider.findProvider(
+      Cloudflare.DdosProtection.TcpFlowProtectionFilter,
+    );
+    const all = yield* provider.list();
+    expect(Array.isArray(all)).toBe(true);
+    for (const filter of all) {
+      expect(typeof filter.filterId).toBe("string");
+      expect(typeof filter.accountId).toBe("string");
+      expect(typeof filter.expression).toBe("string");
+    }
+  }).pipe(logLevel),
+);
+
+test.provider.skipIf(!magicTransit)(
+  "list enumerates the deployed TCP flow protection filter",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const filter = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.DdosProtection.TcpFlowProtectionFilter(
+            "ListFilter",
+            {
+              expression: "tcp.dstport in {8443}",
+              mode: "monitoring",
+            },
+          );
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.DdosProtection.TcpFlowProtectionFilter,
+      );
+      const all = yield* provider.list();
+      expect(all.some((f) => f.filterId === filter.filterId)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

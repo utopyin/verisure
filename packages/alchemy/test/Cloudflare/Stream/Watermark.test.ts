@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as stream from "@distilled.cloud/cloudflare/stream";
 import { expect } from "@effect/vitest";
@@ -55,7 +56,7 @@ test.provider(
       yield* stack.destroy();
 
       const watermark = yield* stack.deploy(
-        Cloudflare.StreamWatermark("DefaultWatermark", {
+        Cloudflare.Stream.Watermark("DefaultWatermark", {
           url: PNG_URL,
         }),
       );
@@ -87,7 +88,7 @@ test.provider(
       yield* stack.destroy();
 
       const initial = yield* stack.deploy(
-        Cloudflare.StreamWatermark("ReplaceWatermark", {
+        Cloudflare.Stream.Watermark("ReplaceWatermark", {
           name: "alchemy-stream-wm-replace",
           url: PNG_URL,
         }),
@@ -97,7 +98,7 @@ test.provider(
 
       // No update endpoint — changing any prop must replace (new uid).
       const replaced = yield* stack.deploy(
-        Cloudflare.StreamWatermark("ReplaceWatermark", {
+        Cloudflare.Stream.Watermark("ReplaceWatermark", {
           name: "alchemy-stream-wm-replace",
           url: PNG_URL,
           position: "center",
@@ -118,7 +119,7 @@ test.provider(
 
       // Redeploying identical props is a no-op (same uid).
       const noop = yield* stack.deploy(
-        Cloudflare.StreamWatermark("ReplaceWatermark", {
+        Cloudflare.Stream.Watermark("ReplaceWatermark", {
           name: "alchemy-stream-wm-replace",
           url: PNG_URL,
           position: "center",
@@ -130,6 +131,37 @@ test.provider(
       yield* stack.destroy();
 
       yield* expectGone(accountId, replaced.watermarkId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Canonical `list()` test (account collection): deploy a watermark, then
+// enumerate every watermark profile in the account via the provider's
+// `list()` and assert the deployed uid is present in the exhaustively
+// paginated result.
+test.provider(
+  "list enumerates the deployed watermark",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Cloudflare.Stream.Watermark("ListWatermark", {
+          name: "alchemy-stream-wm-list",
+          url: PNG_URL,
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Stream.Watermark,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((w) => w.watermarkId === deployed.watermarkId)).toBe(
+        true,
+      );
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

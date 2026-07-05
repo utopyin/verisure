@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -33,7 +34,7 @@ describe.sequential("Organization", () => {
 
         const org = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.AccessOrganization("Org", {
+            return yield* Cloudflare.Access.Organization("Org", {
               authDomain: AUTH_DOMAIN!,
               name: AUTH_DOMAIN!,
             });
@@ -74,7 +75,7 @@ describe.sequential("Organization", () => {
         // Step 1 — set to true.
         const enabled = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.AccessOrganization("Org", {
+            return yield* Cloudflare.Access.Organization("Org", {
               authDomain: AUTH_DOMAIN!,
               name: originalName,
               allowAuthenticateViaWarp: true,
@@ -90,7 +91,7 @@ describe.sequential("Organization", () => {
         // Step 2 — flip to false.
         const disabled = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.AccessOrganization("Org", {
+            return yield* Cloudflare.Access.Organization("Org", {
               authDomain: AUTH_DOMAIN!,
               name: originalName,
               allowAuthenticateViaWarp: false,
@@ -107,7 +108,7 @@ describe.sequential("Organization", () => {
         // isn't left mutated by the test.
         yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.AccessOrganization("Org", {
+            return yield* Cloudflare.Access.Organization("Org", {
               authDomain: AUTH_DOMAIN!,
               name: originalName,
               allowAuthenticateViaWarp: originalWarp,
@@ -117,5 +118,33 @@ describe.sequential("Organization", () => {
 
         yield* stack.destroy();
       }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (account singleton): there is no enumeration API
+  // for the Access organization, so `list()` reads the single account-wide
+  // org via the same path `read` uses and returns the one-element array (or
+  // `[]` when the account has never enabled Zero Trust). This is read-only —
+  // it does not mutate the singleton — so it runs unconditionally.
+  test.provider("list returns the account Access organization", (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Access.Organization,
+      );
+      const all = yield* provider.list();
+
+      // Singleton: zero (Zero Trust never enabled) or exactly one.
+      expect(all.length).toBeLessThanOrEqual(1);
+      for (const org of all) {
+        expect(org.accountId).toEqual(accountId);
+        expect(typeof org.authDomain).toBe("string");
+        expect(typeof org.name).toBe("string");
+      }
+
+      // `stack` is unused (no resource is deployed), but keep the destroy
+      // bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

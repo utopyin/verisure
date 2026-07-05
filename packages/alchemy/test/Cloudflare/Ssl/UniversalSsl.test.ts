@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as ssl from "@distilled.cloud/cloudflare/ssl";
 import { expect } from "@effect/vitest";
@@ -77,7 +78,7 @@ describe.sequential("UniversalSsl", () => {
 
         const setting = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UniversalSsl("UniversalSsl", {
+            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
               zoneId,
               enabled: false,
             });
@@ -98,6 +99,7 @@ describe.sequential("UniversalSsl", () => {
         const restored = yield* getUniversal(zoneId);
         expect(restored.enabled).toEqual(true);
       }).pipe(logLevel),
+    { timeout: 180_000 },
   );
 
   test.provider(
@@ -111,7 +113,7 @@ describe.sequential("UniversalSsl", () => {
 
         const initial = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UniversalSsl("UniversalSsl", {
+            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
               zoneId,
               enabled: false,
             });
@@ -123,7 +125,7 @@ describe.sequential("UniversalSsl", () => {
 
         const updated = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UniversalSsl("UniversalSsl", {
+            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
               zoneId,
               enabled: true,
             });
@@ -143,6 +145,7 @@ describe.sequential("UniversalSsl", () => {
         const restored = yield* getUniversal(zoneId);
         expect(restored.enabled).toEqual(true);
       }).pipe(logLevel),
+    { timeout: 180_000 },
   );
 
   test.provider(
@@ -158,7 +161,7 @@ describe.sequential("UniversalSsl", () => {
 
         const setting = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UniversalSsl("UniversalSsl", {
+            return yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
               zoneId,
               enabled: true,
             });
@@ -179,5 +182,28 @@ describe.sequential("UniversalSsl", () => {
         // Leave the zone in its default state for other suites.
         yield* setBaseline(zoneId, true);
       }).pipe(logLevel),
+    { timeout: 180_000 },
+  );
+
+  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+  // API for this per-zone setting, so `list()` enumerates every zone via
+  // `listAllZones` and reads the singleton in each. Assert the result is
+  // non-empty and contains the standing test zone.
+  test.provider("list enumerates the setting across all zones", (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Ssl.UniversalSsl,
+      );
+      const all = yield* provider.list();
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+      // `stack` is unused here (the singleton always exists on every zone),
+      // but keep the destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

@@ -1,6 +1,7 @@
 import * as pages from "@distilled.cloud/cloudflare/pages";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,15 +9,15 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const PagesDomainTypeId = "Cloudflare.Pages.Domain" as const;
-type PagesDomainTypeId = typeof PagesDomainTypeId;
+const TypeId = "Cloudflare.Pages.Domain" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Lifecycle status of a Pages custom domain. Newly attached domains start
  * `initializing`/`pending` and become `active` once DNS validation and
  * certificate issuance complete.
  */
-export type PagesDomainStatus =
+export type DomainStatus =
   | "initializing"
   | "pending"
   | "active"
@@ -27,7 +28,7 @@ export type PagesDomainStatus =
   // stale types.
   | (string & {});
 
-export interface PagesDomainProps {
+export interface DomainProps {
   /**
    * Name of the Pages project the domain is attached to (e.g.
    * `project.name`). The attachment cannot be moved — changing the project
@@ -43,7 +44,7 @@ export interface PagesDomainProps {
   name: string;
 }
 
-export interface PagesDomainAttributes {
+export interface DomainAttributes {
   /**
    * Cloudflare-assigned UUID of the domain attachment.
    */
@@ -65,7 +66,7 @@ export interface PagesDomainAttributes {
    * `pending` until DNS validation completes (the zone needs a CNAME from
    * the domain to the project's `*.pages.dev` subdomain).
    */
-  status: PagesDomainStatus;
+  status: DomainStatus;
   /**
    * Certificate authority issuing the domain's TLS certificate.
    */
@@ -93,10 +94,10 @@ export interface PagesDomainAttributes {
   createdOn: string;
 }
 
-export type PagesDomain = Resource<
-  PagesDomainTypeId,
-  PagesDomainProps,
-  PagesDomainAttributes,
+export type Domain = Resource<
+  TypeId,
+  DomainProps,
+  DomainAttributes,
   never,
   Providers
 >;
@@ -108,23 +109,25 @@ export type PagesDomain = Resource<
  * resolve to the project (typically via a CNAME record pointing at the
  * project's `*.pages.dev` subdomain) before its status becomes `active`.
  * The resource does not wait for activation — compose it with
- * `Cloudflare.DnsRecord` to create the CNAME, and certificate issuance
+ * `Cloudflare.DNS.Record` to create the CNAME, and certificate issuance
  * completes asynchronously.
  *
  * Both properties are the attachment's identity, so every change triggers a
  * replacement (detach + attach).
- *
+ * @resource
+ * @product Pages
+ * @category Workers & Compute
  * @section Attaching a Domain
  * @example Custom domain with its CNAME record
  * ```typescript
- * const project = yield* Cloudflare.PagesProject("site", {});
+ * const project = yield* Cloudflare.Pages.Project("site", {});
  *
- * const domain = yield* Cloudflare.PagesDomain("site-domain", {
+ * const domain = yield* Cloudflare.Pages.Domain("site-domain", {
  *   projectName: project.name,
  *   name: "www.example.com",
  * });
  *
- * yield* Cloudflare.DnsRecord("site-cname", {
+ * yield* Cloudflare.DNS.Record("site-cname", {
  *   zoneId: zone.zoneId,
  *   name: "www.example.com",
  *   type: "CNAME",
@@ -135,16 +138,16 @@ export type PagesDomain = Resource<
  *
  * @see https://developers.cloudflare.com/pages/configuration/custom-domains/
  */
-export const PagesDomain = Resource<PagesDomain>(PagesDomainTypeId);
+export const Domain = Resource<Domain>(TypeId);
 
 /**
- * Returns true if the given value is a PagesDomain resource.
+ * Returns true if the given value is a Domain resource.
  */
-export const isPagesDomain = (value: unknown): value is PagesDomain =>
-  Predicate.hasProperty(value, "Type") && value.Type === PagesDomainTypeId;
+export const isDomain = (value: unknown): value is Domain =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const PagesDomainProvider = () =>
-  Provider.succeed(PagesDomain, {
+export const DomainProvider = () =>
+  Provider.succeed(Domain, {
     stables: [
       "domainId",
       "accountId",
@@ -155,8 +158,8 @@ export const PagesDomainProvider = () =>
     ],
     diff: Effect.fn(function* ({ olds, news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
-      const o = olds as PagesDomainProps | undefined;
-      const n = news as PagesDomainProps;
+      const o = olds as DomainProps | undefined;
+      const n = news as DomainProps;
       if ((output?.accountId ?? accountId) !== accountId) {
         return { action: "replace" } as const;
       }
@@ -179,6 +182,45 @@ export const PagesDomainProvider = () =>
       }
       return undefined;
     }),
+    // Parent fan-out: domains are sub-resources of a Pages project, and
+    // there is no account-wide domain enumeration API. Enumerate every
+    // Pages project (account-scoped, paginated), then list each project's
+    // domains with bounded concurrency and flatten into the `read`
+    // Attributes shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const projectNames = yield* pages.listProjects.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).map((project) => project.name),
+          ),
+        ),
+      );
+
+      const perProject = yield* Effect.forEach(
+        projectNames,
+        (projectName) =>
+          pages.listProjectDomains.pages({ accountId, projectName }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((domain) =>
+                  toAttributes(domain, accountId, projectName),
+                ),
+              ),
+            ),
+            // The project can vanish between enumeration and the
+            // per-project list — skip it rather than failing the whole
+            // enumeration.
+            Effect.catchTag("ProjectNotFound", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+
+      return perProject.flat();
+    }),
     read: Effect.fn(function* ({ output, olds }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       const acct = output?.accountId ?? accountId;
@@ -196,7 +238,7 @@ export const PagesDomainProvider = () =>
       // gate takeover behind the adopt policy.
       return output?.domainId ? attrs : Unowned(attrs);
     }),
-    reconcile: Effect.fn(function* ({ news, output }) {
+    reconcile: Effect.fn(function* ({ news }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       // Inputs have been resolved to concrete strings by Plan.
       const projectName = news.projectName as string;
@@ -287,16 +329,20 @@ const toAttributes = (
   domain: ObservedDomain,
   accountId: string,
   projectName: string,
-): PagesDomainAttributes => ({
+): DomainAttributes => ({
   domainId: domain.domainId,
   accountId,
   projectName,
   name: domain.name,
   status: domain.status,
-  certificateAuthority: domain.certificateAuthority,
-  validationStatus: domain.validationData.status,
-  validationMethod: domain.validationData.method,
-  verificationStatus: domain.verificationData.status,
-  zoneTag: domain.zoneTag,
+  // While a domain is still `initializing`/`pending`, Cloudflare omits the
+  // certificate authority, validation/verification blocks and (for an
+  // off-account zone) the zone tag entirely — coalesce to "" so the
+  // Attributes shape stays stable across the async activation lifecycle.
+  certificateAuthority: domain.certificateAuthority ?? "",
+  validationStatus: domain.validationData?.status ?? "",
+  validationMethod: domain.validationData?.method ?? "",
+  verificationStatus: domain.verificationData?.status ?? "",
+  zoneTag: domain.zoneTag ?? "",
   createdOn: domain.createdOn,
 });

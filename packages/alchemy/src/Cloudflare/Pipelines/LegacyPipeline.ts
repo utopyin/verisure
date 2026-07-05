@@ -1,7 +1,9 @@
+import { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as pipelines from "@distilled.cloud/cloudflare/pipelines";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -11,8 +13,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const LegacyPipelineTypeId = "Cloudflare.Pipelines.LegacyPipeline" as const;
-type LegacyPipelineTypeId = typeof LegacyPipelineTypeId;
+const TypeId = "Cloudflare.Pipelines.LegacyPipeline" as const;
+type TypeId = typeof TypeId;
 
 /**
  * HTTP ingest source — events are POSTed as JSON to the pipeline's
@@ -142,7 +144,7 @@ export interface LegacyPipelineAttributes {
 }
 
 export type LegacyPipeline = Resource<
-  LegacyPipelineTypeId,
+  TypeId,
   LegacyPipelineProps,
   LegacyPipelineAttributes,
   never,
@@ -156,7 +158,7 @@ export type LegacyPipeline = Resource<
  * :::caution
  * This is the **deprecated, legacy** Pipelines API. Cloudflare has
  * superseded it with the SQL-based product — prefer
- * {@link PipelineStream}, {@link PipelineSink}, and {@link Pipeline}
+ * {@link Stream}, {@link Sink}, and {@link Pipeline}
  * for new infrastructure. This resource exists only to manage
  * pre-existing legacy pipelines.
  * :::
@@ -164,16 +166,18 @@ export type LegacyPipeline = Resource<
  * A legacy pipeline accepts JSON events over HTTP (and/or a Worker
  * `pipelines` binding) and batches them into an R2 bucket using
  * S3-compatible credentials.
- *
+ * @resource
+ * @product Pipelines
+ * @category Storage & Databases
  * @section Creating a Legacy Pipeline
  * @example HTTP ingest into R2
  * The S3-compatible credentials are derived from a Cloudflare API token:
  * the access key id is the token id and the secret is the SHA-256 hex
  * digest of the token value.
  * ```typescript
- * const bucket = yield* Cloudflare.R2Bucket("events", {});
+ * const bucket = yield* Cloudflare.R2.Bucket("events", {});
  *
- * const pipeline = yield* Cloudflare.LegacyPipeline("ingest", {
+ * const pipeline = yield* Cloudflare.Pipelines.LegacyPipeline("ingest", {
  *   destination: {
  *     bucket: bucket.bucketName,
  *     credentials: {
@@ -187,7 +191,7 @@ export type LegacyPipeline = Resource<
  *
  * @example Tuned batching and CORS
  * ```typescript
- * const pipeline = yield* Cloudflare.LegacyPipeline("ingest", {
+ * const pipeline = yield* Cloudflare.Pipelines.LegacyPipeline("ingest", {
  *   source: [
  *     { type: "http", cors: { origins: ["https://example.com"] } },
  *   ],
@@ -203,13 +207,13 @@ export type LegacyPipeline = Resource<
  *
  * @see https://developers.cloudflare.com/pipelines/
  */
-export const LegacyPipeline = Resource<LegacyPipeline>(LegacyPipelineTypeId);
+export const LegacyPipeline = Resource<LegacyPipeline>(TypeId);
 
 /**
  * Returns true if the given value is a LegacyPipeline resource.
  */
 export const isLegacyPipeline = (value: unknown): value is LegacyPipeline =>
-  Predicate.hasProperty(value, "Type") && value.Type === LegacyPipelineTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const LegacyPipelineProvider = () =>
   Provider.succeed(LegacyPipeline, {
@@ -231,6 +235,28 @@ export const LegacyPipelineProvider = () =>
         return { action: "replace" } as const;
       }
       return undefined;
+    }),
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // The list endpoint returns summary items (id/name/endpoint only),
+      // so hydrate each by name into the exact `read` Attributes shape
+      // with bounded concurrency and a typed per-item not-found skip
+      // (a pipeline can vanish between the list and the get).
+      const summaries = yield* listLegacyPipelineSummaries(accountId);
+      const rows = yield* Effect.forEach(
+        summaries,
+        (summary) =>
+          getLegacyPipeline(accountId, summary.name).pipe(
+            Effect.map((observed) =>
+              observed ? toAttributes(observed, accountId) : undefined,
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is LegacyPipelineAttributes => row !== undefined,
+      );
     }),
 
     read: Effect.fn(function* ({ id, output, olds }) {
@@ -347,6 +373,52 @@ const getLegacyPipeline = (accountId: string, pipelineName: string) =>
     Effect.map((p): ObservedLegacyPipeline | undefined => p),
     Effect.catchTag("PipelineNotExists", () => Effect.succeed(undefined)),
   );
+
+interface LegacyPipelineSummary {
+  id: string;
+  name: string;
+  endpoint: string;
+}
+
+/**
+ * Enumerate every legacy pipeline summary in an account. The distilled
+ * `listPipelines` op is not stream-paginated, so walk the `page`/
+ * `per_page` query params using `result_info.total_count` (falling back
+ * to a short-page sentinel) until every page is collected. The list
+ * endpoint caps `per_page` at 50 and returns only summary fields.
+ */
+const listLegacyPipelineSummaries = (accountId: string) => {
+  const perPage = 50;
+  const collect = (
+    page: number,
+    acc: LegacyPipelineSummary[],
+  ): Effect.Effect<
+    LegacyPipelineSummary[],
+    pipelines.ListPipelinesError,
+    Credentials | HttpClient.HttpClient
+  > =>
+    Effect.gen(function* () {
+      const response = yield* pipelines.listPipelines({
+        accountId,
+        page: String(page),
+        perPage: String(perPage),
+      });
+      const results = (response.results ?? []).map(
+        (p): LegacyPipelineSummary => ({
+          id: p.id,
+          name: p.name ?? "",
+          endpoint: p.endpoint ?? "",
+        }),
+      );
+      const next = [...acc, ...results];
+      const total = response.resultInfo?.totalCount;
+      const done =
+        results.length < perPage ||
+        (total !== undefined && next.length >= total);
+      return done ? next : yield* collect(page + 1, next);
+    });
+  return collect(1, []);
+};
 
 const defaultSources: LegacyPipelineSource[] = [
   { type: "http" },

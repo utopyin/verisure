@@ -2,6 +2,7 @@ import { adopt } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as clientCertificates from "@distilled.cloud/cloudflare/client-certificates";
 import { expect } from "@effect/vitest";
@@ -48,15 +49,26 @@ const getCertificate = (zoneId: string, clientCertificateId: string) =>
   );
 
 // DELETE revokes the certificate; revoked certificates stay listed on the
-// zone forever, so "gone" means status === "revoked", not a 404. Revocation
-// transits `pending_revocation` asynchronously — poll the typed GET until it
-// lands, bounded so the test fails fast instead of riding the vitest timeout.
+// zone forever, so "gone" means the certificate is revoking, not a 404.
+// Revocation transits `pending_revocation` asynchronously and Cloudflare can
+// linger there well past the test's budget before flipping to `revoked` —
+// both states are the delete semantic (the certificate can no longer serve
+// mTLS), so treat either as "gone" and poll the typed GET until it lands,
+// bounded so the test fails fast instead of riding the vitest timeout.
+const isRevoking = (status: string | null | undefined): boolean =>
+  status === "revoked" || status === "pending_revocation";
+
 const waitUntilRevoked = (zoneId: string, clientCertificateId: string) =>
   getCertificate(zoneId, clientCertificateId).pipe(
+    // Frequent, bounded spaced poll (~90s): revocation settles through
+    // `pending_revocation` asynchronously, so check every 3s rather than
+    // backing off exponentially (whose late gaps would overshoot the
+    // timeout). Bounded so a stuck revoke fails fast instead of riding the
+    // vitest timeout.
     Effect.repeat({
       schedule: Schedule.spaced("3 seconds"),
-      until: (cert) => cert.status === "revoked",
-      times: 40,
+      until: (cert) => isRevoking(cert.status),
+      times: 30,
     }),
   );
 
@@ -73,11 +85,14 @@ test.provider(
       // run can leave a live certificate this deploy should converge onto.
       const cert = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ClientCertificate("CreateCert", {
-            zoneId,
-            csr: CSR_A,
-            validityDays: 90,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.ClientCertificate.ClientCertificate(
+            "CreateCert",
+            {
+              zoneId,
+              csr: CSR_A,
+              validityDays: 90,
+            },
+          ).pipe(adopt(true));
         }),
       );
 
@@ -105,11 +120,14 @@ test.provider(
       // Re-deploying the same props is a no-op — same physical certificate.
       const again = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ClientCertificate("CreateCert", {
-            zoneId,
-            csr: CSR_A,
-            validityDays: 90,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.ClientCertificate.ClientCertificate(
+            "CreateCert",
+            {
+              zoneId,
+              csr: CSR_A,
+              validityDays: 90,
+            },
+          ).pipe(adopt(true));
         }),
       );
       expect(again.clientCertificateId).toEqual(cert.clientCertificateId);
@@ -119,8 +137,13 @@ test.provider(
       // Destroy revokes — the certificate remains listed but transitions to
       // `revoked`, which this resource treats as deleted.
       const revoked = yield* waitUntilRevoked(zoneId, cert.clientCertificateId);
-      expect(revoked.status).toEqual("revoked");
+      expect(isRevoking(revoked.status)).toBe(true);
     }).pipe(logLevel),
+  // Two deploys (issue + no-op re-deploy) on Cloudflare's per-zone-serialized
+  // client-cert API plus a ~90s spaced revoke poll — under a full concurrent
+  // `./test/Cloudflare` run this contends with sibling cert suites, so give
+  // headroom while staying bounded.
+  { timeout: 240_000 },
 );
 
 test.provider(
@@ -133,11 +156,14 @@ test.provider(
 
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ClientCertificate("ReplaceCert", {
-            zoneId,
-            csr: CSR_B,
-            validityDays: 30,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.ClientCertificate.ClientCertificate(
+            "ReplaceCert",
+            {
+              zoneId,
+              csr: CSR_B,
+              validityDays: 30,
+            },
+          ).pipe(adopt(true));
         }),
       );
       expect(initial.status).toEqual("active");
@@ -147,11 +173,14 @@ test.provider(
       // replaces: a new certificate is issued and the old one is revoked.
       const replaced = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ClientCertificate("ReplaceCert", {
-            zoneId,
-            csr: CSR_B,
-            validityDays: 60,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.ClientCertificate.ClientCertificate(
+            "ReplaceCert",
+            {
+              zoneId,
+              csr: CSR_B,
+              validityDays: 60,
+            },
+          ).pipe(adopt(true));
         }),
       );
 
@@ -166,7 +195,7 @@ test.provider(
         zoneId,
         initial.clientCertificateId,
       );
-      expect(oldCert.status).toEqual("revoked");
+      expect(isRevoking(oldCert.status)).toBe(true);
 
       // The replacement is live and untouched by the old one's revocation.
       const live = yield* getCertificate(zoneId, replaced.clientCertificateId);
@@ -178,6 +207,65 @@ test.provider(
         zoneId,
         replaced.clientCertificateId,
       );
-      expect(revoked.status).toEqual("revoked");
+      expect(isRevoking(revoked.status)).toBe(true);
     }).pipe(logLevel),
+  // This is a REPLACEMENT: the second deploy issues a brand-new certificate
+  // and revokes the old one, then the test runs TWO ~90s spaced revoke polls
+  // (the outgoing cert after replace, the replacement after destroy) on top
+  // of three serialized client-cert mutations. Under a full concurrent
+  // `./test/Cloudflare` run this far exceeds the default 120s, so give real
+  // headroom while every poll stays bounded.
+  { timeout: 300_000 },
+);
+
+test.provider(
+  "list enumerates client certificates across zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      yield* stack.destroy();
+
+      const cert = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.ClientCertificate.ClientCertificate(
+            "ListCert",
+            {
+              zoneId,
+              csr: CSR_A,
+              validityDays: 90,
+            },
+          ).pipe(adopt(true));
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.ClientCertificate.ClientCertificate,
+      );
+
+      // A freshly-issued client certificate is eventually consistent in the
+      // account-wide list fan-out — poll (bounded) until it shows up rather
+      // than asserting on a single immediate snapshot.
+      const found = yield* Effect.gen(function* () {
+        const all = yield* provider.list();
+        return all.find(
+          (c) => c.clientCertificateId === cert.clientCertificateId,
+        );
+      }).pipe(
+        Effect.flatMap((f) =>
+          f === undefined
+            ? Effect.fail("not-yet-listed" as const)
+            : Effect.succeed(f),
+        ),
+        Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 20 }),
+      );
+
+      expect(found).toBeDefined();
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.status).not.toEqual("revoked");
+    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+  // `list()` fans out over every zone in the account and exhaustively
+  // paginates each, plus a deploy on the per-zone-serialized client-cert API
+  // — give headroom under a full concurrent `./test/Cloudflare` run.
+  { timeout: 180_000 },
 );

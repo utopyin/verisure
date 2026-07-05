@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -25,7 +26,7 @@ test.provider("create, update duration, and delete service token", (stack) =>
 
     const token = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessServiceToken("BasicToken", {});
+        return yield* Cloudflare.Access.ServiceToken("BasicToken", {});
       }),
     );
 
@@ -48,7 +49,7 @@ test.provider("create, update duration, and delete service token", (stack) =>
     // the previously captured secret.
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessServiceToken("BasicToken", {
+        return yield* Cloudflare.Access.ServiceToken("BasicToken", {
           duration: "17520h",
         });
       }),
@@ -82,6 +83,33 @@ test.provider("create, update duration, and delete service token", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed service token", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const token = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Access.ServiceToken("ListToken", {});
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.Access.ServiceToken,
+    );
+    const all = yield* provider.list();
+
+    expect(all.some((t) => t.serviceTokenId === token.serviceTokenId)).toBe(
+      true,
+    );
+    // Enumeration never exposes the one-time secret — it matches read.
+    const found = all.find((t) => t.serviceTokenId === token.serviceTokenId);
+    expect(found?.clientId).toEqual(token.clientId);
+    expect(found?.clientSecret).toBeUndefined();
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 test.provider("incrementing clientSecretVersion rotates the secret", (stack) =>
   Effect.gen(function* () {
     const { accountId } = yield* yield* CloudflareEnvironment;
@@ -90,7 +118,7 @@ test.provider("incrementing clientSecretVersion rotates the secret", (stack) =>
 
     const token = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessServiceToken("RotateToken", {});
+        return yield* Cloudflare.Access.ServiceToken("RotateToken", {});
       }),
     );
     expect(token.clientSecret).toBeDefined();
@@ -98,7 +126,7 @@ test.provider("incrementing clientSecretVersion rotates the secret", (stack) =>
 
     const rotated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessServiceToken("RotateToken", {
+        return yield* Cloudflare.Access.ServiceToken("RotateToken", {
           clientSecretVersion: 2,
         });
       }),
@@ -114,7 +142,7 @@ test.provider("incrementing clientSecretVersion rotates the secret", (stack) =>
     // Re-deploying the same version must NOT rotate again.
     const stable = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessServiceToken("RotateToken", {
+        return yield* Cloudflare.Access.ServiceToken("RotateToken", {
           clientSecretVersion: 2,
         });
       }),

@@ -1,34 +1,35 @@
 import * as rulesets from "@distilled.cloud/cloudflare/rulesets";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
-import type { Zone, ZoneAttributes } from "../Zone/index.ts";
+import type { Attributes, Zone } from "../Zone/index.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-export type RulesetPhase = rulesets.CreateRulesetForZoneRequest["phase"];
-export type RulesetRule = NonNullable<
-  rulesets.PutPhasForZoneRequest["rules"]
->[number];
-export type RulesetOutputRule = Omit<
+export type Phase = rulesets.CreateRulesetForZoneRequest["phase"];
+export type Rule = NonNullable<rulesets.PutPhasForZoneRequest["rules"]>[number];
+export type OutputRule = Omit<
   NonNullable<rulesets.GetPhasResponse["rules"]>[number],
   "lastUpdated" | "version"
 >;
 
 export type RulesetProps = {
   /**
-   * Zone to apply the ruleset to. Pass a `Cloudflare.Zone`.
+   * Zone to apply the ruleset to. Pass a `Cloudflare.Zone.Zone`.
    */
   zone: Zone;
   /**
    * Ruleset phase entrypoint to own.
    */
-  phase: RulesetPhase;
+  phase: Phase;
   /**
    * Rules to apply to the phase entrypoint.
    */
-  rules: RulesetRule[];
+  rules: Rule[];
   /**
    * Human-readable name for the ruleset.
    * @default ${app}-${stage}-${id}
@@ -40,15 +41,10 @@ export type RulesetProps = {
   description?: string;
 };
 
-export type RulesetKind =
-  | "managed"
-  | "custom"
-  | "root"
-  | "zone"
-  | (string & {});
+export type Kind = "managed" | "custom" | "root" | "zone" | (string & {});
 
 export type Ruleset = Resource<
-  "Cloudflare.Ruleset",
+  "Cloudflare.Ruleset.Ruleset",
   RulesetProps,
   {
     /** The unique ID of the ruleset (Cloudflare `id`). */
@@ -59,15 +55,15 @@ export type Ruleset = Resource<
      */
     zoneId: string;
     /** The kind of the ruleset. */
-    kind: RulesetKind;
+    kind: Kind;
     /** The human-readable name of the ruleset. */
     name: string;
     /** The phase of the ruleset. */
-    phase: RulesetPhase;
+    phase: Phase;
     /** An informative description of the ruleset. */
     description: string | undefined;
     /** The list of rules in the ruleset. */
-    rules: RulesetOutputRule[];
+    rules: OutputRule[];
     /** The timestamp of when the ruleset was last modified. */
     lastUpdated: string;
     /** The version of the ruleset. */
@@ -82,12 +78,14 @@ export type Ruleset = Resource<
  *
  * This resource owns the entire ruleset for a phase entrypoint. Rules managed
  * elsewhere in the same phase can be overwritten on deploy.
- *
+ * @resource
+ * @product Rulesets
+ * @category Rules & Configuration
  * @section WAF Rules
  * @example Block probes in the custom firewall phase
  * ```typescript
- * const zone = yield* Cloudflare.Zone("MyZone", { name: "example.com" });
- * const waf = yield* Cloudflare.Ruleset("WafRules", {
+ * const zone = yield* Cloudflare.Zone.Zone("MyZone", { name: "example.com" });
+ * const waf = yield* Cloudflare.Ruleset.Ruleset("WafRules", {
  *   zone,
  *   phase: "http_request_firewall_custom",
  *   rules: [
@@ -100,7 +98,7 @@ export type Ruleset = Resource<
  * });
  * ```
  */
-export const Ruleset = Resource<Ruleset>("Cloudflare.Ruleset")({});
+export const Ruleset = Resource<Ruleset>("Cloudflare.Ruleset.Ruleset")({});
 
 export const RulesetProvider = () =>
   Provider.succeed(Ruleset, {
@@ -176,6 +174,58 @@ export const RulesetProvider = () =>
           Effect.catchTag("RulesetNotFound", () => Effect.succeed(undefined)),
         );
     }),
+    // A `Ruleset` is a zone phase entrypoint (kind: "zone"). There is no
+    // account-wide enumeration for entrypoints, so fan out over every zone
+    // via `listAllZones`, list that zone's rulesets, keep the entrypoints,
+    // and hydrate each into the full Attributes shape (the list response
+    // omits `rules`) via `getPhasForZone`.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          rulesets.listRulesetsForZone.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).filter((r) => r.kind === "zone"),
+              ),
+            ),
+            Effect.flatMap((entrypoints) =>
+              Effect.forEach(
+                entrypoints,
+                (entry) =>
+                  rulesets
+                    .getPhasForZone({
+                      zoneId: zone.id,
+                      rulesetPhase: entry.phase,
+                    })
+                    .pipe(
+                      Effect.map((ruleset) =>
+                        toRulesetAttributes(zone.id, ruleset),
+                      ),
+                      // Per-item not-found / plan-gated entrypoints are
+                      // skipped rather than failing the whole enumeration.
+                      Effect.catchTag(["RulesetNotFound", "Forbidden"], () =>
+                        Effect.succeed(undefined),
+                      ),
+                    ),
+                { concurrency: 10 },
+              ),
+            ),
+            Effect.map((items) =>
+              items.filter(
+                (item): item is Ruleset["Attributes"] => item !== undefined,
+              ),
+            ),
+            // Plan-gated / partially-provisioned zones reject the route.
+            Effect.catchTag("InvalidRoute", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
   });
 
 const createRulesetName = (id: string, name: string | undefined) =>
@@ -207,6 +257,6 @@ export const toRulesetAttributes = (
 // deploy — in which case `zoneId` is not yet a string. Callers must treat a
 // non-string result as "not resolved yet".
 const zoneIdOf = (zone: Zone): string | undefined => {
-  const zoneId = (zone as unknown as Partial<ZoneAttributes>).zoneId;
+  const zoneId = (zone as unknown as Partial<Attributes>).zoneId;
   return typeof zoneId === "string" ? zoneId : undefined;
 };

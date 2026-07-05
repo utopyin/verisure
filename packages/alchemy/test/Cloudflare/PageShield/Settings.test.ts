@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as pageShield from "@distilled.cloud/cloudflare/page-shield";
 import { expect } from "@effect/vitest";
@@ -73,7 +74,7 @@ test.provider(
       // Create — enable Page Shield with defaults.
       const settings = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageShieldSettings("PageShield", {
+          return yield* Cloudflare.PageShield.Settings("PageShield", {
             zoneId,
           });
         }),
@@ -97,7 +98,7 @@ test.provider(
       // survive.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageShieldSettings("PageShield", {
+          return yield* Cloudflare.PageShield.Settings("PageShield", {
             zoneId,
             enabled: false,
           });
@@ -113,7 +114,7 @@ test.provider(
       // so the restore below is observable.
       const reenabled = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageShieldSettings("PageShield", {
+          return yield* Cloudflare.PageShield.Settings("PageShield", {
             zoneId,
             enabled: true,
           });
@@ -163,6 +164,31 @@ test.provider(
         );
       expect(error._tag).toEqual("NotEntitled");
 
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Canonical `list()` test (zone-scoped singleton): there is no account-wide
+// API for this per-zone configuration, so `list()` enumerates every zone via
+// `listAllZones` and reads the singleton in each. Assert the result is
+// non-empty and contains the standing test zone.
+test.provider(
+  "list enumerates Page Shield settings across all zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.PageShield.Settings,
+      );
+      const all = yield* provider.list();
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+      // `stack` is unused here (the singleton always exists on every zone),
+      // but keep the destroy bookend so the harness state stays clean.
       yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },

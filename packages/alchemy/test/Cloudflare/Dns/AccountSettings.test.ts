@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -66,6 +67,37 @@ const normalizeBaseline = (accountId: string) =>
 
 describe.sequential("AccountSettings", () => {
   test.provider(
+    "list returns the account's DNS settings singleton",
+    (stack) =>
+      Effect.gen(function* () {
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        // Account singleton — read-only enumeration, no mutation.
+        yield* stack.destroy();
+
+        const provider = yield* Provider.findProvider(
+          Cloudflare.DNS.AccountDnsSettings,
+        );
+        const all = yield* provider.list();
+
+        // Exactly the one account-wide settings object, fully typed.
+        expect(all.length).toEqual(1);
+        const [settings] = all;
+        expect(settings.accountId).toEqual(accountId);
+        expect(typeof settings.enforceDnsOnly).toEqual("boolean");
+        expect(typeof settings.zoneDefaults.multiProvider).toEqual("boolean");
+        // `read` mirror: nothing managed yet, snapshot is its own baseline.
+        expect(settings.managedKeys).toEqual([]);
+        expect(settings.initialSettings.zoneDefaults.multiProvider).toEqual(
+          settings.zoneDefaults.multiProvider,
+        );
+
+        yield* stack.destroy();
+      }).pipe(logLevel),
+    { timeout: 120_000 },
+  );
+
+  test.provider(
     "pins a zone default and restores the pre-management value on destroy",
     (stack) =>
       Effect.gen(function* () {
@@ -75,7 +107,7 @@ describe.sequential("AccountSettings", () => {
         yield* normalizeBaseline(accountId);
 
         const settings = yield* stack.deploy(
-          Cloudflare.AccountDnsSettings("AccountDns", {
+          Cloudflare.DNS.AccountDnsSettings("AccountDns", {
             zoneDefaults: { multiProvider: true },
           }),
         );
@@ -120,7 +152,7 @@ describe.sequential("AccountSettings", () => {
         yield* normalizeBaseline(accountId);
 
         const initial = yield* stack.deploy(
-          Cloudflare.AccountDnsSettings("AccountDns", {
+          Cloudflare.DNS.AccountDnsSettings("AccountDns", {
             zoneDefaults: { multiProvider: true },
           }),
         );
@@ -130,7 +162,7 @@ describe.sequential("AccountSettings", () => {
         // Same singleton patched in place — a second managed field joins;
         // the original snapshot survives the update.
         const updated = yield* stack.deploy(
-          Cloudflare.AccountDnsSettings("AccountDns", {
+          Cloudflare.DNS.AccountDnsSettings("AccountDns", {
             zoneDefaults: { multiProvider: true, secondaryOverrides: true },
           }),
         );
@@ -154,7 +186,7 @@ describe.sequential("AccountSettings", () => {
         // Drop `multiProvider` from props — the key stays managed (union
         // across all reconciles) so destroy still restores it.
         const dropped = yield* stack.deploy(
-          Cloudflare.AccountDnsSettings("AccountDns", {
+          Cloudflare.DNS.AccountDnsSettings("AccountDns", {
             zoneDefaults: { secondaryOverrides: true },
           }),
         );

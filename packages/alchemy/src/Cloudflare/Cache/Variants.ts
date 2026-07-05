@@ -5,10 +5,12 @@ import * as Predicate from "effect/Predicate";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { arrayEquals } from "../../Util/equal.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const VariantsTypeId = "Cloudflare.Cache.Variants" as const;
-type VariantsTypeId = typeof VariantsTypeId;
+const TypeId = "Cloudflare.Cache.Variants" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The file extensions the Variants setting can configure. Each key maps to
@@ -64,7 +66,7 @@ export interface VariantsAttributes {
 }
 
 export type Variants = Resource<
-  VariantsTypeId,
+  TypeId,
   VariantsProps,
   VariantsAttributes,
   never,
@@ -90,13 +92,15 @@ export type Variants = Resource<
  * Only one `Variants` resource per zone makes sense — the setting is a
  * zone singleton, and two instances managing the same zone would fight
  * over it.
- *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  * @section Managing Variants
  * @example Serve WebP for JPEG URLs
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.Variants("ImageVariants", {
+ * yield* Cloudflare.Cache.Variants("ImageVariants", {
  *   zoneId: zone.zoneId,
  *   jpeg: ["image/webp"],
  *   jpg: ["image/webp"],
@@ -105,7 +109,7 @@ export type Variants = Resource<
  *
  * @example Allow WebP and AVIF for all common image extensions
  * ```typescript
- * yield* Cloudflare.Variants("ImageVariants", {
+ * yield* Cloudflare.Cache.Variants("ImageVariants", {
  *   zoneId: zone.zoneId,
  *   jpeg: ["image/webp", "image/avif"],
  *   jpg: ["image/webp", "image/avif"],
@@ -116,13 +120,13 @@ export type Variants = Resource<
  *
  * @see https://developers.cloudflare.com/cache/advanced-configuration/variants/
  */
-export const Variants = Resource<Variants>(VariantsTypeId);
+export const Variants = Resource<Variants>(TypeId);
 
 /**
  * Returns true if the given value is a Variants resource.
  */
 export const isVariants = (value: unknown): value is Variants =>
-  Predicate.hasProperty(value, "Type") && value.Type === VariantsTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 /** The file-extension keys the Variants setting supports. */
 const EXTENSION_KEYS = [
@@ -179,6 +183,35 @@ const valuesEqual = (a: VariantsValue, b: VariantsValue): boolean =>
 export const VariantsProvider = () =>
   Provider.succeed(Variants, {
     stables: ["zoneId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this per-zone setting — enumerate every
+      // zone in the account and read its variants setting. Unlike most
+      // zone singletons, Variants has true create/delete semantics, so a
+      // zone that never configured it returns `VariantsNotConfigured`;
+      // those zones (and plan-gated / deleted zones) are skipped.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          cache.getVariant({ zoneId }).pipe(
+            Effect.map((observed) => toAttributes(zoneId, observed)),
+            // Setting never configured on this zone — nothing to enumerate.
+            Effect.catchTag("VariantsNotConfigured", () =>
+              Effect.succeed(undefined),
+            ),
+            // Plan-gated zones reject the setting (`Forbidden`, code 1135
+            // "not available for your plan type") or the route entirely
+            // (`InvalidRoute`); skip them.
+            Effect.catchTag(["Forbidden", "InvalidRoute"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is VariantsAttributes => row !== undefined);
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
       const o = olds as VariantsProps;

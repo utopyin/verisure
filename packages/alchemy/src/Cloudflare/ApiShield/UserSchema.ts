@@ -7,12 +7,14 @@ import { Unowned } from "../../AdoptPolicy.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const ApiShieldUserSchemaTypeId = "Cloudflare.ApiShield.UserSchema" as const;
-type ApiShieldUserSchemaTypeId = typeof ApiShieldUserSchemaTypeId;
+const TypeId = "Cloudflare.ApiShield.UserSchema" as const;
+type TypeId = typeof TypeId;
 
-export interface ApiShieldUserSchemaProps {
+export interface UserSchemaProps {
   /**
    * Zone the schema is uploaded to.
    *
@@ -45,7 +47,7 @@ export interface ApiShieldUserSchemaProps {
   validationEnabled?: boolean;
 }
 
-export interface ApiShieldUserSchemaAttributes {
+export interface UserSchemaAttributes {
   /** Cloudflare-assigned UUID of the schema. */
   schemaId: string;
   /** Zone the schema is uploaded to. */
@@ -62,10 +64,10 @@ export interface ApiShieldUserSchemaAttributes {
   createdAt: string;
 }
 
-export type ApiShieldUserSchema = Resource<
-  ApiShieldUserSchemaTypeId,
-  ApiShieldUserSchemaProps,
-  ApiShieldUserSchemaAttributes,
+export type UserSchema = Resource<
+  TypeId,
+  UserSchemaProps,
+  UserSchemaAttributes,
   never,
   Providers
 >;
@@ -81,14 +83,16 @@ export type ApiShieldUserSchema = Resource<
  *
  * For current zone-level schema validation (v2), prefer the
  * `Cloudflare.SchemaValidation` resources.
- *
+ * @resource
+ * @product API Shield
+ * @category Application Security
  * @section Uploading a Schema
  * @example Upload an OpenAPI v3 schema
  * ```typescript
  * const fs = yield* FileSystem.FileSystem;
  * const source = yield* fs.readFileString("./openapi.json");
  *
- * const schema = yield* Cloudflare.ApiShieldUserSchema("PetstoreSchema", {
+ * const schema = yield* Cloudflare.ApiShield.UserSchema("PetstoreSchema", {
  *   zoneId: zone.zoneId,
  *   name: "petstore",
  *   schema: source,
@@ -98,7 +102,7 @@ export type ApiShieldUserSchema = Resource<
  *
  * @example Upload and enable validation
  * ```typescript
- * yield* Cloudflare.ApiShieldUserSchema("PetstoreSchema", {
+ * yield* Cloudflare.ApiShield.UserSchema("PetstoreSchema", {
  *   zoneId: zone.zoneId,
  *   schema: source,
  *   validationEnabled: true,
@@ -107,26 +111,21 @@ export type ApiShieldUserSchema = Resource<
  *
  * @see https://developers.cloudflare.com/api-shield/security/schema-validation/
  */
-export const ApiShieldUserSchema = Resource<ApiShieldUserSchema>(
-  ApiShieldUserSchemaTypeId,
-);
+export const UserSchema = Resource<UserSchema>(TypeId);
 
 /**
- * Returns true if the given value is an ApiShieldUserSchema resource.
+ * Returns true if the given value is an UserSchema resource.
  */
-export const isApiShieldUserSchema = (
-  value: unknown,
-): value is ApiShieldUserSchema =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === ApiShieldUserSchemaTypeId;
+export const isUserSchema = (value: unknown): value is UserSchema =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const ApiShieldUserSchemaProvider = () =>
-  Provider.succeed(ApiShieldUserSchema, {
+export const UserSchemaProvider = () =>
+  Provider.succeed(UserSchema, {
     stables: ["zoneId", "name", "kind"],
 
     diff: Effect.fn(function* ({ id, olds, news, output }) {
-      const o = olds as ApiShieldUserSchemaProps | undefined;
-      const n = news as ApiShieldUserSchemaProps;
+      const o = olds as UserSchemaProps | undefined;
+      const n = news as UserSchemaProps;
       if (o === undefined) return undefined;
       // The name is part of the schema's identity — compare the resolved
       // physical names (an omitted name resolves deterministically).
@@ -234,6 +233,40 @@ export const ApiShieldUserSchemaProvider = () =>
         })
         .pipe(Effect.catchTag("SchemaNotFound", () => Effect.void));
     }),
+
+    // Schemas live inside a zone; there is no account-wide list. Fan out
+    // over every zone in the account and exhaustively paginate each zone's
+    // schemas, hydrating into the same `Attributes` shape `read` produces.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          apiGateway.listUserSchemas.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((schema) =>
+                  toAttributes(schema, zone.id),
+                ),
+              ),
+            ),
+            // Zones without the API Shield entitlement reject the listing
+            // route; skip them rather than failing the whole enumeration.
+            Effect.catchTag("Forbidden", () =>
+              Effect.succeed([] as UserSchemaAttributes[]),
+            ),
+            // A zone purged (deleted) out-of-band mid-enumeration — it was in
+            // the zone list but no longer exists; drop it.
+            Effect.catchTag("ZonePurged", () =>
+              Effect.succeed([] as UserSchemaAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
   });
 
 type ObservedSchema = Pick<
@@ -279,7 +312,7 @@ const createSchemaName = (id: string, name: string | undefined) =>
 const toAttributes = (
   schema: ObservedSchema,
   zoneId: string,
-): ApiShieldUserSchemaAttributes => ({
+): UserSchemaAttributes => ({
   schemaId: schema.schemaId,
   zoneId,
   name: schema.name,

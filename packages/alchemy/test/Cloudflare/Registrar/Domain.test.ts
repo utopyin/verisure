@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as registrar from "@distilled.cloud/cloudflare/registrar";
 import { expect } from "@effect/vitest";
@@ -69,7 +70,7 @@ describe.sequential("Domain", () => {
 
         const domain = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.RegistrarDomain("Domain", props);
+            return yield* Cloudflare.Registrar.Domain("Domain", props);
           }),
         );
 
@@ -91,7 +92,7 @@ describe.sequential("Domain", () => {
         // Idempotent redeploy — still a no-op sync, initialSettings survive.
         const again = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.RegistrarDomain("Domain", props);
+            return yield* Cloudflare.Registrar.Domain("Domain", props);
           }),
         );
         expect(again.domainName).toEqual(domainName);
@@ -160,7 +161,7 @@ describe.sequential("Domain", () => {
         // In-place update: flip autoRenew away from the baseline.
         const domain = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.RegistrarDomain("Domain", {
+            return yield* Cloudflare.Registrar.Domain("Domain", {
               domainName,
               autoRenew: flipped,
             });
@@ -174,7 +175,7 @@ describe.sequential("Domain", () => {
         // Flip it back via an in-place update.
         const updated = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.RegistrarDomain("Domain", {
+            return yield* Cloudflare.Registrar.Domain("Domain", {
               domainName,
               autoRenew: baseline.autoRenew ?? true,
             });
@@ -194,5 +195,29 @@ describe.sequential("Domain", () => {
         expect(restored?.autoRenew).toEqual(baseline.autoRenew);
       }).pipe(logLevel),
     { timeout: 120_000 },
+  );
+
+  // Registrar domains are real, pre-existing registrations that cannot be
+  // created via the API, so this is read-only: `list()` enumerates whatever
+  // is already on the account and we assert a well-typed Attributes[] (which
+  // may legitimately be empty if the account has no registered domains).
+  test.provider("list enumerates registrar domains on the account", (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Registrar.Domain,
+      );
+      const all = yield* provider.list();
+
+      expect(Array.isArray(all)).toBe(true);
+      for (const domain of all) {
+        expect(typeof domain.domainName).toBe("string");
+        expect(typeof domain.accountId).toBe("string");
+        expect(domain.initialSettings).toBeDefined();
+      }
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

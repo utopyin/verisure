@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as rum from "@distilled.cloud/cloudflare/rum";
 import { expect } from "@effect/vitest";
@@ -51,7 +52,7 @@ test.provider("create and delete a host (gray-clouded) site", (stack) =>
     yield* stack.destroy();
 
     const site = yield* stack.deploy(
-      Cloudflare.RumSite("HostSite", {
+      Cloudflare.Rum.Site("HostSite", {
         host: `create.${zoneName}`,
       }),
     );
@@ -81,7 +82,7 @@ test.provider("update mutable props in place (same siteTag)", (stack) =>
     yield* stack.destroy();
 
     const initial = yield* stack.deploy(
-      Cloudflare.RumSite("UpdateSite", {
+      Cloudflare.Rum.Site("UpdateSite", {
         host: `update.${zoneName}`,
       }),
     );
@@ -91,7 +92,7 @@ test.provider("update mutable props in place (same siteTag)", (stack) =>
 
     // Changing the hostname is an in-place update of the same site.
     const updated = yield* stack.deploy(
-      Cloudflare.RumSite("UpdateSite", {
+      Cloudflare.Rum.Site("UpdateSite", {
         host: `update-v2.${zoneName}`,
       }),
     );
@@ -105,7 +106,7 @@ test.provider("update mutable props in place (same siteTag)", (stack) =>
 
     // Redeploying identical props is a no-op (still the same site).
     const noop = yield* stack.deploy(
-      Cloudflare.RumSite("UpdateSite", {
+      Cloudflare.Rum.Site("UpdateSite", {
         host: `update-v2.${zoneName}`,
       }),
     );
@@ -132,7 +133,7 @@ test.provider(
       yield* stack.destroy();
 
       const zoneSite = yield* stack.deploy(
-        Cloudflare.RumSite("FlipSite", {
+        Cloudflare.Rum.Site("FlipSite", {
           zoneTag: zone.id,
           autoInstall: true,
         }),
@@ -146,7 +147,7 @@ test.provider(
 
       // Toggle autoInstall in place — same site.
       const toggled = yield* stack.deploy(
-        Cloudflare.RumSite("FlipSite", {
+        Cloudflare.Rum.Site("FlipSite", {
           zoneTag: zone.id,
           autoInstall: false,
         }),
@@ -157,7 +158,7 @@ test.provider(
       // Switching to host-based measurement changes the identity model —
       // the site must be replaced (new siteTag) and the old one deleted.
       const replaced = yield* stack.deploy(
-        Cloudflare.RumSite("FlipSite", {
+        Cloudflare.Rum.Site("FlipSite", {
           host: `flip.${zoneName}`,
         }),
       );
@@ -172,6 +173,25 @@ test.provider(
     }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed RUM site", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Cloudflare.Rum.Site("ListSite", {
+        host: `list.${zoneName}`,
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Rum.Site);
+    const all = yield* provider.list();
+
+    expect(all.some((s) => s.siteTag === deployed.siteTag)).toBe(true);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 test.provider("recreates after out-of-band delete", (stack) =>
   Effect.gen(function* () {
     const { accountId } = yield* yield* CloudflareEnvironment;
@@ -179,7 +199,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     yield* stack.destroy();
 
     const site = yield* stack.deploy(
-      Cloudflare.RumSite("HealSite", {
+      Cloudflare.Rum.Site("HealSite", {
         host: `heal.${zoneName}`,
       }),
     );
@@ -196,7 +216,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     );
 
     const healed = yield* stack.deploy(
-      Cloudflare.RumSite("HealSite", {
+      Cloudflare.Rum.Site("HealSite", {
         host: `heal-v2.${zoneName}`,
       }),
     );

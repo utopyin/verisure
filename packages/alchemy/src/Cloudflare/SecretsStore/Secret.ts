@@ -8,8 +8,9 @@ import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
-import { SecretBinding } from "./SecretBinding.ts";
+
 export type StoreSecretProps = {
   /**
    * The Secrets Store that owns this secret.
@@ -70,12 +71,14 @@ const asSecretStatus = (status: string): SecretStatus => status as SecretStatus;
  * The secret value is treated as redacted and is only ever sent to
  * Cloudflare at create time. Updating `scopes` or `comment` issues a
  * PATCH; changing `value` or `name` replaces the secret.
- *
+ * @resource
+ * @product Secrets Store
+ * @category Storage & Databases
  * @section Creating a Secret
  * @example Basic Secret
  * ```typescript
- * const store = yield* Cloudflare.SecretsStore("MyStore");
- * const apiKey = yield* Cloudflare.StoreSecret("ApiKey", {
+ * const store = yield* Cloudflare.SecretsStore.Store("MyStore");
+ * const apiKey = yield* Cloudflare.SecretsStore.Secret("ApiKey", {
  *   store,
  *   value: Redacted.make(process.env.API_KEY!),
  * });
@@ -84,16 +87,14 @@ const asSecretStatus = (status: string): SecretStatus => status as SecretStatus;
  * @section Binding to a Worker
  * @example Reading a secret at runtime
  * ```typescript
- * const apiKey = yield* Cloudflare.StoreSecret.bind(ApiKey);
+ * const apiKey = yield* Cloudflare.SecretsStore.ReadSecret(ApiKey);
  * // `apiKey` is itself an Effect that resolves to the secret value:
  * const value = yield* apiKey;
  * // Or call `.get()` explicitly:
  * const value = yield* apiKey.get();
  * ```
  */
-export const Secret = Resource<Secret>("Cloudflare.SecretsStore.Secret")({
-  bind: SecretBinding.bind,
-});
+export const Secret = Resource<Secret>("Cloudflare.SecretsStore.Secret");
 
 export const StoreSecretProvider = () =>
   Provider.succeed(Secret, {
@@ -289,6 +290,50 @@ export const StoreSecretProvider = () =>
         scopes: resolveScopes(olds.scopes),
         comment: match.comment ?? undefined,
       });
+    }),
+    // Parent fan-out: secrets are sub-resources keyed by {accountId,
+    // storeId} and there is no account-wide secret enumeration API.
+    // Enumerate every Secrets Store in the account, then list the
+    // secrets inside each store with bounded concurrency, paginating
+    // both levels exhaustively. The secret value is write-only and is
+    // never returned by the API — matching `read`, it is omitted.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const stores = yield* secretsStore.listStores.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.result ?? []),
+        ),
+      );
+      const rows = yield* Effect.forEach(
+        stores,
+        (store) =>
+          secretsStore.listStoreSecrets
+            .pages({ accountId, storeId: store.id })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.result ?? []).map((secret) => ({
+                    secretId: secret.id,
+                    secretName: secret.name,
+                    storeId: secret.storeId,
+                    accountId,
+                    status: asSecretStatus(secret.status),
+                    scopes: resolveScopes(secret.scopes ?? undefined),
+                    comment: secret.comment ?? undefined,
+                  })),
+                ),
+              ),
+              // A store deleted out-of-band between enumeration and
+              // listing its secrets surfaces as StoreNotFound — skip it.
+              Effect.catchTag("StoreNotFound", () =>
+                Effect.succeed([] as ReadonlyArray<Secret["Attributes"]>),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
   });
 

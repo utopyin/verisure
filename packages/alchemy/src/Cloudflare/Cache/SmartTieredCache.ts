@@ -4,10 +4,12 @@ import * as Predicate from "effect/Predicate";
 
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const SmartTieredCacheTypeId = "Cloudflare.Cache.SmartTieredCache" as const;
-type SmartTieredCacheTypeId = typeof SmartTieredCacheTypeId;
+const TypeId = "Cloudflare.Cache.SmartTieredCache" as const;
+type TypeId = typeof TypeId;
 
 export interface SmartTieredCacheProps {
   /**
@@ -45,7 +47,7 @@ export interface SmartTieredCacheAttributes {
 }
 
 export type SmartTieredCache = Resource<
-  SmartTieredCacheTypeId,
+  TypeId,
   SmartTieredCacheProps,
   SmartTieredCacheAttributes,
   never,
@@ -66,20 +68,22 @@ export type SmartTieredCache = Resource<
  *
  * Only one `SmartTieredCache` resource per zone makes sense — two instances
  * managing the same zone would fight over the singleton.
- *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  * @section Managing Smart Tiered Cache
  * @example Enable Smart Tiered Cache on a zone
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.SmartTieredCache("SmartCache", {
+ * yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
  *   zoneId: zone.zoneId,
  * });
  * ```
  *
  * @example Explicitly disable Smart Tiered Cache
  * ```typescript
- * yield* Cloudflare.SmartTieredCache("SmartCache", {
+ * yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  * });
@@ -87,22 +91,50 @@ export type SmartTieredCache = Resource<
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/
  */
-export const SmartTieredCache = Resource<SmartTieredCache>(
-  SmartTieredCacheTypeId,
-);
+export const SmartTieredCache = Resource<SmartTieredCache>(TypeId);
 
 /**
  * Returns true if the given value is a SmartTieredCache resource.
  */
 export const isSmartTieredCache = (value: unknown): value is SmartTieredCache =>
-  Predicate.hasProperty(value, "Type") && value.Type === SmartTieredCacheTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 const desiredValue = (props: SmartTieredCacheProps): "on" | "off" =>
   (props.enabled ?? true) ? "on" : "off";
 
 export const SmartTieredCacheProvider = () =>
   Provider.succeed(SmartTieredCache, {
+    nuke: { singleton: true },
     stables: ["zoneId", "initialValue"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its setting (every zone has one).
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          cache.getSmartTieredCache({ zoneId }).pipe(
+            Effect.map((observed) =>
+              toAttributes(zoneId, observed, observed.value),
+            ),
+            // Smart Tiered Cache is an Enterprise feature. When enumerating
+            // every zone in the account, zones that aren't entitled reject the
+            // read — as `InvalidRoute`, or as a persistent `Forbidden`/
+            // `Unauthorized` ("Access denied") on the gated route. These are
+            // not the transient code-10000 auth blips the global policy
+            // retries; the zone simply has no readable setting, so skip it.
+            Effect.catchTag(["InvalidRoute", "Forbidden", "Unauthorized"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is SmartTieredCacheAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
       const o = olds as SmartTieredCacheProps;

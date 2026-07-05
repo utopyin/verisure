@@ -11,8 +11,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const OnRampTypeId = "Cloudflare.MagicCloudNetworking.OnRamp" as const;
-type OnRampTypeId = typeof OnRampTypeId;
+const TypeId = "Cloudflare.MagicCloudNetworking.OnRamp" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The cloud provider an on-ramp connects to Magic WAN.
@@ -167,7 +167,7 @@ export interface OnRampAttributes {
 }
 
 export type OnRamp = Resource<
-  OnRampTypeId,
+  TypeId,
   OnRampProps,
   OnRampAttributes,
   never,
@@ -192,11 +192,13 @@ export type OnRamp = Resource<
  * Magic Cloud Networking is an entitlement-gated add-on (Magic WAN family).
  * On accounts without the entitlement every API call fails with the typed
  * `FeatureNotEnabled` error (Cloudflare code 1012, "feature not enabled").
- *
+ * @resource
+ * @product Magic Cloud Networking
+ * @category Network
  * @section Connecting a single VPC
  * @example AWS VPC on-ramp
  * ```typescript
- * const onramp = yield* Cloudflare.OnRamp("ProdVpc", {
+ * const onramp = yield* Cloudflare.MagicCloudNetworking.OnRamp("ProdVpc", {
  *   cloudType: "AWS",
  *   type: "OnrampTypeSingle",
  *   region: "us-east-1",
@@ -210,7 +212,7 @@ export type OnRamp = Resource<
  * @section Hub topologies
  * @example Transit Gateway hub with attached VPCs
  * ```typescript
- * yield* Cloudflare.OnRamp("TgwHub", {
+ * yield* Cloudflare.MagicCloudNetworking.OnRamp("TgwHub", {
  *   cloudType: "AWS",
  *   type: "OnrampTypeHub",
  *   region: "us-east-1",
@@ -225,7 +227,7 @@ export type OnRamp = Resource<
  * @section Destroy behavior
  * @example Tear down cloud-side resources on destroy
  * ```typescript
- * yield* Cloudflare.OnRamp("ProdVpc", {
+ * yield* Cloudflare.MagicCloudNetworking.OnRamp("ProdVpc", {
  *   cloudType: "AWS",
  *   type: "OnrampTypeSingle",
  *   region: "us-east-1",
@@ -239,13 +241,13 @@ export type OnRamp = Resource<
  *
  * @see https://developers.cloudflare.com/magic-cloud-networking/
  */
-export const OnRamp = Resource<OnRamp>(OnRampTypeId);
+export const OnRamp = Resource<OnRamp>(TypeId);
 
 /**
  * Returns true if the given value is an OnRamp resource.
  */
 export const isOnRamp = (value: unknown): value is OnRamp =>
-  Predicate.hasProperty(value, "Type") && value.Type === OnRampTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const OnRampProvider = () =>
   Provider.succeed(OnRamp, {
@@ -435,6 +437,36 @@ export const OnRampProvider = () =>
           destroy: output.destroyOnDelete,
         })
         .pipe(Effect.catchTag("OnRampNotFound", () => Effect.void));
+    }),
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection: exhaustively paginate the on-ramp list,
+      // then hydrate each id into the exact `read` Attributes shape via
+      // `getOnRamp`. The list item omits some fields (`vpc`, `region`), so
+      // a per-item get is required for a fully-faithful Attributes object.
+      // Magic Cloud Networking is an entitlement-gated add-on; on accounts
+      // without it every call fails with `FeatureNotEnabled` — treat that
+      // as a non-listable account and return `[]`.
+      const ids = yield* mcn.listOnRamps.items({ accountId }).pipe(
+        Stream.map((onramp) => onramp.id),
+        Stream.runCollect,
+        Effect.map((chunk) => Array.from(chunk)),
+        Effect.catchTag("FeatureNotEnabled", () =>
+          Effect.succeed([] as string[]),
+        ),
+      );
+      const rows = yield* Effect.forEach(
+        ids,
+        (onRampId) =>
+          getOnRamp(accountId, onRampId).pipe(
+            Effect.map((observed) =>
+              observed ? toAttributes(observed, accountId, false) : undefined,
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is OnRampAttributes => row !== undefined);
     }),
   });
 

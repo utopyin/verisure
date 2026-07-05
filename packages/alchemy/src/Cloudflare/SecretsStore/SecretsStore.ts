@@ -1,11 +1,12 @@
 import * as secretsStore from "@distilled.cloud/cloudflare/secrets-store";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-export type SecretsStore = Resource<
+export type Store = Resource<
   "Cloudflare.SecretsStore",
   {},
   {
@@ -30,24 +31,26 @@ export type SecretsStore = Resource<
  * start and `create` is only ever invoked when no store exists yet.
  * Once it exists it is treated as account-level infrastructure that
  * outlives any single stack.
- *
+ * @resource
+ * @product Secrets Store
+ * @category Storage & Databases
  * @section Creating a Store
  * @example Basic Secrets Store (adopts existing or creates one)
  * ```typescript
- * const store = yield* Cloudflare.SecretsStore("MyStore");
+ * const store = yield* Cloudflare.SecretsStore.Store("MyStore");
  * ```
  *
  * @example Adopt a specific named store
  * ```typescript
- * const store = yield* Cloudflare.SecretsStore("MyStore", {
+ * const store = yield* Cloudflare.SecretsStore.Store("MyStore", {
  *   name: "production-secrets",
  * });
  * ```
  */
-export const SecretsStore = Resource<SecretsStore>("Cloudflare.SecretsStore");
+export const Store = Resource<Store>("Cloudflare.SecretsStore");
 
 export const SecretsStoreProvider = () =>
-  Provider.succeed(SecretsStore, {
+  Provider.succeed(Store, {
     stables: ["storeId", "storeName", "accountId"],
     // The engine calls `read` whenever there's no prior state. Cloudflare
     // allows exactly one Secrets Store per account, so any account that's
@@ -127,6 +130,26 @@ export const SecretsStoreProvider = () =>
       return yield* Effect.die(
         new Error(
           `Cloudflare reported MaximumStoresExceeded for account ${acct} but no store could be listed.`,
+        ),
+      );
+    }),
+    // Account-scoped collection. Cloudflare exposes a paginated
+    // `secrets_store/stores` list op; enumerate every page and hydrate each
+    // store into the exact `read` Attributes shape. Cloudflare currently
+    // permits only one (default) store per account, so this is usually a
+    // single-element array, but the enumeration is exhaustive regardless.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* secretsStore.listStores.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).map((store) => ({
+              storeId: store.id,
+              storeName: store.name,
+              accountId: store.accountId ?? accountId,
+            })),
+          ),
         ),
       );
     }),

@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as urlNormalization from "@distilled.cloud/cloudflare/url-normalization";
 import { expect } from "@effect/vitest";
@@ -70,11 +71,14 @@ describe.sequential("UrlNormalization", () => {
 
         const created = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UrlNormalization("UrlNormalization", {
-              zoneId,
-              scope: "both",
-              type: "rfc3986",
-            });
+            return yield* Cloudflare.UrlNormalization.UrlNormalization(
+              "UrlNormalization",
+              {
+                zoneId,
+                scope: "both",
+                type: "rfc3986",
+              },
+            );
           }),
         );
 
@@ -106,11 +110,14 @@ describe.sequential("UrlNormalization", () => {
 
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.UrlNormalization("UrlNormalization", {
-            zoneId,
-            scope: "both",
-            type: "rfc3986",
-          });
+          return yield* Cloudflare.UrlNormalization.UrlNormalization(
+            "UrlNormalization",
+            {
+              zoneId,
+              scope: "both",
+              type: "rfc3986",
+            },
+          );
         }),
       );
 
@@ -120,11 +127,14 @@ describe.sequential("UrlNormalization", () => {
       // Same singleton updated in place via a full-replace PUT.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.UrlNormalization("UrlNormalization", {
-            zoneId,
-            scope: "incoming",
-            type: "cloudflare",
-          });
+          return yield* Cloudflare.UrlNormalization.UrlNormalization(
+            "UrlNormalization",
+            {
+              zoneId,
+              scope: "incoming",
+              type: "cloudflare",
+            },
+          );
         }),
       );
 
@@ -163,9 +173,12 @@ describe.sequential("UrlNormalization", () => {
 
         const created = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.UrlNormalization("UrlNormalization", {
-              zoneId,
-            });
+            return yield* Cloudflare.UrlNormalization.UrlNormalization(
+              "UrlNormalization",
+              {
+                zoneId,
+              },
+            );
           }),
         );
 
@@ -183,5 +196,27 @@ describe.sequential("UrlNormalization", () => {
         expect(reset.scope).toEqual("incoming");
         expect(reset.type).toEqual("cloudflare");
       }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+  // API for this per-zone setting, so `list()` enumerates every zone via
+  // `listAllZones` and reads the singleton in each. Assert the result is
+  // non-empty and contains the standing test zone.
+  test.provider("list enumerates URL normalization across all zones", (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.UrlNormalization.UrlNormalization,
+      );
+      const all = yield* provider.list();
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+      // `stack` is unused here (the singleton always exists on every zone),
+      // but keep the destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

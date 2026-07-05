@@ -2,6 +2,7 @@ import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -11,9 +12,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const DevicePostureIntegrationTypeId =
-  "Cloudflare.Devices.PostureIntegration" as const;
-type DevicePostureIntegrationTypeId = typeof DevicePostureIntegrationTypeId;
+const TypeId = "Cloudflare.Devices.PostureIntegration" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The third-party provider behind the posture integration. Determines
@@ -112,7 +112,7 @@ export type DevicePostureIntegrationAttributes = {
 };
 
 export type DevicePostureIntegration = Resource<
-  DevicePostureIntegrationTypeId,
+  TypeId,
   DevicePostureIntegrationProps,
   DevicePostureIntegrationAttributes,
   never,
@@ -128,11 +128,13 @@ export type DevicePostureIntegration = Resource<
  * Cloudflare validates the configured credentials against the live
  * provider API at create/update time, so a reachable third-party tenant
  * is required.
- *
+ * @resource
+ * @product Devices
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a posture integration
  * @example CrowdStrike Falcon
  * ```typescript
- * const falcon = yield* Cloudflare.DevicePostureIntegration("Falcon", {
+ * const falcon = yield* Cloudflare.Devices.DevicePostureIntegration("Falcon", {
  *   type: "crowdstrike_s2s",
  *   interval: "10m",
  *   config: {
@@ -146,7 +148,7 @@ export type DevicePostureIntegration = Resource<
  *
  * @example Custom service-to-service provider behind Access
  * ```typescript
- * const custom = yield* Cloudflare.DevicePostureIntegration("Custom", {
+ * const custom = yield* Cloudflare.Devices.DevicePostureIntegration("Custom", {
  *   type: "custom_s2s",
  *   interval: "30m",
  *   config: {
@@ -160,7 +162,7 @@ export type DevicePostureIntegration = Resource<
  *
  * @example Reference the integration from a posture rule
  * ```typescript
- * yield* Cloudflare.DevicePostureRule("FalconScore", {
+ * yield* Cloudflare.Devices.DevicePostureRule("FalconScore", {
  *   type: "crowdstrike_s2s",
  *   input: { connectionId: falcon.integrationId, os: "windows" },
  * });
@@ -168,9 +170,8 @@ export type DevicePostureIntegration = Resource<
  *
  * @see https://developers.cloudflare.com/cloudflare-one/identity/devices/service-providers/
  */
-export const DevicePostureIntegration = Resource<DevicePostureIntegration>(
-  DevicePostureIntegrationTypeId,
-);
+export const DevicePostureIntegration =
+  Resource<DevicePostureIntegration>(TypeId);
 
 /**
  * Returns true if the given value is a DevicePostureIntegration resource.
@@ -178,12 +179,30 @@ export const DevicePostureIntegration = Resource<DevicePostureIntegration>(
 export const isDevicePostureIntegration = (
   value: unknown,
 ): value is DevicePostureIntegration =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === DevicePostureIntegrationTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const DevicePostureIntegrationProvider = () =>
   Provider.succeed(DevicePostureIntegration, {
     stables: ["integrationId", "accountId", "type"],
+
+    // Account collection — enumerate every posture integration in the
+    // ambient account, exhaustively paginating the distilled list op.
+    // Zero Trust is plan-gated; a `Forbidden` rejection means the account
+    // lacks the entitlement, so treat it as "nothing to list".
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* zeroTrust.listDevicePostureIntegrations
+        .pages({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? []).map((i) => toAttributes(i, accountId)),
+            ),
+          ),
+          Effect.catchTag("Forbidden", () => Effect.succeed([])),
+        );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;

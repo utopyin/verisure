@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Output from "@/Output";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as logpush from "@distilled.cloud/cloudflare/logpush";
 import * as user from "@distilled.cloud/cloudflare/user";
@@ -67,10 +68,10 @@ interface R2Creds {
 }
 
 interface JobOpts {
-  dataset: Cloudflare.LogpushDataset;
+  dataset: Cloudflare.Logpush.Dataset;
   enabled?: boolean;
   maxUploadIntervalSeconds?: number;
-  outputOptions?: Cloudflare.LogpushOutputOptions;
+  outputOptions?: Cloudflare.Logpush.OutputOptions;
 }
 
 // One program deploying both the R2 destination bucket and the Logpush job
@@ -78,8 +79,8 @@ interface JobOpts {
 // the engine orders job-after-bucket on deploy (and the reverse on destroy).
 const program = (creds: R2Creds, opts: JobOpts) =>
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2Bucket("LogpushBucket", {});
-    const job = yield* Cloudflare.LogpushJob("Job", {
+    const bucket = yield* Cloudflare.R2.Bucket("LogpushBucket", {});
+    const job = yield* Cloudflare.Logpush.Job("Job", {
       dataset: opts.dataset,
       destinationConf: Output.interpolate`r2://${bucket.bucketName}/alchemy/{DATE}?account-id=${creds.accountId}&access-key-id=${creds.accessKeyId}&secret-access-key=${creds.secretAccessKey}`,
       enabled: opts.enabled,
@@ -182,6 +183,44 @@ test.provider(
       yield* waitForDelete(accountId, initial.job.jobId);
 
       // Destroy again — delete must be idempotent (the job is already gone).
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 180_000 },
+);
+
+test.provider(
+  "list enumerates the deployed Logpush job",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const creds = yield* r2Credentials;
+
+      yield* stack.destroy();
+
+      const deployed = yield* retryAuthBlip(
+        stack.deploy(
+          program(creds, {
+            dataset: "workers_trace_events",
+            enabled: false,
+          }),
+        ),
+      );
+
+      const provider = yield* Provider.findProvider(Cloudflare.Logpush.Job);
+      const all = yield* provider.list();
+
+      // The account-scoped job we just deployed is present in the
+      // exhaustively-paginated (account + per-zone fan-out) result.
+      const found = all.find((job) => job.jobId === deployed.job.jobId);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(accountId);
+      expect(found?.zoneId).toBeUndefined();
+      expect(found?.dataset).toEqual("workers_trace_events");
+
+      yield* stack.destroy();
+
+      yield* waitForDelete(accountId, deployed.job.jobId);
+
       yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 180_000 },

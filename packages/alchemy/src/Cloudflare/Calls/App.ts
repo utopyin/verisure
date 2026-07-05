@@ -2,6 +2,7 @@ import * as calls from "@distilled.cloud/cloudflare/calls";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -9,10 +10,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const CallsAppTypeId = "Cloudflare.Calls.App" as const;
-type CallsAppTypeId = typeof CallsAppTypeId;
+const TypeId = "Cloudflare.Calls.App" as const;
+type TypeId = typeof TypeId;
 
-export type CallsAppProps = {
+export type AppProps = {
   /**
    * A short description of the app, not shown to end users and not unique.
    * Mutable in place. If omitted, a unique name is generated from the app,
@@ -22,7 +23,7 @@ export type CallsAppProps = {
   name?: string;
 };
 
-export type CallsAppAttributes = {
+export type AppAttributes = {
   /**
    * Cloudflare-generated unique identifier for the app. Used in client SDK
    * session URLs (`https://rtc.live.cloudflare.com/v1/apps/{appId}/...`).
@@ -52,13 +53,7 @@ export type CallsAppAttributes = {
   modified: string;
 };
 
-export type CallsApp = Resource<
-  CallsAppTypeId,
-  CallsAppProps,
-  CallsAppAttributes,
-  never,
-  Providers
->;
+export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
 
 /**
  * A Cloudflare Realtime (formerly "Calls") SFU application.
@@ -68,16 +63,18 @@ export type CallsApp = Resource<
  * backend authenticates management calls with the create-only `secret`
  * (a bearer token). The only configurable property is the human-readable
  * `name`, which is mutable in place.
- *
+ * @resource
+ * @product Calls
+ * @category Media
  * @section Creating an App
  * @example App with a generated name
  * ```typescript
- * const app = yield* Cloudflare.CallsApp("realtime", {});
+ * const app = yield* Cloudflare.Calls.App("realtime", {});
  * ```
  *
  * @example App with an explicit name
  * ```typescript
- * const app = yield* Cloudflare.CallsApp("realtime", {
+ * const app = yield* Cloudflare.Calls.App("realtime", {
  *   name: "my-realtime-app",
  * });
  * ```
@@ -95,17 +92,34 @@ export type CallsApp = Resource<
  *
  * @see https://developers.cloudflare.com/realtime/
  */
-export const CallsApp = Resource<CallsApp>(CallsAppTypeId);
+export const App = Resource<App>(TypeId);
 
 /**
- * Returns true if the given value is a CallsApp resource.
+ * Returns true if the given value is a App resource.
  */
-export const isCallsApp = (value: unknown): value is CallsApp =>
-  Predicate.hasProperty(value, "Type") && value.Type === CallsAppTypeId;
+export const isApp = (value: unknown): value is App =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const CallsAppProvider = () =>
-  Provider.succeed(CallsApp, {
+export const AppProvider = () =>
+  Provider.succeed(App, {
     stables: ["appId", "accountId", "secret", "created"],
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Account-scoped collection: enumerate every Calls app under the
+      // account, exhaustively paginating `result`. The create-only secret
+      // is never returned by the list endpoint, so — matching `read` for a
+      // resource without prior state — hydrate it as an empty Redacted.
+      return yield* calls.listSfus.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).map((app) =>
+              toAttributes(app, accountId, Redacted.make("")),
+            ),
+          ),
+        ),
+      );
+    }),
     diff: Effect.fn(function* ({ output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       if (output !== undefined && output.accountId !== accountId) {
@@ -181,7 +195,7 @@ const toAttributes = (
   app: calls.GetSfuResponse | calls.CreateSfuResponse | calls.UpdateSfuResponse,
   accountId: string,
   secret: Redacted.Redacted<string>,
-): CallsAppAttributes => ({
+): AppAttributes => ({
   appId: app.uid ?? "",
   accountId,
   secret,

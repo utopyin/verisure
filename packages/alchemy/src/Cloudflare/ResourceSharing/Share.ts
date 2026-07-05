@@ -1,6 +1,7 @@
 import * as resourceSharing from "@distilled.cloud/cloudflare/resource-sharing";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -9,8 +10,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const ShareTypeId = "Cloudflare.ResourceSharing.Share" as const;
-type ShareTypeId = typeof ShareTypeId;
+const TypeId = "Cloudflare.ResourceSharing.Share" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Type of resource that can be shared across accounts/organizations.
@@ -133,7 +134,7 @@ export type ShareAttributes = {
 };
 
 export type Share = Resource<
-  ShareTypeId,
+  TypeId,
   ShareProps,
   ShareAttributes,
   never,
@@ -149,17 +150,19 @@ export type Share = Resource<
  * are seeded inline. Post-create changes to those arrays are reconciled
  * through the recipient/resource sub-APIs; only `name` is mutable on the
  * share itself. Deletion is asynchronous (`active → deleting → deleted`).
- *
+ * @resource
+ * @product Resource Sharing
+ * @category Account & Identity
  * @section Creating a Share
  * @example Share a gateway policy with another account
  * ```typescript
- * const policy = yield* Cloudflare.GatewayRule("BlockPhishing", {
+ * const policy = yield* Cloudflare.Gateway.Rule("BlockPhishing", {
  *   action: "block",
  *   traffic: 'dns.fqdn == "phishing.example"',
  *   filters: ["dns"],
  * });
  *
- * const share = yield* Cloudflare.Share("PolicyShare", {
+ * const share = yield* Cloudflare.ResourceSharing.Share("PolicyShare", {
  *   recipients: [{ accountId: "<recipient-account-id>" }],
  *   resources: [
  *     { resourceType: "gateway-policy", resourceId: policy.ruleId },
@@ -170,7 +173,7 @@ export type Share = Resource<
  * @section Updating a Share
  * @example Rename in place
  * ```typescript
- * const share = yield* Cloudflare.Share("PolicyShare", {
+ * const share = yield* Cloudflare.ResourceSharing.Share("PolicyShare", {
  *   name: "security-baseline-v2",
  *   recipients: [{ accountId: "<recipient-account-id>" }],
  *   resources: [
@@ -181,17 +184,36 @@ export type Share = Resource<
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-account-resources/
  */
-export const Share = Resource<Share>(ShareTypeId);
+export const Share = Resource<Share>(TypeId);
 
 /**
  * Returns true if the given value is a Share resource.
  */
 export const isShare = (value: unknown): value is Share =>
-  Predicate.hasProperty(value, "Type") && value.Type === ShareTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const ShareProvider = () =>
   Provider.succeed(Share, {
     stables: ["shareId", "accountId", "organizationId", "created"],
+    // Account collection — enumerate every share this account sends
+    // (the ones we own and can delete), exhaustively paginated, mapped
+    // into the same Attributes shape `read` returns. Deleted shares are
+    // excluded since they no longer exist.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* resourceSharing.listResourceSharings
+        .pages({ accountId, kind: "sent", perPage: 50 })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? [])
+                .filter((s) => s.status !== "deleted")
+                .map((s) => toAttributes(s, accountId)),
+            ),
+          ),
+        );
+    }),
     diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
       const { accountId } = yield* yield* CloudflareEnvironment;

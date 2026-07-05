@@ -21,13 +21,13 @@ import { isResolved } from "../Diff.ts";
 import { createPhysicalName } from "../PhysicalName.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
-import { recordsEqual } from "../Util/equal.ts";
 import {
   hashImports,
   hashMigrations,
   listSqlFiles,
   readSqlFile,
 } from "../Sql/SqlFile.ts";
+import { recordsEqual } from "../Util/equal.ts";
 import { applyMigrations, runSql } from "./Migrations.ts";
 import { parsePostgresOrigin, type PostgresOrigin } from "./PostgresOrigin.ts";
 import type { Providers } from "./Providers.ts";
@@ -147,6 +147,11 @@ export type Project = Resource<
      * when fronting Neon with another pooler like Hyperdrive.
      */
     origin: PostgresOrigin;
+    /**
+     * Parsed pooled connection components. Useful as a Hyperdrive `dev`
+     * origin when local workers bypass Hyperdrive and connect directly.
+     */
+    pooledOrigin: PostgresOrigin;
     historyRetentionSeconds: number;
     enableLogicalReplication: boolean;
     migrationsDir: string | undefined;
@@ -158,13 +163,15 @@ export type Project = Resource<
   Providers
 >;
 
+type ProjectAttributes = Project["Attributes"];
+
 /**
  * A Neon serverless Postgres project.
  *
  * Creating a project also provisions the project's default branch (named
  * "main" by default), an initial role, an initial database, and a
  * read-write compute endpoint, exposed as `connectionUri`.
- *
+ * @resource
  * @section Creating a Project
  * @example Basic project
  * ```typescript
@@ -209,6 +216,23 @@ export const Project = Resource<Project>("Neon.Project");
 export const ProjectProvider = () =>
   Provider.succeed(Project, {
     stables: ["projectId", "defaultBranchId"],
+    list: Effect.fn(function* () {
+      // Account-scoped collection: enumerate every project via the Neon
+      // projects list API, then hydrate each into the exact `read`
+      // Attributes shape with bounded concurrency.
+      const projects = yield* listAllProjects;
+      const rows = yield* Effect.forEach(
+        projects,
+        (project) =>
+          hydrateProjectAttributes(project).pipe(
+            // A project can be deleted between the list call and
+            // hydration — skip it rather than fail the whole enumeration.
+            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is ProjectAttributes => row !== undefined);
+    }),
     diff: Effect.fn(function* ({ id, olds = {}, news = {}, output }) {
       if (!isResolved(news)) return undefined;
       const name = yield* createProjectName(id, news.name);
@@ -217,9 +241,9 @@ export const ProjectProvider = () =>
         : yield* createProjectName(id, olds.name);
       if (
         oldName !== name ||
-        (news.region ?? DEFAULT_REGION) !==
+        (news.region ?? output?.region ?? DEFAULT_REGION) !==
           (output?.region ?? olds.region ?? DEFAULT_REGION) ||
-        (news.pgVersion ?? DEFAULT_PG_VERSION) !==
+        (news.pgVersion ?? output?.pgVersion ?? DEFAULT_PG_VERSION) !==
           (output?.pgVersion ?? olds.pgVersion ?? DEFAULT_PG_VERSION) ||
         (news.defaultBranchName ?? output?.defaultBranchName) !==
           output?.defaultBranchName
@@ -264,6 +288,9 @@ export const ProjectProvider = () =>
           Effect.map(({ project }) => ({
             ...output,
             projectName: project.name,
+            pooledOrigin:
+              output.pooledOrigin ??
+              parsePostgresOrigin(output.pooledConnectionUri),
             historyRetentionSeconds: project.history_retention_seconds,
             enableLogicalReplication:
               project.settings?.enable_logical_replication === true,
@@ -275,45 +302,11 @@ export const ProjectProvider = () =>
       const matches = yield* findProjectByName(name);
       const match = matches[0];
       if (!match) return undefined;
-      const branches = yield* listProjectBranches({
-        project_id: match.id,
-        search: olds?.defaultBranchName ?? "main",
-      });
-      const defaultBranch =
-        branches.branches.find((b) => b.default) ?? branches.branches[0];
-      if (!defaultBranch) return undefined;
-      const databases = yield* listProjectBranchDatabases({
-        project_id: match.id,
-        branch_id: defaultBranch.id,
-      });
-      const db = databases.databases[0];
-      if (!db) return undefined;
-      const conn = yield* resolveConnection(
-        match.id,
-        defaultBranch.id,
-        db.name,
-        db.owner_name,
-      );
-      return {
-        projectId: match.id,
-        projectName: match.name,
-        region: match.region_id as NeonRegion,
-        pgVersion: match.pg_version as NeonPgVersion,
-        defaultBranchId: defaultBranch.id,
-        defaultBranchName: defaultBranch.name,
-        databaseName: db.name,
-        roleName: db.owner_name,
-        connectionUri: conn.uri,
-        pooledConnectionUri: conn.pooled,
-        origin: parsePostgresOrigin(conn.uri),
-        historyRetentionSeconds: match.history_retention_seconds ?? 86400,
-        enableLogicalReplication:
-          match.settings?.enable_logical_replication === true,
+      return yield* hydrateProjectAttributes(match, {
+        defaultBranchName: olds?.defaultBranchName,
         migrationsDir: olds?.migrationsDir,
         migrationsTable: olds?.migrationsTable,
-        migrationsHashes: {},
-        importHashes: {},
-      };
+      });
     }),
     reconcile: Effect.fn(function* ({ id, news = {}, output }) {
       // Ensure — when no prior output exists we create the project
@@ -347,6 +340,9 @@ export const ProjectProvider = () =>
               connectionUri: output.connectionUri,
               pooledConnectionUri: output.pooledConnectionUri,
               origin: output.origin,
+              pooledOrigin:
+                output.pooledOrigin ??
+                parsePostgresOrigin(output.pooledConnectionUri),
               historyRetentionSeconds:
                 r.project.history_retention_seconds ??
                 output.historyRetentionSeconds,
@@ -396,6 +392,7 @@ export const ProjectProvider = () =>
               connectionUri: conn.uri,
               pooledConnectionUri: conn.pooled,
               origin: parsePostgresOrigin(conn.uri),
+              pooledOrigin: parsePostgresOrigin(conn.pooled),
               historyRetentionSeconds:
                 created.project.history_retention_seconds ?? 86400,
               enableLogicalReplication:
@@ -606,6 +603,88 @@ const findProjectByName = (name: string) =>
       cursor = nextCursor;
     }
     return matches;
+  });
+
+/**
+ * Exhaustively enumerate every project in the account. Uses the same
+ * cursor-stop heuristic as {@link findProjectByName} because Neon returns a
+ * `pagination.cursor` on every page (it's the last row's `created_at`, not a
+ * "has next page" flag), so we'd otherwise loop forever re-fetching.
+ */
+const listAllProjects = Effect.gen(function* () {
+  const projects: ListProjectsOutput["projects"][number][] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const page = yield* listProjects(cursor !== undefined ? { cursor } : {});
+    projects.push(...page.projects);
+    const nextCursor = page.pagination?.cursor;
+    if (
+      page.projects.length === 0 ||
+      nextCursor === undefined ||
+      nextCursor === cursor
+    ) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+  return projects;
+});
+
+/**
+ * Hydrate a project summary (from the list API) into the exact `read`
+ * Attributes shape — resolving the default branch, its primary database, and
+ * the direct + pooled connection URIs. Returns `undefined` when the project
+ * has no branch or database yet (mirrors `read`).
+ */
+const hydrateProjectAttributes = (
+  project: ListProjectsOutput["projects"][number],
+  opts: {
+    defaultBranchName?: string;
+    migrationsDir?: string;
+    migrationsTable?: string;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const branches = yield* listProjectBranches({
+      project_id: project.id,
+      search: opts.defaultBranchName ?? "main",
+    });
+    const defaultBranch =
+      branches.branches.find((b) => b.default) ?? branches.branches[0];
+    if (!defaultBranch) return undefined;
+    const databases = yield* listProjectBranchDatabases({
+      project_id: project.id,
+      branch_id: defaultBranch.id,
+    });
+    const db = databases.databases[0];
+    if (!db) return undefined;
+    const conn = yield* resolveConnection(
+      project.id,
+      defaultBranch.id,
+      db.name,
+      db.owner_name,
+    );
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      region: project.region_id as NeonRegion,
+      pgVersion: project.pg_version as NeonPgVersion,
+      defaultBranchId: defaultBranch.id,
+      defaultBranchName: defaultBranch.name,
+      databaseName: db.name,
+      roleName: db.owner_name,
+      connectionUri: conn.uri,
+      pooledConnectionUri: conn.pooled,
+      origin: parsePostgresOrigin(conn.uri),
+      pooledOrigin: parsePostgresOrigin(conn.pooled),
+      historyRetentionSeconds: project.history_retention_seconds ?? 86400,
+      enableLogicalReplication:
+        project.settings?.enable_logical_replication === true,
+      migrationsDir: opts.migrationsDir,
+      migrationsTable: opts.migrationsTable,
+      migrationsHashes: {},
+      importHashes: {},
+    } satisfies ProjectAttributes;
   });
 
 const runMigrations = (

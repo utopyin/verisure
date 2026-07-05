@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as cache from "@distilled.cloud/cloudflare/cache";
 import { expect } from "@effect/vitest";
@@ -31,11 +32,13 @@ const resolveZoneId = Effect.gen(function* () {
 });
 
 // The scoped API token the test harness mints propagates eventually-
-// consistently across Cloudflare's edge — a fresh token intermittently 403s.
-// Ride out the blips on the test's own out-of-band calls by retrying the
-// typed `Forbidden` error (part of each cache operation's error union via
-// distilled patches).
-const forbiddenRetrySchedule = Schedule.exponential("500 millis");
+// consistently across Cloudflare's edge — a fresh token intermittently rejects
+// requests with `403 Forbidden` OR `401 Unauthorized` until it has propagated.
+// Ride out the blips on the test's own out-of-band calls by retrying both typed
+// auth errors (part of each cache operation's error union via distilled patches).
+const tokenPropagationRetrySchedule = Schedule.exponential("500 millis");
+const isTokenPropagationError = (e: { _tag: string }) =>
+  e._tag === "Forbidden" || e._tag === "Unauthorized";
 
 /**
  * Observe the live setting: the configured value, or `undefined` when the
@@ -45,8 +48,8 @@ const getVariants = (zoneId: string) =>
   cache.getVariant({ zoneId }).pipe(
     Effect.catchTag("VariantsNotConfigured", () => Effect.succeed(undefined)),
     Effect.retry({
-      while: (e) => e._tag === "Forbidden",
-      schedule: forbiddenRetrySchedule,
+      while: isTokenPropagationError,
+      schedule: tokenPropagationRetrySchedule,
       times: 8,
     }),
   );
@@ -56,8 +59,8 @@ const resetBaseline = (zoneId: string) =>
   cache.deleteVariant({ zoneId }).pipe(
     Effect.catchTag("VariantsNotConfigured", () => Effect.succeed(undefined)),
     Effect.retry({
-      while: (e) => e._tag === "Forbidden",
-      schedule: forbiddenRetrySchedule,
+      while: isTokenPropagationError,
+      schedule: tokenPropagationRetrySchedule,
       times: 8,
     }),
   );
@@ -75,7 +78,7 @@ describe.sequential("Variants", () => {
 
         const created = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.Variants("ImageVariants", {
+            return yield* Cloudflare.Cache.Variants("ImageVariants", {
               zoneId,
               jpeg: ["image/webp"],
             });
@@ -94,7 +97,7 @@ describe.sequential("Variants", () => {
         // Update in place — PATCH replaces the full value object.
         const updated = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.Variants("ImageVariants", {
+            return yield* Cloudflare.Cache.Variants("ImageVariants", {
               zoneId,
               jpeg: ["image/webp", "image/avif"],
               png: ["image/webp"],
@@ -114,7 +117,7 @@ describe.sequential("Variants", () => {
         // Removing an extension from props unsets it (full replace).
         const narrowed = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.Variants("ImageVariants", {
+            return yield* Cloudflare.Cache.Variants("ImageVariants", {
               zoneId,
               png: ["image/avif"],
             });
@@ -146,7 +149,7 @@ describe.sequential("Variants", () => {
 
         const created = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.Variants("ImageVariants", {
+            return yield* Cloudflare.Cache.Variants("ImageVariants", {
               zoneId,
               webp: ["image/avif"],
             });
@@ -161,15 +164,15 @@ describe.sequential("Variants", () => {
           .patchVariant({ zoneId, value: { gif: ["image/webp"] } })
           .pipe(
             Effect.retry({
-              while: (e) => e._tag === "Forbidden",
-              schedule: forbiddenRetrySchedule,
+              while: isTokenPropagationError,
+              schedule: tokenPropagationRetrySchedule,
               times: 8,
             }),
           );
 
         const converged = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.Variants("ImageVariants", {
+            return yield* Cloudflare.Cache.Variants("ImageVariants", {
               zoneId,
               webp: ["image/avif"],
               tiff: ["image/webp"],
@@ -191,5 +194,47 @@ describe.sequential("Variants", () => {
         const gone = yield* getVariants(zoneId);
         expect(gone).toBeUndefined();
       }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (zone-scoped singleton with create/delete
+  // semantics): there is no account-wide API, so `list()` enumerates every
+  // zone via `listAllZones` and reads the setting in each, skipping zones
+  // where it was never configured. Deploy the setting on the standing test
+  // zone first so it appears in the enumeration, then assert it is present.
+  test.provider("list enumerates the configured variants settings", (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      yield* stack.destroy();
+      yield* resetBaseline(zoneId);
+
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Cache.Variants("ImageVariants", {
+            zoneId,
+            jpeg: ["image/webp"],
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(Cloudflare.Cache.Variants);
+      // `list()` enumerates every zone with the freshly-minted scoped token,
+      // which propagates eventually-consistently and intermittently returns
+      // `401 Unauthorized` / `403 Forbidden` — ride those blips out too.
+      const all = yield* provider.list().pipe(
+        Effect.retry({
+          while: isTokenPropagationError,
+          schedule: tokenPropagationRetrySchedule,
+          times: 8,
+        }),
+      );
+
+      expect(all.length).toBeGreaterThan(0);
+      const entry = all.find((v) => v.zoneId === zoneId);
+      expect(entry).toBeDefined();
+      expect(entry!.value.jpeg).toEqual(["image/webp"]);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

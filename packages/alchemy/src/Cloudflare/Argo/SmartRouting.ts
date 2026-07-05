@@ -4,10 +4,12 @@ import * as Predicate from "effect/Predicate";
 
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const SmartRoutingTypeId = "Cloudflare.Argo.SmartRouting" as const;
-type SmartRoutingTypeId = typeof SmartRoutingTypeId;
+const TypeId = "Cloudflare.Argo.SmartRouting" as const;
+type TypeId = typeof TypeId;
 
 export type SmartRoutingProps = {
   /**
@@ -45,7 +47,7 @@ export type SmartRoutingAttributes = {
 };
 
 export type SmartRouting = Resource<
-  SmartRoutingTypeId,
+  TypeId,
   SmartRoutingProps,
   SmartRoutingAttributes,
   never,
@@ -70,20 +72,22 @@ export type SmartRouting = Resource<
  * the Argo subscription every read or patch of this setting fails with
  * the typed `NotAuthorized` error (Cloudflare code 1015) — purchase the
  * add-on on the zone before managing this resource.
- *
+ * @resource
+ * @product Argo
+ * @category Performance & Reliability
  * @section Enabling Smart Routing
  * @example Enable Argo Smart Routing on a zone
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.SmartRouting("SmartRouting", {
+ * yield* Cloudflare.Argo.SmartRouting("SmartRouting", {
  *   zoneId: zone.zoneId,
  * });
  * ```
  *
  * @example Explicitly disable Argo Smart Routing
  * ```typescript
- * yield* Cloudflare.SmartRouting("SmartRouting", {
+ * yield* Cloudflare.Argo.SmartRouting("SmartRouting", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  * });
@@ -91,17 +95,45 @@ export type SmartRouting = Resource<
  *
  * @see https://developers.cloudflare.com/argo-smart-routing/
  */
-export const SmartRouting = Resource<SmartRouting>(SmartRoutingTypeId);
+export const SmartRouting = Resource<SmartRouting>(TypeId);
 
 /**
  * Returns true if the given value is a SmartRouting resource.
  */
 export const isSmartRouting = (value: unknown): value is SmartRouting =>
-  Predicate.hasProperty(value, "Type") && value.Type === SmartRoutingTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const SmartRoutingProvider = () =>
   Provider.succeed(SmartRouting, {
     stables: ["zoneId", "initialValue"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its setting.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          argo.getSmartRouting({ zoneId }).pipe(
+            Effect.map((observed) =>
+              toAttributes(zoneId, observed, toValue(observed.value)),
+            ),
+            // Argo Smart Routing is a paid add-on — zones without the
+            // subscription reject every read with the typed entitlement
+            // tag (code 1015); skip them. Zones deleted out-of-band
+            // surface InvalidObjectIdentifier.
+            Effect.catchTag("NotAuthorized", () => Effect.succeed(undefined)),
+            Effect.catchTag("InvalidObjectIdentifier", () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is SmartRoutingAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
       const o = olds as SmartRoutingProps;

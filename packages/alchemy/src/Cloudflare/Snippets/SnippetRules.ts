@@ -5,7 +5,9 @@ import * as Predicate from "effect/Predicate";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 /**
  * A single rule mapping a traffic expression to a snippet.
@@ -88,16 +90,18 @@ export type SnippetRules = Resource<
  * Safety: when there is no prior state and the zone already has a
  * non-empty rule list, `read` reports it as `Unowned` and the engine
  * refuses to take it over unless `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Snippets
+ * @category Rules & Configuration
  * @section Activating Snippets
  * @example Route a path through a snippet
  * ```typescript
- * const snippet = yield* Cloudflare.Snippet("HeaderSnippet", {
+ * const snippet = yield* Cloudflare.Snippets.Snippet("HeaderSnippet", {
  *   zoneId: zone.zoneId,
  *   code: snippetCode,
  * });
  *
- * yield* Cloudflare.SnippetRules("Rules", {
+ * yield* Cloudflare.Snippets.SnippetRules("Rules", {
  *   zoneId: zone.zoneId,
  *   rules: [
  *     {
@@ -118,6 +122,35 @@ export const isSnippetRules = (value: unknown): value is SnippetRules =>
 export const SnippetRulesProvider = () =>
   Provider.succeed(SnippetRules, {
     stables: ["zoneId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Snippet rules are a per-zone singleton with no account-wide list
+      // API — enumerate every zone and read its rule list. Zones with no
+      // rules have nothing to manage (matches `read` returning undefined
+      // for an empty list), so skip them.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          listObservedRules(zoneId).pipe(
+            Effect.map((rules): SnippetRulesAttributes | undefined =>
+              rules.length === 0 ? undefined : { zoneId, rules },
+            ),
+            // Plan-gated zones (and eventually-consistent token 401/403s)
+            // reject the route; skip them. (`listObservedRules` already maps
+            // the snippet-rules 404 to an empty list, which becomes
+            // `undefined` above.)
+            Effect.catchTag(["Forbidden", "Unauthorized"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is SnippetRulesAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       const o = olds as SnippetRulesProps;
@@ -190,6 +223,9 @@ interface WireRule {
 
 const listObservedRules = (zoneId: string) =>
   snippets.listRules({ zoneId }).pipe(
+    // A zone that has never had a snippet-rule list 404s — there is simply
+    // no rule list, which is equivalent to an empty one.
+    Effect.catchTag("SnippetRulesNotFound", () => Effect.succeed([])),
     Effect.map((result): SnippetRuleAttribute[] => {
       if (!Array.isArray(result)) return [];
       return (result as WireRule[]).flatMap((rule) =>

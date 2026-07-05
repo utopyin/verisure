@@ -1,6 +1,7 @@
 import * as magicTransit from "@distilled.cloud/cloudflare/magic-transit";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -10,8 +11,8 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const MagicSiteTypeId = "Cloudflare.MagicTransit.Site" as const;
-type MagicSiteTypeId = typeof MagicSiteTypeId;
+const TypeId = "Cloudflare.MagicTransit.Site" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Geographic location of a Magic WAN site.
@@ -76,7 +77,7 @@ export interface MagicSiteAttributes {
 }
 
 export type MagicSite = Resource<
-  MagicSiteTypeId,
+  TypeId,
   MagicSiteProps,
   MagicSiteAttributes,
   never,
@@ -93,11 +94,13 @@ export type MagicSite = Resource<
  *
  * `haMode` is create-only — changing it triggers a replacement. Everything
  * else is updated in place.
- *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  * @section Creating a site
  * @example Basic site
  * ```typescript
- * const site = yield* Cloudflare.MagicSite("hq", {
+ * const site = yield* Cloudflare.MagicTransit.MagicSite("hq", {
  *   description: "Headquarters",
  *   location: { lat: "37.7749", lon: "-122.4194" },
  * });
@@ -105,14 +108,14 @@ export type MagicSite = Resource<
  *
  * @example Site with LAN and WAN
  * ```typescript
- * const site = yield* Cloudflare.MagicSite("hq", {});
+ * const site = yield* Cloudflare.MagicTransit.MagicSite("hq", {});
  *
- * const wan = yield* Cloudflare.MagicSiteWan("hq-wan", {
+ * const wan = yield* Cloudflare.MagicTransit.MagicSiteWan("hq-wan", {
  *   siteId: site.siteId,
  *   physport: 1,
  * });
  *
- * const lan = yield* Cloudflare.MagicSiteLan("hq-lan", {
+ * const lan = yield* Cloudflare.MagicTransit.MagicSiteLan("hq-lan", {
  *   siteId: site.siteId,
  *   physport: 2,
  *   vlanTag: 0,
@@ -121,17 +124,35 @@ export type MagicSite = Resource<
  *
  * @see https://developers.cloudflare.com/magic-wan/configuration/connector/
  */
-export const MagicSite = Resource<MagicSite>(MagicSiteTypeId);
+export const MagicSite = Resource<MagicSite>(TypeId);
 
 /**
  * Returns true if the given value is a MagicSite resource.
  */
 export const isMagicSite = (value: unknown): value is MagicSite =>
-  Predicate.hasProperty(value, "Type") && value.Type === MagicSiteTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const MagicSiteProvider = () =>
   Provider.succeed(MagicSite, {
     stables: ["siteId", "accountId", "haMode"],
+
+    // Account collection — Magic WAN sites are account-scoped and enumerated
+    // via the paginated list API. Accounts without a Magic WAN subscription
+    // reject with the typed `MagicWanUnauthorized` (code 1025) → return [].
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      return yield* magicTransit.listSites.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).map((site) => toAttributes(site, accountId)),
+          ),
+        ),
+        Effect.catchTag("MagicWanUnauthorized", () =>
+          Effect.succeed<MagicSiteAttributes[]>([]),
+        ),
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds, news }) {
       if (!isResolved(news)) return undefined;

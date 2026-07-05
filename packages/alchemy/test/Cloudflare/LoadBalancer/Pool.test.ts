@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as loadBalancers from "@distilled.cloud/cloudflare/load-balancers";
 import { expect } from "@effect/vitest";
@@ -93,13 +94,13 @@ test.provider.skipIf(!lbEnabled)(
 
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          const monitor = yield* Cloudflare.LoadBalancerMonitor("Monitor", {
+          const monitor = yield* Cloudflare.LoadBalancer.Monitor("Monitor", {
             description: NAME_MONITOR,
             type: "https",
             path: "/health",
             expectedCodes: "2xx",
           });
-          const pool = yield* Cloudflare.LoadBalancerPool("Pool", {
+          const pool = yield* Cloudflare.LoadBalancer.Pool("Pool", {
             name: NAME_LIFECYCLE,
             origins: [{ name: "origin-1", address: "203.0.113.10" }],
             monitor: monitor.monitorId,
@@ -126,13 +127,13 @@ test.provider.skipIf(!lbEnabled)(
       // engine never has to replace and drop a dependency in one deploy.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          const monitor = yield* Cloudflare.LoadBalancerMonitor("Monitor", {
+          const monitor = yield* Cloudflare.LoadBalancer.Monitor("Monitor", {
             description: NAME_MONITOR,
             type: "https",
             path: "/health",
             expectedCodes: "2xx",
           });
-          const pool = yield* Cloudflare.LoadBalancerPool("Pool", {
+          const pool = yield* Cloudflare.LoadBalancer.Pool("Pool", {
             name: NAME_LIFECYCLE,
             origins: [
               { name: "origin-1", address: "203.0.113.10", weight: 0.7 },
@@ -156,6 +157,36 @@ test.provider.skipIf(!lbEnabled)(
       yield* stack.destroy();
 
       yield* expectGone(accountId, initial.pool.poolId);
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// Account-collection list: enumerate every pool in the account and assert
+// the deployed one is present. Gated like the lifecycle test — without the
+// LB subscription, the deploy fails with the typed `PoolAccessFailed`.
+test.provider.skipIf(!lbEnabled)(
+  "list enumerates the deployed pool",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.LoadBalancer.Pool("ListPool", {
+            name: NAME_LIFECYCLE,
+            origins: [{ name: "origin-1", address: "203.0.113.10" }],
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.LoadBalancer.Pool,
+      );
+      const all = yield* provider.list();
+
+      expect(all.some((p) => p.poolId === deployed.poolId)).toBe(true);
+
+      yield* stack.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

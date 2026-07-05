@@ -9,13 +9,13 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const RealtimeKitWebhookTypeId = "Cloudflare.RealtimeKit.Webhook" as const;
-type RealtimeKitWebhookTypeId = typeof RealtimeKitWebhookTypeId;
+const TypeId = "Cloudflare.RealtimeKit.Webhook" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Event that can trigger a RealtimeKit webhook.
  */
-export type RealtimeKitWebhookEvent =
+export type WebhookEvent =
   | "meeting.started"
   | "meeting.ended"
   | "meeting.participantJoined"
@@ -26,7 +26,7 @@ export type RealtimeKitWebhookEvent =
   | "meeting.transcript"
   | "meeting.summary";
 
-export type RealtimeKitWebhookProps = {
+export type WebhookProps = {
   /**
    * The RealtimeKit app the webhook belongs to. Changing the app triggers a
    * replacement.
@@ -45,7 +45,7 @@ export type RealtimeKitWebhookProps = {
   /**
    * Events that trigger this webhook.
    */
-  events: RealtimeKitWebhookEvent[];
+  events: WebhookEvent[];
   /**
    * Whether the webhook is active.
    * @default true
@@ -53,7 +53,7 @@ export type RealtimeKitWebhookProps = {
   enabled?: boolean;
 };
 
-export type RealtimeKitWebhookAttributes = {
+export type WebhookAttributes = {
   /**
    * Server-generated webhook identifier. Stable across updates.
    */
@@ -77,7 +77,7 @@ export type RealtimeKitWebhookAttributes = {
   /**
    * Events that trigger this webhook.
    */
-  events: RealtimeKitWebhookEvent[];
+  events: WebhookEvent[];
   /**
    * Whether the webhook is active.
    */
@@ -92,10 +92,10 @@ export type RealtimeKitWebhookAttributes = {
   updatedAt: string;
 };
 
-export type RealtimeKitWebhook = Resource<
-  RealtimeKitWebhookTypeId,
-  RealtimeKitWebhookProps,
-  RealtimeKitWebhookAttributes,
+export type Webhook = Resource<
+  TypeId,
+  WebhookProps,
+  WebhookAttributes,
   never,
   Providers
 >;
@@ -106,13 +106,15 @@ export type RealtimeKitWebhook = Resource<
  *
  * Name, URL, events, and enablement are all mutable in place; only moving
  * the webhook to a different app forces a replacement.
- *
+ * @resource
+ * @product Realtime Kit
+ * @category Media
  * @section Creating a Webhook
  * @example Meeting lifecycle events
  * ```typescript
- * const app = yield* Cloudflare.RealtimeKitApp("Meetings", {});
+ * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {});
  *
- * const webhook = yield* Cloudflare.RealtimeKitWebhook("Lifecycle", {
+ * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Lifecycle", {
  *   appId: app.appId,
  *   url: "https://example.com/webhook",
  *   events: ["meeting.started", "meeting.ended"],
@@ -121,7 +123,7 @@ export type RealtimeKitWebhook = Resource<
  *
  * @example Recording events to a Worker
  * ```typescript
- * const webhook = yield* Cloudflare.RealtimeKitWebhook("Recordings", {
+ * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Recordings", {
  *   appId: app.appId,
  *   url: worker.url,
  *   events: ["recording.statusUpdate"],
@@ -131,7 +133,7 @@ export type RealtimeKitWebhook = Resource<
  * @section Updating a Webhook
  * @example Pause delivery without deleting
  * ```typescript
- * const webhook = yield* Cloudflare.RealtimeKitWebhook("Lifecycle", {
+ * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Lifecycle", {
  *   appId: app.appId,
  *   url: "https://example.com/webhook",
  *   events: ["meeting.started", "meeting.ended"],
@@ -141,21 +143,16 @@ export type RealtimeKitWebhook = Resource<
  *
  * @see https://developers.cloudflare.com/realtime/realtimekit/
  */
-export const RealtimeKitWebhook = Resource<RealtimeKitWebhook>(
-  RealtimeKitWebhookTypeId,
-);
+export const Webhook = Resource<Webhook>(TypeId);
 
 /**
- * Returns true if the given value is a RealtimeKitWebhook resource.
+ * Returns true if the given value is a Webhook resource.
  */
-export const isRealtimeKitWebhook = (
-  value: unknown,
-): value is RealtimeKitWebhook =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === RealtimeKitWebhookTypeId;
+export const isWebhook = (value: unknown): value is Webhook =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const RealtimeKitWebhookProvider = () =>
-  Provider.succeed(RealtimeKitWebhook, {
+export const WebhookProvider = () =>
+  Provider.succeed(Webhook, {
     stables: ["webhookId", "accountId", "appId", "createdAt"],
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -215,14 +212,44 @@ export const RealtimeKitWebhookProvider = () =>
 
       if (!observed) {
         // Ensure — greenfield (or out-of-band delete): create with the full
-        // desired body. Webhook names are not unique so there is no
-        // AlreadyExists race to tolerate.
-        const created = yield* realtimeKit.createWebhookWebhook({
+        // desired body. The API rejects a duplicate name in the same app
+        // with a 409 (`RealtimeKitWebhookExists`); this happens when a prior
+        // run leaked a same-named webhook (lost state) or when a retried
+        // create races a 500 that actually persisted. Adopt the existing
+        // webhook by name and converge it to the desired body instead of
+        // leaking / failing.
+        const created = yield* realtimeKit
+          .createWebhookWebhook({ accountId, appId, ...desired })
+          .pipe(
+            Effect.catchTag("RealtimeKitWebhookExists", () =>
+              Effect.succeed(undefined),
+            ),
+          );
+        if (created) {
+          return toAttributes(created.data, accountId, appId);
+        }
+        const existing = yield* findByName(accountId, appId, name);
+        if (!existing) {
+          // Conflict reported but the webhook isn't visible yet — let the
+          // engine retry the reconcile rather than silently succeeding.
+          return yield* realtimeKit
+            .createWebhookWebhook({ accountId, appId, ...desired })
+            .pipe(
+              Effect.map((res) => toAttributes(res.data, accountId, appId)),
+            );
+        }
+        yield* realtimeKit.replaceWebhookWebhook({
           accountId,
           appId,
+          webhookId: existing.id,
           ...desired,
         });
-        return toAttributes(created.data, accountId, appId);
+        const adopted = yield* realtimeKit.getWebhookByIdWebhook({
+          accountId,
+          appId,
+          webhookId: existing.id,
+        });
+        return toAttributes(adopted.data, accountId, appId);
       }
 
       // Sync — diff observed cloud state against desired; the update API is
@@ -260,6 +287,39 @@ export const RealtimeKitWebhookProvider = () =>
           webhookId: output.webhookId,
         })
         .pipe(Effect.catchTag("RealtimeKitWebhookNotFound", () => Effect.void));
+    }),
+    // Webhooks are keyed by {accountId, appId, webhookId} with no account-wide
+    // enumeration API, so fan out: enumerate every RealtimeKit app in the
+    // account, then list each app's webhooks and flatten. The apps endpoint
+    // 403s (`Forbidden`) when RealtimeKit isn't enabled on the account — an
+    // unentitled account simply has no webhooks. Neither endpoint paginates.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const appIds = yield* realtimeKit.getApp({ accountId }).pipe(
+        Effect.map((apps) =>
+          (apps.data ?? [])
+            .map((app) => app?.id)
+            .filter((id): id is string => typeof id === "string"),
+        ),
+        Effect.catchTag("Forbidden", () => Effect.succeed([] as string[])),
+      );
+      const perApp = yield* Effect.forEach(
+        appIds,
+        (appId) =>
+          realtimeKit.getWebhooksWebhook({ accountId, appId }).pipe(
+            Effect.map((res) =>
+              res.data.map((webhook) =>
+                toAttributes(webhook, accountId, appId),
+              ),
+            ),
+            // An app with no webhooks 404s (`RealtimeKitWebhookNotFound`).
+            Effect.catchTag("RealtimeKitWebhookNotFound", () =>
+              Effect.succeed([] as WebhookAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return perApp.flat();
     }),
   });
 
@@ -305,14 +365,14 @@ const toAttributes = (
   webhook: ObservedWebhook,
   accountId: string,
   appId: string,
-): RealtimeKitWebhookAttributes => ({
+): WebhookAttributes => ({
   webhookId: webhook.id,
   accountId,
   appId,
   name: webhook.name,
   url: webhook.url,
   // Distilled widens generated string enums to open unions (`string & {}`).
-  events: [...webhook.events] as RealtimeKitWebhookEvent[],
+  events: [...webhook.events] as WebhookEvent[],
   enabled: webhook.enabled,
   createdAt: webhook.createdAt,
   updatedAt: webhook.updatedAt,

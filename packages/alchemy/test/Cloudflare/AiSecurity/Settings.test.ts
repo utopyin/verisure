@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as aiSecurity from "@distilled.cloud/cloudflare/ai-security";
 import { expect } from "@effect/vitest";
@@ -88,6 +89,37 @@ test.provider(
     }).pipe(logLevel),
 );
 
+// Canonical `list()` test (zone-scoped singleton): there is no account-wide
+// API for this per-zone setting, so `list()` enumerates every zone via
+// `listAllZones` and reads the singleton in each, skipping zones that reject
+// the route (AI Security is entitlement-gated). It always returns a well-typed
+// `Attributes[]` — empty on the unentitled testing account, non-empty and
+// containing the entitled zone when one is supplied via env.
+test.provider(
+  "list enumerates the setting across all entitled zones",
+  (stack) =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.AI.SecuritySettings,
+      );
+      const all = yield* provider.list();
+
+      expect(Array.isArray(all)).toBe(true);
+      // Every element is the full Attributes shape `read` produces.
+      for (const settings of all) {
+        expect(typeof settings.zoneId).toBe("string");
+        expect(typeof settings.enabled).toBe("boolean");
+        expect(typeof settings.initialEnabled).toBe("boolean");
+      }
+      // On an entitled account, the supplied zone must appear in the result.
+      if (entitledZoneId) {
+        expect(all.some((s) => s.zoneId === entitledZoneId)).toBe(true);
+      }
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+);
+
 test.provider.skipIf(!entitledZoneId)(
   "pins enabled, updates in place, and restores the original on destroy",
   (stack) =>
@@ -100,7 +132,7 @@ test.provider.skipIf(!entitledZoneId)(
 
       const created = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AiSecuritySettings("AiSecurity", {
+          return yield* Cloudflare.AI.SecuritySettings("AiSecurity", {
             zoneId,
             enabled: true,
           });
@@ -119,7 +151,7 @@ test.provider.skipIf(!entitledZoneId)(
       // Update in place — same singleton, initial value survives.
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.AiSecuritySettings("AiSecurity", {
+          return yield* Cloudflare.AI.SecuritySettings("AiSecurity", {
             zoneId,
             enabled: false,
           });

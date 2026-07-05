@@ -1,6 +1,7 @@
 import * as flagship from "@distilled.cloud/cloudflare/flagship";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -8,13 +9,13 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const FlagshipFlagTypeId = "Cloudflare.Flagship.Flag" as const;
-type FlagshipFlagTypeId = typeof FlagshipFlagTypeId;
+const TypeId = "Cloudflare.Flagship.Flag" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Comparison operator applied to a targeting condition.
  */
-export type FlagshipFlagConditionOperator =
+export type FlagConditionOperator =
   | "equals"
   | "not_equals"
   | "greater_than"
@@ -31,7 +32,7 @@ export type FlagshipFlagConditionOperator =
  * A single targeting condition: either a flat attribute comparison or a
  * nested group of clauses combined with AND/OR.
  */
-export type FlagshipFlagCondition =
+export type FlagCondition =
   | {
       /**
        * Evaluation-context attribute to match on (e.g. `country`, `userId`).
@@ -40,7 +41,7 @@ export type FlagshipFlagCondition =
       /**
        * Comparison operator.
        */
-      operator: FlagshipFlagConditionOperator;
+      operator: FlagConditionOperator;
       /**
        * Value to compare against.
        */
@@ -50,7 +51,7 @@ export type FlagshipFlagCondition =
       /**
        * Nested conditions combined with `logicalOperator`.
        */
-      clauses: FlagshipFlagCondition[];
+      clauses: FlagCondition[];
       /**
        * How the clauses combine.
        */
@@ -60,7 +61,7 @@ export type FlagshipFlagCondition =
 /**
  * Percentage rollout applied after a rule's conditions match.
  */
-export type FlagshipFlagRollout = {
+export type FlagRollout = {
   /**
    * Percentage of matching contexts served the rule's variation (0-100).
    */
@@ -76,11 +77,11 @@ export type FlagshipFlagRollout = {
  * A targeting rule. Rules are evaluated in ascending `priority`; the first
  * matching rule wins.
  */
-export type FlagshipFlagRule = {
+export type FlagRule = {
   /**
    * Conditions that must all match for the rule to apply.
    */
-  conditions: FlagshipFlagCondition[];
+  conditions: FlagCondition[];
   /**
    * Evaluation order — lower runs first.
    */
@@ -92,15 +93,15 @@ export type FlagshipFlagRule = {
   /**
    * Optional percentage rollout applied after the conditions match.
    */
-  rollout?: FlagshipFlagRollout;
+  rollout?: FlagRollout;
 };
 
 /**
  * Value type of a flag's variations.
  */
-export type FlagshipFlagType = "boolean" | "string" | "number" | "json";
+export type FlagType = "boolean" | "string" | "number" | "json";
 
-export type FlagshipFlagProps = {
+export type FlagProps = {
   /**
    * The Flagship app the flag belongs to. Changing the app triggers a
    * replacement.
@@ -136,7 +137,7 @@ export type FlagshipFlagProps = {
    * `defaultVariation`.
    * @default []
    */
-  rules?: FlagshipFlagRule[];
+  rules?: FlagRule[];
   /**
    * Human readable description of the flag.
    */
@@ -145,10 +146,10 @@ export type FlagshipFlagProps = {
    * Value type of the flag's variations. Inferred from the variation values
    * on write, so it can usually be omitted.
    */
-  type?: FlagshipFlagType;
+  type?: FlagType;
 };
 
-export type FlagshipFlagAttributes = {
+export type FlagAttributes = {
   /**
    * The Flagship app the flag belongs to.
    */
@@ -176,7 +177,7 @@ export type FlagshipFlagAttributes = {
   /**
    * Targeting rules.
    */
-  rules: FlagshipFlagRule[];
+  rules: FlagRule[];
   /**
    * Human readable description of the flag.
    */
@@ -184,7 +185,7 @@ export type FlagshipFlagAttributes = {
   /**
    * Value type of the flag's variations, as inferred by Cloudflare.
    */
-  type: FlagshipFlagType | undefined;
+  type: FlagType | undefined;
   /**
    * When the flag was last modified.
    */
@@ -196,10 +197,10 @@ export type FlagshipFlagAttributes = {
   updatedBy: string | undefined;
 };
 
-export type FlagshipFlag = Resource<
-  FlagshipFlagTypeId,
-  FlagshipFlagProps,
-  FlagshipFlagAttributes,
+export type Flag = Resource<
+  TypeId,
+  FlagProps,
+  FlagAttributes,
   never,
   Providers
 >;
@@ -212,13 +213,15 @@ export type FlagshipFlag = Resource<
  * endpoint); changing variations, rules, enablement, or the default
  * variation takes effect without redeploying code. Everything except the
  * flag key and the parent app is mutable in place.
- *
+ * @resource
+ * @product Flagship
+ * @category Developer Platform
  * @section Creating a Flag
  * @example Boolean flag
  * ```typescript
- * const app = yield* Cloudflare.FlagshipApp("Flags", {});
+ * const app = yield* Cloudflare.Flagship.App("Flags", {});
  *
- * const flag = yield* Cloudflare.FlagshipFlag("NewCheckout", {
+ * const flag = yield* Cloudflare.Flagship.Flag("NewCheckout", {
  *   appId: app.appId,
  *   key: "new-checkout",
  *   defaultVariation: "off",
@@ -228,7 +231,7 @@ export type FlagshipFlag = Resource<
  *
  * @example String flag with multiple variations
  * ```typescript
- * const flag = yield* Cloudflare.FlagshipFlag("CheckoutFlow", {
+ * const flag = yield* Cloudflare.Flagship.Flag("CheckoutFlow", {
  *   appId: app.appId,
  *   key: "checkout-flow",
  *   defaultVariation: "v1",
@@ -239,7 +242,7 @@ export type FlagshipFlag = Resource<
  * @section Targeting Rules
  * @example Serve a variation to a specific country
  * ```typescript
- * const flag = yield* Cloudflare.FlagshipFlag("DarkMode", {
+ * const flag = yield* Cloudflare.Flagship.Flag("DarkMode", {
  *   appId: app.appId,
  *   key: "dark-mode",
  *   defaultVariation: "off",
@@ -258,7 +261,7 @@ export type FlagshipFlag = Resource<
  *
  * @example Percentage rollout
  * ```typescript
- * const flag = yield* Cloudflare.FlagshipFlag("NewSearch", {
+ * const flag = yield* Cloudflare.Flagship.Flag("NewSearch", {
  *   appId: app.appId,
  *   key: "new-search",
  *   defaultVariation: "off",
@@ -277,7 +280,7 @@ export type FlagshipFlag = Resource<
  * @section Toggling a Flag
  * @example Disable a flag without removing its rules
  * ```typescript
- * const flag = yield* Cloudflare.FlagshipFlag("NewCheckout", {
+ * const flag = yield* Cloudflare.Flagship.Flag("NewCheckout", {
  *   appId: app.appId,
  *   key: "new-checkout",
  *   enabled: false,
@@ -289,16 +292,16 @@ export type FlagshipFlag = Resource<
  * @see https://developers.cloudflare.com/flagship/
  * @see https://developers.cloudflare.com/api/resources/flagship/
  */
-export const FlagshipFlag = Resource<FlagshipFlag>(FlagshipFlagTypeId);
+export const Flag = Resource<Flag>(TypeId);
 
 /**
- * Returns true if the given value is a FlagshipFlag resource.
+ * Returns true if the given value is a Flagship Flag resource.
  */
-export const isFlagshipFlag = (value: unknown): value is FlagshipFlag =>
-  Predicate.hasProperty(value, "Type") && value.Type === FlagshipFlagTypeId;
+export const isFlag = (value: unknown): value is Flag =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const FlagshipFlagProvider = () =>
-  Provider.succeed(FlagshipFlag, {
+export const FlagProvider = () =>
+  Provider.succeed(Flag, {
     stables: ["appId", "accountId", "key"],
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -427,6 +430,39 @@ export const FlagshipFlagProvider = () =>
           ),
         );
     }),
+    // Flags are sub-resources keyed by (accountId, appId, key). There is no
+    // account-wide flag enumeration, so enumerate every Flagship app first,
+    // then fan out the per-app flag list and flatten.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const apps = yield* flagship.listApps.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) => page.result ?? []),
+        ),
+      );
+      const rows = yield* Effect.forEach(
+        apps,
+        (app) =>
+          flagship.listAppFlags.pages({ accountId, appId: app.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((flag) =>
+                  toAttributes(flag, accountId, app.id),
+                ),
+              ),
+            ),
+            // The parent app can be deleted between enumeration and the
+            // per-app flag list; treat a gone app as having no flags.
+            Effect.catchTag("FlagshipAppNotFound", () =>
+              Effect.succeed<FlagAttributes[]>([]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
   });
 
 /**
@@ -451,9 +487,7 @@ const createFlagKey = (id: string, key: string | undefined) =>
  * Wire rules carry readonly markers, open-union widening, and explicit
  * nulls; strip them so rules diff structurally against the user's props.
  */
-const normalizeRules = (
-  rules: readonly WireRule[] | FlagshipFlagRule[],
-): FlagshipFlagRule[] =>
+const normalizeRules = (rules: readonly WireRule[] | FlagRule[]): FlagRule[] =>
   rules.map((rule) => ({
     conditions: normalizeConditions(rule.conditions),
     priority: rule.priority,
@@ -477,10 +511,8 @@ type WireRule = {
   rollout?: { percentage: number; attribute?: string | null } | null;
 };
 
-const normalizeConditions = (
-  conditions: readonly unknown[],
-): FlagshipFlagCondition[] =>
-  conditions.flatMap((condition): FlagshipFlagCondition[] => {
+const normalizeConditions = (conditions: readonly unknown[]): FlagCondition[] =>
+  conditions.flatMap((condition): FlagCondition[] => {
     if (Predicate.hasProperty(condition, "clauses")) {
       const group = condition as {
         clauses: readonly unknown[];
@@ -502,7 +534,7 @@ const normalizeConditions = (
       return [
         {
           attribute: flat.attribute,
-          operator: flat.operator as FlagshipFlagConditionOperator,
+          operator: flat.operator as FlagConditionOperator,
           value: flat.value,
         },
       ];
@@ -514,10 +546,11 @@ const toAttributes = (
   flag:
     | flagship.GetAppFlagResponse
     | flagship.CreateAppFlagResponse
-    | flagship.UpdateAppFlagResponse,
+    | flagship.UpdateAppFlagResponse
+    | flagship.ListAppFlagsResponse["result"][number],
   accountId: string,
   appId: string,
-): FlagshipFlagAttributes => ({
+): FlagAttributes => ({
   appId,
   accountId,
   key: flag.key,
@@ -526,7 +559,7 @@ const toAttributes = (
   variations: flag.variations,
   rules: normalizeRules(flag.rules),
   description: flag.description ?? undefined,
-  type: (flag.type as FlagshipFlagType | null | undefined) ?? undefined,
+  type: (flag.type as FlagType | null | undefined) ?? undefined,
   updatedAt: flag.updatedAt ?? undefined,
   updatedBy: flag.updatedBy ?? undefined,
 });

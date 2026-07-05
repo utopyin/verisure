@@ -1,15 +1,18 @@
 import * as cache from "@distilled.cloud/cloudflare/cache";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const OriginCloudRegionTypeId = "Cloudflare.Cache.OriginCloudRegion" as const;
-type OriginCloudRegionTypeId = typeof OriginCloudRegionTypeId;
+const TypeId = "Cloudflare.Cache.OriginCloudRegion" as const;
+type TypeId = typeof TypeId;
 
 /**
  * The cloud vendor hosting an origin. Region identifiers are
@@ -61,7 +64,7 @@ export interface OriginCloudRegionAttributes {
 }
 
 export type OriginCloudRegion = Resource<
-  OriginCloudRegionTypeId,
+  TypeId,
   OriginCloudRegionProps,
   OriginCloudRegionAttributes,
   never,
@@ -82,13 +85,15 @@ export type OriginCloudRegion = Resource<
  * prior state, `read` reports an existing mapping for the same IP as
  * `Unowned`, so the engine refuses to take it over unless `--adopt`
  * (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  * @section Mapping origins to cloud regions
  * @example Map an origin IP to an AWS region
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.OriginCloudRegion("ApiOrigin", {
+ * yield* Cloudflare.Cache.OriginCloudRegion("ApiOrigin", {
  *   zoneId: zone.zoneId,
  *   ip: "192.0.2.10",
  *   vendor: "aws",
@@ -99,13 +104,13 @@ export type OriginCloudRegion = Resource<
  * @example Map several origins of the same zone
  * ```typescript
  * // One resource per origin IP — the IP is the mapping's identity.
- * yield* Cloudflare.OriginCloudRegion("UsOrigin", {
+ * yield* Cloudflare.Cache.OriginCloudRegion("UsOrigin", {
  *   zoneId: zone.zoneId,
  *   ip: "192.0.2.10",
  *   vendor: "gcp",
  *   region: "us-central1",
  * });
- * yield* Cloudflare.OriginCloudRegion("EuOrigin", {
+ * yield* Cloudflare.Cache.OriginCloudRegion("EuOrigin", {
  *   zoneId: zone.zoneId,
  *   ip: "192.0.2.20",
  *   vendor: "gcp",
@@ -115,9 +120,7 @@ export type OriginCloudRegion = Resource<
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/
  */
-export const OriginCloudRegion = Resource<OriginCloudRegion>(
-  OriginCloudRegionTypeId,
-);
+export const OriginCloudRegion = Resource<OriginCloudRegion>(TypeId);
 
 /**
  * Returns true if the given value is an OriginCloudRegion resource.
@@ -125,8 +128,7 @@ export const OriginCloudRegion = Resource<OriginCloudRegion>(
 export const isOriginCloudRegion = (
   value: unknown,
 ): value is OriginCloudRegion =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === OriginCloudRegionTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 /**
  * Compare two origin IPs for identity. Cloudflare canonicalizes stored IPs
@@ -140,6 +142,32 @@ const sameIp = (a: string, b: string): boolean =>
 export const OriginCloudRegionProvider = () =>
   Provider.succeed(OriginCloudRegion, {
     stables: ["zoneId", "originIp"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Mappings live inside a zone (`/zones/{zone_id}/origin/cloud_regions`)
+      // with no account-wide list — enumerate every zone, then list its
+      // mappings and flatten. A zone may have zero mappings.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          cache.listOriginCloudRegions.pages({ zoneId }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((mapping) =>
+                  toAttributes(zoneId, mapping),
+                ),
+              ),
+            ),
+            // Plan-gated / deleted zones reject the route; skip them.
+            Effect.catchTag("InvalidRoute", () => Effect.succeed([])),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -243,7 +271,8 @@ const toAttributes = (
   zoneId: string,
   response:
     | cache.GetOriginCloudRegionResponse
-    | cache.PutOriginCloudRegionResponse,
+    | cache.PutOriginCloudRegionResponse
+    | cache.ListOriginCloudRegionsResponse["result"][number],
 ): OriginCloudRegionAttributes => ({
   zoneId,
   originIp: response.originIp,

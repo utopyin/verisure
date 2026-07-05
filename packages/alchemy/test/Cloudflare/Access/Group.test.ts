@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as zeroTrust from "@distilled.cloud/cloudflare/zero-trust";
 import { expect } from "@effect/vitest";
@@ -24,7 +25,7 @@ test.provider("create, update rules, and delete group", (stack) =>
 
     const group = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessGroup("BasicGroup", {
+        return yield* Cloudflare.Access.Group("BasicGroup", {
           include: [{ emailDomain: { domain: "example.com" } }],
         });
       }),
@@ -46,7 +47,7 @@ test.provider("create, update rules, and delete group", (stack) =>
     // group must converge in place (same id).
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessGroup("BasicGroup", {
+        return yield* Cloudflare.Access.Group("BasicGroup", {
           include: [
             { emailDomain: { domain: "example.com" } },
             { geo: { countryCode: "US" } },
@@ -85,7 +86,7 @@ test.provider("rename updates the group in place", (stack) =>
 
     const group = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessGroup("RenameGroup", {
+        return yield* Cloudflare.Access.Group("RenameGroup", {
           name: "alchemy-test-access-group-rename-a",
           include: [{ everyone: {} }],
         });
@@ -95,7 +96,7 @@ test.provider("rename updates the group in place", (stack) =>
 
     const renamed = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.AccessGroup("RenameGroup", {
+        return yield* Cloudflare.Access.Group("RenameGroup", {
           name: "alchemy-test-access-group-rename-b",
           include: [{ everyone: {} }],
         });
@@ -114,6 +115,30 @@ test.provider("rename updates the group in place", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed access group", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const group = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Access.Group("ListGroup", {
+          include: [{ emailDomain: { domain: "example.com" } }],
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Access.Group);
+    const all = yield* provider.list();
+
+    const found = all.find((g) => g.groupId === group.groupId);
+    expect(found).toBeDefined();
+    expect(found?.accountId).toEqual(group.accountId);
+    expect(found?.name).toEqual(group.name);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
 test.provider("group can be referenced from an access policy", (stack) =>
   Effect.gen(function* () {
     const { accountId } = yield* yield* CloudflareEnvironment;
@@ -122,10 +147,10 @@ test.provider("group can be referenced from an access policy", (stack) =>
 
     const { group, policy } = yield* stack.deploy(
       Effect.gen(function* () {
-        const group = yield* Cloudflare.AccessGroup("PolicyGroup", {
+        const group = yield* Cloudflare.Access.Group("PolicyGroup", {
           include: [{ emailDomain: { domain: "example.com" } }],
         });
-        const policy = yield* Cloudflare.AccessPolicy("GroupPolicy", {
+        const policy = yield* Cloudflare.Access.Policy("GroupPolicy", {
           decision: "allow",
           include: [{ group: { id: group.groupId } }],
         });

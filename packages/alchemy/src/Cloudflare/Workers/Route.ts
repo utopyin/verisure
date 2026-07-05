@@ -6,7 +6,9 @@ import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 export interface WorkerRouteProps {
   /**
@@ -69,7 +71,9 @@ export type WorkerRoute = Resource<
  * scans the zone for an existing route with the same pattern and
  * reports it as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Workers
+ * @category Workers & Compute
  * @section Routing a hostname to a Worker
  * @example Route all requests on a subdomain to a Worker
  * ```typescript
@@ -77,14 +81,14 @@ export type WorkerRoute = Resource<
  *   main: "./src/api.ts",
  * });
  *
- * yield* Cloudflare.WorkerRoute("ApiRoute", {
+ * yield* Cloudflare.Workers.WorkerRoute("ApiRoute", {
  *   zoneId: zone.zoneId,
  *   pattern: "api.example.com/*",
  *   script: worker.workerName,
  * });
  *
  * // Workers only run on proxied hostnames — give the host an origin.
- * yield* Cloudflare.DnsRecord("ApiPlaceholder", {
+ * yield* Cloudflare.DNS.Record("ApiPlaceholder", {
  *   zoneId: zone.zoneId,
  *   name: "api.example.com",
  *   type: "AAAA",
@@ -97,7 +101,7 @@ export type WorkerRoute = Resource<
  * @example Opt a path out of a wildcard route
  * ```typescript
  * // No `script` — matching requests bypass Workers entirely.
- * yield* Cloudflare.WorkerRoute("AssetsBypass", {
+ * yield* Cloudflare.Workers.WorkerRoute("AssetsBypass", {
  *   zoneId: zone.zoneId,
  *   pattern: "example.com/assets/*",
  * });
@@ -213,6 +217,36 @@ export const WorkerRouteProvider = () =>
           routeId: output.routeId,
         })
         .pipe(Effect.catchTag("RouteNotFound", () => Effect.void));
+    }),
+
+    // Routes are zone-scoped (`/zones/{id}/workers/routes`) with no account-
+    // wide enumeration API. Fan out over every zone via `listAllZones`,
+    // exhaustively paginate `listRoutes` per zone, and hydrate each into the
+    // same Attributes shape `read` returns. Zones the scoped token can't
+    // reach (Forbidden) or that reject the route (InvalidRoute) are skipped
+    // with a typed catch rather than failing the whole enumeration.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          workers.listRoutes.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? []).map((route) =>
+                  toAttributes(normalizeRoute(route), zone.id),
+                ),
+              ),
+            ),
+            Effect.catchTag(["InvalidRoute", "Forbidden"], () =>
+              Effect.succeed([] as WorkerRouteAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
   });
 

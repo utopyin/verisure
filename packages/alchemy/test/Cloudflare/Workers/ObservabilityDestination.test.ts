@@ -1,6 +1,7 @@
 import { adopt } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import { expect } from "@effect/vitest";
@@ -32,6 +33,7 @@ const NAME_DEFAULT_URL = "https://example.com";
 const NAME_UPDATE = "alchemy-obsdest-update";
 const NAME_REPLACE_V1 = "alchemy-obsdest-replace-v1";
 const NAME_REPLACE_V2 = "alchemy-obsdest-replace-v2";
+const NAME_LIST = "alchemy-obsdest-list";
 
 // The scoped API token the test harness mints propagates eventually-
 // consistently across Cloudflare's edge — ride out 403 blips (`Forbidden`,
@@ -95,13 +97,16 @@ test.provider(
 
       const dest = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ObservabilityDestination("DefaultDest", {
-            url: NAME_DEFAULT_URL,
-            logpushDataset: "opentelemetry-logs",
-            // example.com rejects POSTs, so skip the create-time probe —
-            // this test never updates, and updates are what re-preflight.
-            skipPreflightCheck: true,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.Workers.ObservabilityDestination(
+            "DefaultDest",
+            {
+              url: NAME_DEFAULT_URL,
+              logpushDataset: "opentelemetry-logs",
+              // example.com rejects POSTs, so skip the create-time probe —
+              // this test never updates, and updates are what re-preflight.
+              skipPreflightCheck: true,
+            },
+          ).pipe(adopt(true));
         }),
       );
 
@@ -142,15 +147,18 @@ test.provider(
             main,
             compatibility: { date: "2024-01-01" },
           });
-          const dest = yield* Cloudflare.ObservabilityDestination("Dest", {
-            name: NAME_UPDATE,
-            url: worker.url.as<string>(),
-            logpushDataset: "opentelemetry-traces",
-            // Fresh workers.dev URLs take a few seconds to start serving —
-            // skip the create-time probe; the update below exercises the
-            // real preflight.
-            skipPreflightCheck: true,
-          }).pipe(adopt(true));
+          const dest = yield* Cloudflare.Workers.ObservabilityDestination(
+            "Dest",
+            {
+              name: NAME_UPDATE,
+              url: worker.url.as<string>(),
+              logpushDataset: "opentelemetry-traces",
+              // Fresh workers.dev URLs take a few seconds to start serving —
+              // skip the create-time probe; the update below exercises the
+              // real preflight.
+              skipPreflightCheck: true,
+            },
+          ).pipe(adopt(true));
           return { worker, dest };
         }),
       );
@@ -182,13 +190,16 @@ test.provider(
             main,
             compatibility: { date: "2024-01-01" },
           });
-          const dest = yield* Cloudflare.ObservabilityDestination("Dest", {
-            name: NAME_UPDATE,
-            url: worker.url.as<string>(),
-            headers: { "x-alchemy-test": "1" },
-            logpushDataset: "opentelemetry-traces",
-            enabled: false,
-          }).pipe(adopt(true));
+          const dest = yield* Cloudflare.Workers.ObservabilityDestination(
+            "Dest",
+            {
+              name: NAME_UPDATE,
+              url: worker.url.as<string>(),
+              headers: { "x-alchemy-test": "1" },
+              logpushDataset: "opentelemetry-traces",
+              enabled: false,
+            },
+          ).pipe(adopt(true));
           return { worker, dest };
         }),
       );
@@ -211,13 +222,16 @@ test.provider(
             main,
             compatibility: { date: "2024-01-01" },
           });
-          const dest = yield* Cloudflare.ObservabilityDestination("Dest", {
-            name: NAME_UPDATE,
-            url: worker.url.as<string>(),
-            headers: { "x-alchemy-test": "1" },
-            logpushDataset: "opentelemetry-traces",
-            enabled: false,
-          }).pipe(adopt(true));
+          const dest = yield* Cloudflare.Workers.ObservabilityDestination(
+            "Dest",
+            {
+              name: NAME_UPDATE,
+              url: worker.url.as<string>(),
+              headers: { "x-alchemy-test": "1" },
+              logpushDataset: "opentelemetry-traces",
+              enabled: false,
+            },
+          ).pipe(adopt(true));
           return { worker, dest };
         }),
       );
@@ -242,12 +256,15 @@ test.provider(
 
       const v1 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ObservabilityDestination("ReplaceDest", {
-            name: NAME_REPLACE_V1,
-            url: NAME_DEFAULT_URL,
-            logpushDataset: "opentelemetry-logs",
-            skipPreflightCheck: true,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.Workers.ObservabilityDestination(
+            "ReplaceDest",
+            {
+              name: NAME_REPLACE_V1,
+              url: NAME_DEFAULT_URL,
+              logpushDataset: "opentelemetry-logs",
+              skipPreflightCheck: true,
+            },
+          ).pipe(adopt(true));
         }),
       );
       expect(v1.name).toEqual(NAME_REPLACE_V1);
@@ -256,12 +273,15 @@ test.provider(
       // rename — a name change replaces the physical destination.
       const v2 = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.ObservabilityDestination("ReplaceDest", {
-            name: NAME_REPLACE_V2,
-            url: NAME_DEFAULT_URL,
-            logpushDataset: "opentelemetry-logs",
-            skipPreflightCheck: true,
-          }).pipe(adopt(true));
+          return yield* Cloudflare.Workers.ObservabilityDestination(
+            "ReplaceDest",
+            {
+              name: NAME_REPLACE_V2,
+              url: NAME_DEFAULT_URL,
+              logpushDataset: "opentelemetry-logs",
+              skipPreflightCheck: true,
+            },
+          ).pipe(adopt(true));
         }),
       );
 
@@ -276,6 +296,53 @@ test.provider(
       yield* stack.destroy();
 
       yield* expectGone(accountId, NAME_REPLACE_V2);
+    }).pipe(logLevel),
+  { timeout: 300_000 },
+);
+
+test.provider(
+  "list enumerates the deployed destination",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+      yield* purgeByName(accountId, NAME_LIST);
+
+      const dest = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Workers.ObservabilityDestination(
+            "ListDest",
+            {
+              name: NAME_LIST,
+              url: NAME_DEFAULT_URL,
+              logpushDataset: "opentelemetry-logs",
+              // example.com rejects POSTs, so skip the create-time probe.
+              skipPreflightCheck: true,
+            },
+          ).pipe(adopt(true));
+        }),
+      );
+
+      // Typed provider lookup — `findProvider` infers the element type as the
+      // resource's Attributes, so `list()` is fully typed (no `any`).
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Workers.ObservabilityDestination,
+      );
+      const all = yield* provider.list();
+
+      // The exhaustively-paginated result contains our deployed destination,
+      // hydrated into the exact `read` Attributes shape.
+      const found = all.find((d) => d.slug === dest.slug);
+      expect(found).toBeDefined();
+      expect(found?.accountId).toEqual(accountId);
+      expect(found?.name).toEqual(NAME_LIST);
+      expect(found?.url).toEqual(NAME_DEFAULT_URL);
+      expect(found?.logpushDataset).toEqual("opentelemetry-logs");
+
+      yield* stack.destroy();
+
+      yield* expectGone(accountId, NAME_LIST);
     }).pipe(logLevel),
   { timeout: 300_000 },
 );

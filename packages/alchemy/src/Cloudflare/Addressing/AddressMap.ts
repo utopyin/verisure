@@ -1,14 +1,15 @@
 import * as addressing from "@distilled.cloud/cloudflare/addressing";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const AddressMapTypeId = "Cloudflare.Addressing.AddressMap" as const;
-type AddressMapTypeId = typeof AddressMapTypeId;
+const TypeId = "Cloudflare.Addressing.AddressMap" as const;
+type TypeId = typeof TypeId;
 
 /**
  * A zone or account membership on an Address Map. Zones (or whole accounts)
@@ -94,7 +95,7 @@ export interface AddressMapAttributes {
 }
 
 export type AddressMap = Resource<
-  AddressMapTypeId,
+  TypeId,
   AddressMapProps,
   AddressMapAttributes,
   never,
@@ -108,11 +109,13 @@ export type AddressMap = Resource<
  * Requires the BYOIP add-on or Cloudflare-assigned static IPs on the
  * account; without the entitlement every mutating call fails with the typed
  * `FeatureNotEnabled` error (`address_maps_not_enabled_on_account`).
- *
+ * @resource
+ * @product Addressing
+ * @category Network
  * @section Creating an Address Map
  * @example Disabled map with a description
  * ```typescript
- * const map = yield* Cloudflare.AddressMap("static-ips", {
+ * const map = yield* Cloudflare.Addressing.AddressMap("static-ips", {
  *   description: "static ingress IPs",
  *   enabled: false,
  * });
@@ -120,7 +123,7 @@ export type AddressMap = Resource<
  *
  * @example Map with IPs and zone memberships
  * ```typescript
- * const map = yield* Cloudflare.AddressMap("ingress", {
+ * const map = yield* Cloudflare.Addressing.AddressMap("ingress", {
  *   description: "ingress",
  *   enabled: true,
  *   ips: ["192.0.2.1"],
@@ -131,7 +134,7 @@ export type AddressMap = Resource<
  * @section Legacy TLS clients
  * @example Default SNI for clients without SNI
  * ```typescript
- * const map = yield* Cloudflare.AddressMap("legacy", {
+ * const map = yield* Cloudflare.Addressing.AddressMap("legacy", {
  *   enabled: true,
  *   defaultSni: "example.com",
  * });
@@ -139,13 +142,13 @@ export type AddressMap = Resource<
  *
  * @see https://developers.cloudflare.com/byoip/address-maps/
  */
-export const AddressMap = Resource<AddressMap>(AddressMapTypeId);
+export const AddressMap = Resource<AddressMap>(TypeId);
 
 /**
  * Returns true if the given value is an AddressMap resource.
  */
 export const isAddressMap = (value: unknown): value is AddressMap =>
-  Predicate.hasProperty(value, "Type") && value.Type === AddressMapTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const AddressMapProvider = () =>
   Provider.succeed(AddressMap, {
@@ -156,6 +159,34 @@ export const AddressMapProvider = () =>
       "canModifyIps",
       "createdAt",
     ],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // The account-scoped list endpoint omits `ips` and `memberships`,
+      // so enumerate ids exhaustively, then hydrate each into the exact
+      // `read` shape via `getAddressMap` (typed per-item not-found).
+      const ids = yield* addressing.listAddressMaps.pages({ accountId }).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.result ?? []).flatMap((m) => (m.id ? [m.id] : [])),
+          ),
+        ),
+      );
+      const rows = yield* Effect.forEach(
+        ids,
+        (addressMapId) =>
+          getMap(accountId, addressMapId).pipe(
+            Effect.map((observed) =>
+              observed ? toAttributes(observed, accountId) : undefined,
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is AddressMapAttributes => row !== undefined,
+      );
+    }),
 
     read: Effect.fn(function* ({ output }) {
       // Address Maps have no name field to match on, so there is no

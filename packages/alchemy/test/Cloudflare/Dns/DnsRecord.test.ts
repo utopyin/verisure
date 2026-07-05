@@ -2,6 +2,7 @@ import { adopt, OwnedBySomeoneElse } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as dns from "@distilled.cloud/cloudflare/dns";
 import { expect } from "@effect/vitest";
@@ -28,6 +29,7 @@ const NAME_DEFAULT = `alchemy-dnsrecord-default.${zoneName}`;
 const NAME_UPDATE = `alchemy-dnsrecord-update.${zoneName}`;
 const NAME_REPLACE = `alchemy-dnsrecord-replace.${zoneName}`;
 const NAME_ADOPT = `alchemy-dnsrecord-adopt.${zoneName}`;
+const NAME_LIST = `alchemy-dnsrecord-list.${zoneName}`;
 
 const resolveZoneId = Effect.gen(function* () {
   const { accountId } = yield* yield* CloudflareEnvironment;
@@ -100,7 +102,7 @@ test.provider("create and delete an A record with default props", (stack) =>
 
     const record = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.DnsRecord("DefaultA", {
+        return yield* Cloudflare.DNS.Record("DefaultA", {
           zoneId,
           name: NAME_DEFAULT,
           type: "A",
@@ -139,7 +141,7 @@ test.provider("updating mutable fields patches in place", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.DnsRecord("UpdateA", {
+        return yield* Cloudflare.DNS.Record("UpdateA", {
           zoneId,
           name: NAME_UPDATE,
           type: "A",
@@ -155,7 +157,7 @@ test.provider("updating mutable fields patches in place", (stack) =>
 
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.DnsRecord("UpdateA", {
+        return yield* Cloudflare.DNS.Record("UpdateA", {
           zoneId,
           name: NAME_UPDATE,
           type: "A",
@@ -188,7 +190,7 @@ test.provider("changing the record type triggers replacement", (stack) =>
 
     const initial = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.DnsRecord("ReplaceRecord", {
+        return yield* Cloudflare.DNS.Record("ReplaceRecord", {
           zoneId,
           name: NAME_REPLACE,
           type: "A",
@@ -201,7 +203,7 @@ test.provider("changing the record type triggers replacement", (stack) =>
 
     const replaced = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.DnsRecord("ReplaceRecord", {
+        return yield* Cloudflare.DNS.Record("ReplaceRecord", {
           zoneId,
           name: NAME_REPLACE,
           type: "TXT",
@@ -262,7 +264,7 @@ test.provider(
       const error = yield* stack
         .deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.DnsRecord("AdoptedRecord", {
+            return yield* Cloudflare.DNS.Record("AdoptedRecord", {
               zoneId,
               name: NAME_ADOPT,
               type: "A",
@@ -280,7 +282,7 @@ test.provider(
       // (same physical id) and converges it to the desired content.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.DnsRecord("AdoptedRecord", {
+          return yield* Cloudflare.DNS.Record("AdoptedRecord", {
             zoneId,
             name: NAME_ADOPT,
             type: "A",
@@ -300,6 +302,42 @@ test.provider(
       const gone = yield* findRecord(zoneId, NAME_ADOPT, "A");
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
+);
+
+// Canonical `list()` test (zone-scoped collection): `list()` enumerates every
+// zone via `listAllZones`, exhaustively paginates each zone's DNS records, and
+// hydrates them into the `read` Attributes shape. Deploy a record and assert it
+// appears in the exhaustively-paginated result.
+test.provider("list enumerates the deployed DNS record", (stack) =>
+  Effect.gen(function* () {
+    const zoneId = yield* resolveZoneId;
+
+    yield* stack.destroy();
+
+    const record = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.DNS.Record("ListedA", {
+          zoneId,
+          name: NAME_LIST,
+          type: "A",
+          content: "203.0.113.50",
+        }).pipe(adopt(true));
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.DNS.Record);
+    const all = yield* provider.list();
+
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.some((r) => r.recordId === record.recordId)).toBe(true);
+    const found = all.find((r) => r.recordId === record.recordId);
+    expect(found?.zoneId).toEqual(zoneId);
+    expect(found?.name).toEqual(NAME_LIST);
+    expect(found?.type).toEqual("A");
+    expect(found?.content).toEqual("203.0.113.50");
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
 );
 
 /**

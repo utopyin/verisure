@@ -7,10 +7,12 @@ import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const CustomTrustStoreTypeId = "Cloudflare.Acm.CustomTrustStore" as const;
-type CustomTrustStoreTypeId = typeof CustomTrustStoreTypeId;
+const TypeId = "Cloudflare.Acm.CustomTrustStore" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Lifecycle status of an uploaded custom trust store certificate.
@@ -67,7 +69,7 @@ export interface CustomTrustStoreAttributes {
 }
 
 export type CustomTrustStore = Resource<
-  CustomTrustStoreTypeId,
+  TypeId,
   CustomTrustStoreProps,
   CustomTrustStoreAttributes,
   never,
@@ -89,11 +91,13 @@ export type CustomTrustStore = Resource<
  * no ownership markers, so a cold `read` scans the zone for a certificate
  * with the same PEM body and reports it as `Unowned` — the engine refuses
  * to take it over unless `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product ACM
+ * @category SSL/TLS & Certificates
  * @section Uploading a root CA
  * @example Trust a private root CA for origin pulls
  * ```typescript
- * const trustStore = yield* Cloudflare.CustomTrustStore("OriginRootCa", {
+ * const trustStore = yield* Cloudflare.Acm.CustomTrustStore("OriginRootCa", {
  *   zoneId: zone.zoneId,
  *   certificate: rootCaPem, // "-----BEGIN CERTIFICATE-----\n..."
  * });
@@ -103,7 +107,7 @@ export type CustomTrustStore = Resource<
  * ```typescript
  * const fs = yield* FileSystem.FileSystem;
  * const pem = yield* fs.readFileString("./certs/root-ca.pem");
- * yield* Cloudflare.CustomTrustStore("OriginRootCa", {
+ * yield* Cloudflare.Acm.CustomTrustStore("OriginRootCa", {
  *   zoneId: zone.zoneId,
  *   certificate: pem,
  * });
@@ -111,19 +115,46 @@ export type CustomTrustStore = Resource<
  *
  * @see https://developers.cloudflare.com/api/resources/acm/
  */
-export const CustomTrustStore = Resource<CustomTrustStore>(
-  CustomTrustStoreTypeId,
-);
+export const CustomTrustStore = Resource<CustomTrustStore>(TypeId);
 
 /**
  * Returns true if the given value is a CustomTrustStore resource.
  */
 export const isCustomTrustStore = (value: unknown): value is CustomTrustStore =>
-  Predicate.hasProperty(value, "Type") && value.Type === CustomTrustStoreTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const CustomTrustStoreProvider = () =>
   Provider.succeed(CustomTrustStore, {
     stables: ["id", "zoneId", "issuer", "signature", "uploadedOn"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Trust stores live inside a zone (`/zones/{zone_id}/acm/...`) with
+      // no account-wide collection API — enumerate every zone and list
+      // within each, paginating exhaustively.
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          acm.listCustomTrustStores.pages({ zoneId: zone.id }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.result ?? [])
+                  .filter((cert) => !isGoneStatus(cert.status))
+                  .map((cert) => toAttributes(zone.id, cert)),
+              ),
+            ),
+            // Zones without the Advanced Certificate Manager add-on reject
+            // the route with the typed entitlement tag — skip them.
+            Effect.catchTag("AdvancedCertificateManagerRequired", () =>
+              Effect.succeed([] as CustomTrustStoreAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;

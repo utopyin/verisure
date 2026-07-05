@@ -7,10 +7,12 @@ import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const CertificatePackTypeId = "Cloudflare.Ssl.CertificatePack" as const;
-type CertificatePackTypeId = typeof CertificatePackTypeId;
+const TypeId = "Cloudflare.Ssl.CertificatePack" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Certificate Authorities available for Advanced Certificate Manager orders.
@@ -161,7 +163,7 @@ export interface CertificatePackAttributes {
 }
 
 export type CertificatePack = Resource<
-  CertificatePackTypeId,
+  TypeId,
   CertificatePackProps,
   CertificatePackAttributes,
   never,
@@ -185,11 +187,13 @@ export type CertificatePack = Resource<
  * The pack's `certificateAuthority`, `hosts`, and `validityDays` are
  * immutable — changing any of them replaces the pack (a new order).
  * `validationMethod` and `cloudflareBranding` are updated in place.
- *
+ * @resource
+ * @product SSL/TLS
+ * @category SSL/TLS & Certificates
  * @section Ordering a certificate pack
  * @example Order an advanced certificate for the apex and a wildcard
  * ```typescript
- * const pack = yield* Cloudflare.CertificatePack("ApexCert", {
+ * const pack = yield* Cloudflare.Ssl.CertificatePack("ApexCert", {
  *   zoneId: zone.zoneId,
  *   certificateAuthority: "google",
  *   hosts: ["example.com", "*.example.com"],
@@ -200,7 +204,7 @@ export type CertificatePack = Resource<
  *
  * @example Order from Let's Encrypt with a short validity
  * ```typescript
- * yield* Cloudflare.CertificatePack("ShortLivedCert", {
+ * yield* Cloudflare.Ssl.CertificatePack("ShortLivedCert", {
  *   zoneId: zone.zoneId,
  *   certificateAuthority: "lets_encrypt",
  *   hosts: ["example.com", "api.example.com"],
@@ -212,7 +216,7 @@ export type CertificatePack = Resource<
  * @section Completing validation
  * @example Create the DCV TXT records the order asks for
  * ```typescript
- * const pack = yield* Cloudflare.CertificatePack("ApexCert", {
+ * const pack = yield* Cloudflare.Ssl.CertificatePack("ApexCert", {
  *   zoneId: zone.zoneId,
  *   certificateAuthority: "google",
  *   hosts: ["example.com"],
@@ -225,13 +229,13 @@ export type CertificatePack = Resource<
  *
  * @see https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/
  */
-export const CertificatePack = Resource<CertificatePack>(CertificatePackTypeId);
+export const CertificatePack = Resource<CertificatePack>(TypeId);
 
 /**
  * Returns true if the given value is a CertificatePack resource.
  */
 export const isCertificatePack = (value: unknown): value is CertificatePack =>
-  Predicate.hasProperty(value, "Type") && value.Type === CertificatePackTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const CertificatePackProvider = () =>
   Provider.succeed(CertificatePack, {
@@ -351,6 +355,38 @@ export const CertificatePackProvider = () =>
       return toAttributes(zoneId, observed, validationMethod);
     }),
 
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Certificate packs are zone-scoped; there is no account-wide
+      // enumeration API. Fan out over every zone in the account and list
+      // its packs, restricting to `advanced` packs (the only kind this
+      // resource manages — universal/total_tls packs are not orderable).
+      const zones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        zones,
+        (zone) =>
+          ssl.listCertificatePacks
+            .pages({ zoneId: zone.id, status: "all" })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.result ?? [])
+                    .filter((pack) => pack.type === "advanced")
+                    .map((pack) => toAttributes(zone.id, pack)),
+                ),
+              ),
+              // A plan-gated zone (no ACM) rejects the route, and a freshly
+              // minted token may briefly answer Forbidden — skip either.
+              Effect.catchTag(["InvalidRoute", "Forbidden"], () =>
+                Effect.succeed([] as CertificatePackAttributes[]),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
+
     delete: Effect.fn(function* ({ output }) {
       // Observe first — deleting an already-gone pack answers 404 (code
       // 1408); treat missing as done so delete stays idempotent.
@@ -372,7 +408,8 @@ export const CertificatePackProvider = () =>
 type ObservedPack =
   | ssl.GetCertificatePackResponse
   | ssl.CreateCertificatePackResponse
-  | ssl.PatchCertificatePackResponse;
+  | ssl.PatchCertificatePackResponse
+  | ssl.ListCertificatePacksResponse["result"][number];
 
 /**
  * Read a pack by id, mapping "gone" (`CertificatePackNotFound`, Cloudflare

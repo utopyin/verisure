@@ -59,7 +59,7 @@ export interface Secret extends Resource<
  * by `GitHub.providers()` (which uses the Alchemy AuthProvider — env,
  * stored PAT, `gh` CLI, or OAuth). The token needs `repo` scope for
  * private repositories or `public_repo` for public ones.
- *
+ * @resource
  * @section Repository Secrets
  * Store secrets accessible to all GitHub Actions workflows in the
  * repository.
@@ -146,6 +146,14 @@ async function encryptValue(
 
 export const SecretProvider = () =>
   Provider.succeed(Secret, {
+    // Non-listable: a GitHub Actions secret is keyed entirely by its parent
+    // (owner, repository[, environment], name) which arrive as props — there is
+    // no ambient owner/repo scope to enumerate from, `list()` takes no input,
+    // and the `Attributes` shape carries no identifying keys (only `updatedAt`).
+    // GitHub only exposes list-secrets *within* a specific repo/environment, so
+    // there is no account-wide enumeration API. Return an empty array.
+    list: () => Effect.succeed([]),
+
     reconcile: Effect.fn(function* ({ news, olds }) {
       // Observe — there's no API to read a secret's value back, so we can
       // only observe its location (repo vs. environment, environment name).

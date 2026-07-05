@@ -10,10 +10,10 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const AddressingBgpPrefixTypeId = "Cloudflare.Addressing.BgpPrefix" as const;
-type AddressingBgpPrefixTypeId = typeof AddressingBgpPrefixTypeId;
+const TypeId = "Cloudflare.Addressing.BgpPrefix" as const;
+type TypeId = typeof TypeId;
 
-export interface AddressingBgpPrefixProps {
+export interface BgpPrefixProps {
   /**
    * Identifier of the parent BYOIP prefix the BGP prefix belongs to.
    * Changing it forces a replacement.
@@ -44,7 +44,7 @@ export interface AddressingBgpPrefixProps {
   autoAdvertiseWithdraw?: boolean;
 }
 
-export interface AddressingBgpPrefixAttributes {
+export interface BgpPrefixAttributes {
   /** Cloudflare-assigned identifier of the BGP prefix. */
   bgpPrefixId: string;
   /** Identifier of the parent BYOIP prefix. */
@@ -76,10 +76,10 @@ export interface AddressingBgpPrefixAttributes {
   modifiedAt: string | undefined;
 }
 
-export type AddressingBgpPrefix = Resource<
-  AddressingBgpPrefixTypeId,
-  AddressingBgpPrefixProps,
-  AddressingBgpPrefixAttributes,
+export type BgpPrefix = Resource<
+  TypeId,
+  BgpPrefixProps,
+  BgpPrefixAttributes,
   never,
   Providers
 >;
@@ -92,11 +92,13 @@ export type AddressingBgpPrefix = Resource<
  * reconcile adopts an existing BGP prefix matching the CIDR before creating
  * a new one. There is **no delete API** — destroying this resource only
  * withdraws the advertisement (`advertised: false`) and drops the state.
- *
+ * @resource
+ * @product Addressing
+ * @category Network
  * @section Advertising a Prefix
  * @example Advertise the whole BYOIP prefix
  * ```typescript
- * const bgp = yield* Cloudflare.AddressingBgpPrefix("advertise", {
+ * const bgp = yield* Cloudflare.Addressing.BgpPrefix("advertise", {
  *   prefixId: prefix.prefixId,
  *   cidr: prefix.cidr,
  *   advertised: true,
@@ -105,7 +107,7 @@ export type AddressingBgpPrefix = Resource<
  *
  * @example Withdraw with AS-Path prepending configured
  * ```typescript
- * const bgp = yield* Cloudflare.AddressingBgpPrefix("advertise", {
+ * const bgp = yield* Cloudflare.Addressing.BgpPrefix("advertise", {
  *   prefixId: prefix.prefixId,
  *   cidr: prefix.cidr,
  *   advertised: false,
@@ -115,21 +117,16 @@ export type AddressingBgpPrefix = Resource<
  *
  * @see https://developers.cloudflare.com/byoip/concepts/bgp-prefixes/
  */
-export const AddressingBgpPrefix = Resource<AddressingBgpPrefix>(
-  AddressingBgpPrefixTypeId,
-);
+export const BgpPrefix = Resource<BgpPrefix>(TypeId);
 
 /**
- * Returns true if the given value is an AddressingBgpPrefix resource.
+ * Returns true if the given value is an BgpPrefix resource.
  */
-export const isAddressingBgpPrefix = (
-  value: unknown,
-): value is AddressingBgpPrefix =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === AddressingBgpPrefixTypeId;
+export const isBgpPrefix = (value: unknown): value is BgpPrefix =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
-export const AddressingBgpPrefixProvider = () =>
-  Provider.succeed(AddressingBgpPrefix, {
+export const BgpPrefixProvider = () =>
+  Provider.succeed(BgpPrefix, {
     stables: ["bgpPrefixId", "prefixId", "accountId", "cidr", "createdAt"],
 
     diff: Effect.fn(function* ({ olds, news, output }) {
@@ -171,6 +168,45 @@ export const AddressingBgpPrefixProvider = () =>
       if (typeof cidr !== "string") return undefined;
       const match = yield* findByCidr(acct, prefixId, cidr);
       return match ? toAttributes(match, prefixId, acct) : undefined;
+    }),
+
+    // BGP prefixes are children of BYOIP IP prefixes, which have no single
+    // account-wide enumeration endpoint. Fan out: list every account IP
+    // prefix, then exhaustively page the BGP prefixes under each. Accounts
+    // without BYOIP simply have no parent prefixes, so the result is
+    // naturally empty.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      const prefixIds = yield* addressing.listPrefixes
+        .items({ accountId })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk)
+              .map((p) => p.id)
+              .filter((id): id is string => typeof id === "string"),
+          ),
+        );
+
+      const rows = yield* Effect.forEach(
+        prefixIds,
+        (prefixId) =>
+          addressing.listPrefixBgpPrefixes.items({ accountId, prefixId }).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).map((bgp) =>
+                toAttributes(bgp, prefixId, accountId),
+              ),
+            ),
+            // Parent prefix removed mid-enumeration — skip it.
+            Effect.catchTag("PrefixNotFound", () =>
+              Effect.succeed([] as BgpPrefixAttributes[]),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.flat();
     }),
 
     reconcile: Effect.fn(function* ({ news, output }) {
@@ -292,7 +328,7 @@ const toAttributes = (
   bgp: ObservedBgpPrefix,
   prefixId: string,
   accountId: string,
-): AddressingBgpPrefixAttributes => ({
+): BgpPrefixAttributes => ({
   bgpPrefixId: bgp.id ?? "",
   prefixId,
   accountId,

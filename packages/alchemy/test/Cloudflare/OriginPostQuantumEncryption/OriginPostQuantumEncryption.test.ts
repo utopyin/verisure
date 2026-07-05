@@ -1,6 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as pqe from "@distilled.cloud/cloudflare/origin-post-quantum-encryption";
 import { expect } from "@effect/vitest";
@@ -51,7 +52,7 @@ const getSetting = (zoneId: string) =>
 // run left behind. Cloudflare's documented default is "supported".
 const setBaseline = (
   zoneId: string,
-  value: Cloudflare.OriginPostQuantumEncryptionValue,
+  value: Cloudflare.OriginPostQuantumEncryption.Value,
 ) =>
   pqe.putOriginPostQuantumEncryption({ zoneId, value }).pipe(
     Effect.retry({
@@ -74,10 +75,13 @@ describe.sequential("OriginPostQuantumEncryption", () => {
 
         const setting = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.OriginPostQuantumEncryption("OriginPqe", {
-              zoneId,
-              value: "preferred",
-            });
+            return yield* Cloudflare.OriginPostQuantumEncryption.OriginPostQuantumEncryption(
+              "OriginPqe",
+              {
+                zoneId,
+                value: "preferred",
+              },
+            );
           }),
         );
 
@@ -111,10 +115,13 @@ describe.sequential("OriginPostQuantumEncryption", () => {
 
         const initial = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.OriginPostQuantumEncryption("OriginPqe", {
-              zoneId,
-              value: "preferred",
-            });
+            return yield* Cloudflare.OriginPostQuantumEncryption.OriginPostQuantumEncryption(
+              "OriginPqe",
+              {
+                zoneId,
+                value: "preferred",
+              },
+            );
           }),
         );
 
@@ -123,10 +130,13 @@ describe.sequential("OriginPostQuantumEncryption", () => {
 
         const updated = yield* stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.OriginPostQuantumEncryption("OriginPqe", {
-              zoneId,
-              value: "supported",
-            });
+            return yield* Cloudflare.OriginPostQuantumEncryption.OriginPostQuantumEncryption(
+              "OriginPqe",
+              {
+                zoneId,
+                value: "supported",
+              },
+            );
           }),
         );
 
@@ -160,10 +170,13 @@ describe.sequential("OriginPostQuantumEncryption", () => {
 
         const deploy = stack.deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.OriginPostQuantumEncryption("OriginPqe", {
-              zoneId,
-              value: "off",
-            });
+            return yield* Cloudflare.OriginPostQuantumEncryption.OriginPostQuantumEncryption(
+              "OriginPqe",
+              {
+                zoneId,
+                value: "off",
+              },
+            );
           }),
         );
 
@@ -185,5 +198,37 @@ describe.sequential("OriginPostQuantumEncryption", () => {
         const restored = yield* getSetting(zoneId);
         expect(restored.value).toEqual("supported");
       }).pipe(logLevel),
+  );
+
+  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+  // API for this per-zone setting, so `list()` enumerates every zone via
+  // `listAllZones` and reads the singleton in each. Assert the result is
+  // non-empty and contains the standing test zone.
+  test.provider("list enumerates the setting across all zones", (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
+
+      const provider = yield* Provider.findProvider(
+        Cloudflare.OriginPostQuantumEncryption.OriginPostQuantumEncryption,
+      );
+      // The freshly-minted scoped token propagates eventually-consistently, so
+      // the account-wide enumeration intermittently 403s (`Forbidden`) or 401s
+      // (`Unauthorized`). Both are transient here — ride out the blip like
+      // every other out-of-band call in this suite.
+      const all = yield* provider.list().pipe(
+        Effect.retry({
+          while: (e) => e._tag === "Forbidden" || e._tag === "Unauthorized",
+          schedule: forbiddenRetrySchedule,
+          times: 8,
+        }),
+      );
+
+      expect(all.length).toBeGreaterThan(0);
+      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
+
+      // `stack` is unused here (the singleton always exists on every zone),
+      // but keep the destroy bookend so the harness state stays clean.
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 });

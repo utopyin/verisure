@@ -4,10 +4,12 @@ import * as Predicate from "effect/Predicate";
 
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const TieredCachingTypeId = "Cloudflare.Argo.TieredCaching" as const;
-type TieredCachingTypeId = typeof TieredCachingTypeId;
+const TypeId = "Cloudflare.Argo.TieredCaching" as const;
+type TypeId = typeof TypeId;
 
 export type TieredCachingProps = {
   /**
@@ -45,7 +47,7 @@ export type TieredCachingAttributes = {
 };
 
 export type TieredCaching = Resource<
-  TieredCachingTypeId,
+  TypeId,
   TieredCachingProps,
   TieredCachingAttributes,
   never,
@@ -71,20 +73,22 @@ export type TieredCaching = Resource<
  * switch). Smart Tiered Cache (the smart-topology variant managed under
  * `/cache/tiered_cache_smart_topology_enable`) requires Tiered Caching to
  * be enabled — deploy this resource first when combining the two.
- *
+ * @resource
+ * @product Argo
+ * @category Performance & Reliability
  * @section Enabling Tiered Caching
  * @example Enable Tiered Caching on a zone
  * ```typescript
- * const zone = yield* Cloudflare.Zone("Site", { name: "example.com" });
+ * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
- * yield* Cloudflare.TieredCaching("TieredCaching", {
+ * yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
  *   zoneId: zone.zoneId,
  * });
  * ```
  *
  * @example Explicitly disable Tiered Caching
  * ```typescript
- * yield* Cloudflare.TieredCaching("TieredCaching", {
+ * yield* Cloudflare.Argo.TieredCaching("TieredCaching", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  * });
@@ -92,17 +96,46 @@ export type TieredCaching = Resource<
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/
  */
-export const TieredCaching = Resource<TieredCaching>(TieredCachingTypeId);
+export const TieredCaching = Resource<TieredCaching>(TypeId);
 
 /**
  * Returns true if the given value is a TieredCaching resource.
  */
 export const isTieredCaching = (value: unknown): value is TieredCaching =>
-  Predicate.hasProperty(value, "Type") && value.Type === TieredCachingTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 export const TieredCachingProvider = () =>
   Provider.succeed(TieredCaching, {
+    nuke: { singleton: true },
     stables: ["zoneId", "initialValue"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its setting (every zone has one,
+      // tiered caching is available on all plans).
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          argo.getTieredCaching({ zoneId }).pipe(
+            Effect.map((observed) =>
+              toAttributes(zoneId, observed, toValue(observed.value)),
+            ),
+            // Zone deleted out-of-band between enumeration and read —
+            // the setting is gone with it; skip it. A concurrently-purged
+            // zone surfaces as `ZoneNotFound` (404 "Invalid or missing
+            // zone") rather than the 7003 object-identifier code.
+            Effect.catchTag(["InvalidObjectIdentifier", "ZoneNotFound"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is TieredCachingAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news, output }) {
       const o = olds as TieredCachingProps;

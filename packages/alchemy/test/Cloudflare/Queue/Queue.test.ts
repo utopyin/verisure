@@ -1,6 +1,8 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { generateLocalId, isLiveId } from "@/Cloudflare/LocalRuntime";
+import * as Provider from "@/Provider";
+import { poll } from "@/Util/poll.ts";
 import { State } from "@/State";
 import type { CreatedResourceState } from "@/State/ResourceState";
 import * as Test from "@/Test/Vitest";
@@ -9,6 +11,7 @@ import { expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { MinimumLogLevel } from "effect/References";
+import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
@@ -40,7 +43,7 @@ const seedDevQueue = (input: {
       value: {
         kind: "resource",
         status: "created",
-        resourceType: "Cloudflare.Queue",
+        resourceType: "Cloudflare.Queues.Queue",
         namespace: undefined,
         fqn: input.fqn,
         logicalId: input.fqn,
@@ -85,7 +88,7 @@ test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
 
     const deployed = yield* stack.deploy(
       Effect.gen(function* () {
-        const queue = yield* Cloudflare.Queue("Q");
+        const queue = yield* Cloudflare.Queues.Queue("Q");
         return { queue };
       }),
     );
@@ -94,11 +97,21 @@ test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
     expect(isLiveId(deployed.queue.queueId)).toBe(true);
     expect(deployed.queue.queueId).not.toEqual(devQueueId);
 
-    // The promoted queue is a real, resolvable Cloudflare resource.
-    const live = yield* queues.getQueue({
-      accountId,
-      queueId: deployed.queue.queueId,
-    });
+    // The promoted queue is a real, resolvable Cloudflare resource. A
+    // brand-new queue can briefly 404 from this out-of-band read under load,
+    // so ride out the read-after-create lag before asserting.
+    const live = yield* queues
+      .getQueue({
+        accountId,
+        queueId: deployed.queue.queueId,
+      })
+      .pipe(
+        Effect.retry({
+          while: (e) => e._tag === "QueueNotFound",
+          schedule: Schedule.exponential("500 millis"),
+          times: 8,
+        }),
+      );
     expect(live.queueId).toEqual(deployed.queue.queueId);
 
     // And the persisted state now carries the live id, not the dev one.
@@ -119,6 +132,40 @@ test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
       queues.getQueue({ accountId, queueId: deployed.queue.queueId }),
     );
     expect(Exit.isFailure(exit)).toBe(true);
+  }).pipe(logLevel),
+);
+
+// Canonical `list()` test (account-scoped collection): deploy a real
+// queue, resolve the provider from context via `findProvider`, call
+// `list()`, and assert the deployed queue appears in the exhaustively-
+// paginated result.
+test.provider("list enumerates the deployed queue", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.Queues.Queue("ListQueue");
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Queues.Queue);
+
+    // A just-created queue can lag the account-wide list under load — poll
+    // until it shows up (bounded) instead of asserting on the first read.
+    const all = yield* poll({
+      description: "list() includes the deployed queue",
+      effect: provider.list(),
+      predicate: (all) => all.some((q) => q.queueId === deployed.queueId),
+      schedule: Schedule.both(
+        Schedule.spaced("2 seconds"),
+        Schedule.recurs(20),
+      ),
+    });
+
+    expect(all.some((q) => q.queueId === deployed.queueId)).toBe(true);
+
+    yield* stack.destroy();
   }).pipe(logLevel),
 );
 

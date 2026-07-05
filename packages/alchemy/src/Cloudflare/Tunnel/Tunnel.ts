@@ -84,7 +84,7 @@ export declare namespace Tunnel {
 }
 
 export type Tunnel = Resource<
-  "Cloudflare.Tunnel",
+  "Cloudflare.Tunnel.Tunnel",
   TunnelProps,
   {
     tunnelId: string;
@@ -103,17 +103,19 @@ export type Tunnel = Resource<
 /**
  * A Cloudflare Tunnel that establishes a secure connection from your origin to
  * Cloudflare's edge.
- *
+ * @resource
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  * @section Creating a Tunnel
  * @example Basic tunnel
  * ```typescript
- * const tunnel = yield* Cloudflare.Tunnel("MyTunnel");
+ * const tunnel = yield* Cloudflare.Tunnel.Tunnel("MyTunnel");
  * // Run the connector with: cloudflared tunnel run --token <Redacted.value(tunnel.token)>
  * ```
  *
  * @example Tunnel with ingress rules
  * ```typescript
- * const tunnel = yield* Cloudflare.Tunnel("Web", {
+ * const tunnel = yield* Cloudflare.Tunnel.Tunnel("Web", {
  *   ingress: [
  *     { hostname: "app.example.com", service: "http://localhost:3000" },
  *     { service: "http_status:404" },
@@ -128,16 +130,16 @@ export type Tunnel = Resource<
  * provisions a least-privilege {@link AccountApiToken} and injects it into the
  * Worker:
  *
- * - {@link TunnelRead} — read-only (`get`, `list`, `getToken`,
+ * - {@link ReadTunnel} — read-only (`get`, `list`, `getToken`,
  *   `getConfiguration`); scoped to `Cloudflare Tunnel Read`.
- * - {@link TunnelWrite} — mutating (`create`, `update`, `delete`,
+ * - {@link WriteTunnel} — mutating (`create`, `update`, `delete`,
  *   `putConfiguration`); scoped to `Cloudflare Tunnel Write`.
- * - {@link TunnelReadWrite} — the full CRUD surface; scoped to both.
+ * - {@link ReadWriteTunnel} — the full CRUD surface; scoped to both.
  *
  * @example Create a tunnel on demand from a Worker
  * ```typescript
  * // init
- * const tunnels = yield* Cloudflare.TunnelReadWrite.bind();
+ * const tunnels = yield* Cloudflare.Tunnel.ReadWriteTunnel();
  *
  * return {
  *   fetch: Effect.gen(function* () {
@@ -148,11 +150,57 @@ export type Tunnel = Resource<
  * };
  * ```
  */
-export const Tunnel = Resource<Tunnel>("Cloudflare.Tunnel");
+export const Tunnel = Resource<Tunnel>("Cloudflare.Tunnel.Tunnel");
 
 export const TunnelProvider = () =>
   Provider.succeed(Tunnel, {
     stables: ["tunnelId", "accountTag", "accountId"],
+    // Account collection: enumerate every cfd_tunnel in the account, skip
+    // deleted tunnels (match `read`/`findTunnelByName`), exhaustively
+    // paginate, then hydrate each into the exact `read` Attributes shape.
+    // The token is fetched per-tunnel with bounded concurrency; a tunnel
+    // whose token is gone is dropped (typed per-item not-found).
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const tunnels = yield* zeroTrust.listTunnels
+        .pages({ accountId, isDeleted: false, tunTypes: ["cfd_tunnel"] })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) =>
+            Array.from(chunk).flatMap((page) =>
+              (page.result ?? []).filter(
+                (t): t is typeof t & { id: string } => !!t.id && !t.deletedAt,
+              ),
+            ),
+          ),
+        );
+      const rows = yield* Effect.forEach(
+        tunnels,
+        (t) =>
+          zeroTrust
+            .getTunnelCloudflaredToken({ accountId, tunnelId: t.id })
+            .pipe(
+              Effect.map((token): Tunnel["Attributes"] => ({
+                tunnelId: t.id,
+                tunnelName: t.name ?? t.id,
+                accountTag: t.accountTag ?? undefined,
+                accountId,
+                createdAt: t.createdAt ?? undefined,
+                deletedAt: t.deletedAt ?? undefined,
+                configSrc: ((t as { configSrc?: "cloudflare" | "local" | null })
+                  .configSrc ?? "cloudflare") as "cloudflare" | "local",
+                token: Redacted.make(token),
+              })),
+              Effect.catchTag("TunnelTokenNotFound", () =>
+                Effect.succeed(undefined),
+              ),
+            ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is Tunnel["Attributes"] => row !== undefined,
+      );
+    }),
     diff: Effect.fn(function* ({ id, olds = {}, news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       if (!isResolved(news)) return undefined;
@@ -353,7 +401,7 @@ const writeConfiguration = (
     });
   });
 
-const findTunnelByName = Effect.fnUntraced(function* (name: string) {
+const findTunnelByName = Effect.fn(function* (name: string) {
   const { accountId } = yield* yield* CloudflareEnvironment;
   return yield* zeroTrust.listTunnels
     .items({

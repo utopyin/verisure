@@ -5,7 +5,9 @@ import * as Predicate from "effect/Predicate";
 import { Unowned } from "../../AdoptPolicy.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
 export interface FallbackOriginProps {
   /**
@@ -16,7 +18,7 @@ export interface FallbackOriginProps {
   /**
    * Your origin hostname that requests to custom hostnames are sent to.
    * Must be a DNS record (A, AAAA or CNAME) within the zone — create the
-   * `Cloudflare.DnsRecord` first and pass its name.
+   * `Cloudflare.DNS.Record` first and pass its name.
    *
    * Mutable — the API is a PUT-style upsert.
    */
@@ -37,7 +39,7 @@ export interface FallbackOriginAttributes {
 }
 
 export type FallbackOrigin = Resource<
-  "Cloudflare.FallbackOrigin",
+  "Cloudflare.CustomHostname.FallbackOrigin",
   FallbackOriginProps,
   FallbackOriginAttributes,
   never,
@@ -55,34 +57,73 @@ export type FallbackOrigin = Resource<
  * Safety: when there is no prior state, `read` reports an existing
  * fallback origin as `Unowned`, so the engine refuses to overwrite an
  * out-of-band configuration unless `--adopt` (or `adopt(true)`) is set.
- *
+ * @resource
+ * @product Custom Hostnames
+ * @category Domains & DNS
  * @section Setting the Fallback Origin
  * @example Point custom hostname traffic at your origin
  * ```typescript
- * const record = yield* Cloudflare.DnsRecord("Origin", {
+ * const record = yield* Cloudflare.DNS.Record("Origin", {
  *   zoneId: zone.zoneId,
  *   name: "origin.my-saas.com",
  *   type: "A",
  *   content: "203.0.113.1",
  *   proxied: true,
  * });
- * const fallback = yield* Cloudflare.FallbackOrigin("Fallback", {
+ * const fallback = yield* Cloudflare.CustomHostname.FallbackOrigin("Fallback", {
  *   zoneId: zone.zoneId,
  *   origin: record.name,
  * });
  * ```
  */
 export const FallbackOrigin = Resource<FallbackOrigin>(
-  "Cloudflare.FallbackOrigin",
+  "Cloudflare.CustomHostname.FallbackOrigin",
 );
 
 export const isFallbackOrigin = (value: unknown): value is FallbackOrigin =>
   Predicate.hasProperty(value, "Type") &&
-  value.Type === "Cloudflare.FallbackOrigin";
+  value.Type === "Cloudflare.CustomHostname.FallbackOrigin";
 
 export const FallbackOriginProvider = () =>
   Provider.succeed(FallbackOrigin, {
     stables: ["zoneId"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // Zone singleton — no account-wide list. Enumerate every zone and
+      // read its fallback origin; zones without one configured (or
+      // without Cloudflare for SaaS access) are skipped.
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          observeFallbackOrigin(zoneId).pipe(
+            Effect.map((observed): FallbackOriginAttributes | undefined => {
+              if (
+                observed?.origin === undefined ||
+                observed.status === "pending_deletion" ||
+                observed.status === "deletion_timed_out"
+              ) {
+                return undefined;
+              }
+              return {
+                zoneId,
+                origin: observed.origin,
+                status: observed.status,
+              };
+            }),
+            // Zones without Cloudflare for SaaS entitlement reject the
+            // route; skip them rather than failing the whole enumeration.
+            Effect.catchTag(["SaasAccessNotGranted", "Forbidden"], () =>
+              Effect.succeed(undefined),
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is FallbackOriginAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds = {}, news }) {
       const o = olds as FallbackOriginProps;

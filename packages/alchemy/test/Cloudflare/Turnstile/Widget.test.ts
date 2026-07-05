@@ -1,5 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as turnstile from "@distilled.cloud/cloudflare/turnstile";
 import { expect } from "@effect/vitest";
@@ -51,7 +52,7 @@ test.provider("create and delete a widget with default name", (stack) =>
     yield* stack.destroy();
 
     const widget = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("DefaultWidget", {
+      Cloudflare.Turnstile.Widget("DefaultWidget", {
         domains: [zoneName],
         mode: "managed",
       }),
@@ -82,7 +83,7 @@ test.provider("update mutable props in place (same sitekey)", (stack) =>
     yield* stack.destroy();
 
     const initial = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("UpdateWidget", {
+      Cloudflare.Turnstile.Widget("UpdateWidget", {
         name: "alchemy-turnstile-update",
         domains: [zoneName],
         mode: "managed",
@@ -93,7 +94,7 @@ test.provider("update mutable props in place (same sitekey)", (stack) =>
     expect(initial.mode).toEqual("managed");
 
     const updated = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("UpdateWidget", {
+      Cloudflare.Turnstile.Widget("UpdateWidget", {
         name: "alchemy-turnstile-update-v2",
         domains: [zoneName, `www.${zoneName}`],
         mode: "invisible",
@@ -117,7 +118,7 @@ test.provider("update mutable props in place (same sitekey)", (stack) =>
 
     // Redeploying identical props is a no-op (still the same widget).
     const noop = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("UpdateWidget", {
+      Cloudflare.Turnstile.Widget("UpdateWidget", {
         name: "alchemy-turnstile-update-v2",
         domains: [zoneName, `www.${zoneName}`],
         mode: "invisible",
@@ -138,7 +139,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     yield* stack.destroy();
 
     const widget = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("HealWidget", {
+      Cloudflare.Turnstile.Widget("HealWidget", {
         name: "alchemy-turnstile-heal",
         domains: [zoneName],
         mode: "non-interactive",
@@ -157,7 +158,7 @@ test.provider("recreates after out-of-band delete", (stack) =>
     );
 
     const healed = yield* stack.deploy(
-      Cloudflare.TurnstileWidget("HealWidget", {
+      Cloudflare.Turnstile.Widget("HealWidget", {
         name: "alchemy-turnstile-heal",
         domains: [zoneName],
         mode: "managed",
@@ -173,5 +174,32 @@ test.provider("recreates after out-of-band delete", (stack) =>
     yield* stack.destroy();
 
     yield* expectGone(accountId, healed.sitekey);
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed widget", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const widget = yield* stack.deploy(
+      Cloudflare.Turnstile.Widget("ListWidget", {
+        name: "alchemy-turnstile-list",
+        domains: [zoneName],
+        mode: "managed",
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.Turnstile.Widget);
+    const all = yield* provider.list();
+
+    const found = all.find((w) => w.sitekey === widget.sitekey);
+    expect(found).toBeDefined();
+    expect(found?.name).toEqual("alchemy-turnstile-list");
+    expect(found?.domains).toEqual([zoneName]);
+    expect(found?.mode).toEqual("managed");
+    // list() hydrates the write-only secret to match the read shape.
+    expect(Redacted.value(found!.secret)).toBeTruthy();
+
+    yield* stack.destroy();
   }).pipe(logLevel),
 );

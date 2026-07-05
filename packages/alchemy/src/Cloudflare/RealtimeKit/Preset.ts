@@ -9,33 +9,33 @@ import { Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
-const RealtimeKitPresetTypeId = "Cloudflare.RealtimeKit.Preset" as const;
-type RealtimeKitPresetTypeId = typeof RealtimeKitPresetTypeId;
+const TypeId = "Cloudflare.RealtimeKit.Preset" as const;
+type TypeId = typeof TypeId;
 
 /**
  * Media quality tier for video / screenshare streams.
  */
-export type RealtimeKitMediaQuality = "hd" | "vga" | "qvga";
+export type MediaQuality = "hd" | "vga" | "qvga";
 
 /**
  * Meeting layout the preset applies to.
  */
-export type RealtimeKitViewType = "GROUP_CALL" | "WEBINAR" | "AUDIO_ROOM";
+export type ViewType = "GROUP_CALL" | "WEBINAR" | "AUDIO_ROOM";
 
 /**
  * Whether a participant may produce a media kind.
  */
-export type RealtimeKitCanProduce = "ALLOWED" | "NOT_ALLOWED" | "CAN_REQUEST";
+export type CanProduce = "ALLOWED" | "NOT_ALLOWED" | "CAN_REQUEST";
 
 /**
  * What a participant joining with this preset records as.
  */
-export type RealtimeKitRecorderType = "RECORDER" | "LIVESTREAMER" | "NONE";
+export type RecorderType = "RECORDER" | "LIVESTREAMER" | "NONE";
 
 /**
  * Waiting-room behavior for participants joining with this preset.
  */
-export type RealtimeKitWaitingRoomType =
+export type WaitingRoomType =
   | "SKIP"
   | "ON_PRIVILEGED_USER_ENTRY"
   | "SKIP_ON_ACCEPT";
@@ -43,7 +43,7 @@ export type RealtimeKitWaitingRoomType =
 /**
  * Media configuration of a preset (stream counts, quality, frame rates).
  */
-export type RealtimeKitPresetConfig = {
+export type PresetConfig = {
   /**
    * Maximum number of simultaneous screenshares.
    */
@@ -56,36 +56,32 @@ export type RealtimeKitPresetConfig = {
    * Quality / frame-rate settings for each media kind.
    */
   media: {
-    screenshare: { frameRate: number; quality: RealtimeKitMediaQuality };
-    video: { frameRate: number; quality: RealtimeKitMediaQuality };
+    screenshare: { frameRate: number; quality: MediaQuality };
+    video: { frameRate: number; quality: MediaQuality };
     audio?: { enableHighBitrate?: boolean; enableStereo?: boolean };
   };
   /**
    * Meeting layout this preset applies to.
    */
-  viewType: RealtimeKitViewType;
+  viewType: ViewType;
 };
 
 /**
  * UI design tokens of a preset (colors, logo, spacing).
  */
 /** Corner rounding of UI elements. */
-export type RealtimeKitBorderRadius =
-  | "sharp"
-  | "rounded"
-  | "extra-rounded"
-  | "circular";
+export type BorderRadius = "sharp" | "rounded" | "extra-rounded" | "circular";
 
 /** Border width of UI elements. */
-export type RealtimeKitBorderWidth = "none" | "thin" | "fat";
+export type BorderWidth = "none" | "thin" | "fat";
 
 /** Base color theme of the meeting UI. */
-export type RealtimeKitTheme = "darkest" | "dark" | "light";
+export type Theme = "darkest" | "dark" | "light";
 
-export type RealtimeKitPresetUi = {
+export type PresetUi = {
   designTokens: {
-    borderRadius: RealtimeKitBorderRadius;
-    borderWidth: RealtimeKitBorderWidth;
+    borderRadius: BorderRadius;
+    borderWidth: BorderWidth;
     colors: {
       background: {
         "600": string;
@@ -110,7 +106,7 @@ export type RealtimeKitPresetUi = {
     };
     logo: string;
     spacingBase: number;
-    theme: RealtimeKitTheme;
+    theme: Theme;
   };
   /**
    * Raw UI-kit config diff applied on top of the design tokens. Required by
@@ -123,7 +119,7 @@ export type RealtimeKitPresetUi = {
 /**
  * Participant permissions granted by a preset.
  */
-export type RealtimeKitPresetPermissions = {
+export type PresetPermissions = {
   acceptWaitingRequests: boolean;
   canAcceptProductionRequests: boolean;
   canChangeParticipantPermissions: boolean;
@@ -151,9 +147,9 @@ export type RealtimeKitPresetPermissions = {
   hiddenParticipant: boolean;
   kickParticipant: boolean;
   media: {
-    audio: { canProduce: RealtimeKitCanProduce };
-    screenshare: { canProduce: RealtimeKitCanProduce };
-    video: { canProduce: RealtimeKitCanProduce };
+    audio: { canProduce: CanProduce };
+    screenshare: { canProduce: CanProduce };
+    video: { canProduce: CanProduce };
   };
   pinParticipant: boolean;
   plugins: {
@@ -167,13 +163,13 @@ export type RealtimeKitPresetPermissions = {
     config?: unknown;
   };
   polls: { canCreate: boolean; canView: boolean; canVote: boolean };
-  recorderType: RealtimeKitRecorderType;
+  recorderType: RecorderType;
   showParticipantList: boolean;
-  waitingRoomType: RealtimeKitWaitingRoomType;
+  waitingRoomType: WaitingRoomType;
   isRecorder?: boolean;
 };
 
-export type RealtimeKitPresetProps = {
+export type PresetProps = {
   /**
    * The RealtimeKit app the preset belongs to. Changing the app triggers a
    * replacement.
@@ -189,22 +185,22 @@ export type RealtimeKitPresetProps = {
    * Media configuration (stream counts, quality, frame rates).
    * @default a group-call config (hd video at 30fps, hd screenshare at 5fps, 9 desktop / 4 mobile streams)
    */
-  config?: RealtimeKitPresetConfig;
+  config?: PresetConfig;
   /**
    * UI design tokens.
    * @default RealtimeKit's dark theme defaults
    */
-  ui?: RealtimeKitPresetUi;
+  ui?: PresetUi;
   /**
    * Participant permissions. The API requires the full object on create, so
    * unspecified permissions fall back to conservative attendee defaults
    * (chat and polls allowed, no recording / livestreaming / moderation).
    * @default conservative attendee defaults
    */
-  permissions?: RealtimeKitPresetPermissions;
+  permissions?: PresetPermissions;
 };
 
-export type RealtimeKitPresetAttributes = {
+export type PresetAttributes = {
   /**
    * Server-generated preset identifier. Stable across updates.
    */
@@ -224,21 +220,21 @@ export type RealtimeKitPresetAttributes = {
   /**
    * Media configuration as stored by Cloudflare.
    */
-  config: RealtimeKitPresetConfig;
+  config: PresetConfig;
   /**
    * UI design tokens as stored by Cloudflare.
    */
-  ui: RealtimeKitPresetUi;
+  ui: PresetUi;
   /**
    * Participant permissions as stored by Cloudflare.
    */
-  permissions: RealtimeKitPresetPermissions | undefined;
+  permissions: PresetPermissions | undefined;
 };
 
-export type RealtimeKitPreset = Resource<
-  RealtimeKitPresetTypeId,
-  RealtimeKitPresetProps,
-  RealtimeKitPresetAttributes,
+export type Preset = Resource<
+  TypeId,
+  PresetProps,
+  PresetAttributes,
   never,
   Providers
 >;
@@ -252,13 +248,15 @@ export type RealtimeKitPreset = Resource<
  * the preset to a different app forces a replacement. The create API
  * requires the full config / UI / permissions objects, so the resource fills
  * unspecified sections with sensible defaults.
- *
+ * @resource
+ * @product Realtime Kit
+ * @category Media
  * @section Creating a Preset
  * @example Default group-call preset
  * ```typescript
- * const app = yield* Cloudflare.RealtimeKitApp("Meetings", {});
+ * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {});
  *
- * const guest = yield* Cloudflare.RealtimeKitPreset("Guest", {
+ * const guest = yield* Cloudflare.RealtimeKit.Preset("Guest", {
  *   appId: app.appId,
  *   name: "guest",
  * });
@@ -266,11 +264,11 @@ export type RealtimeKitPreset = Resource<
  *
  * @example Host preset with moderation permissions
  * ```typescript
- * const host = yield* Cloudflare.RealtimeKitPreset("Host", {
+ * const host = yield* Cloudflare.RealtimeKit.Preset("Host", {
  *   appId: app.appId,
  *   name: "host",
  *   permissions: {
- *     ...Cloudflare.defaultRealtimeKitPresetPermissions(),
+ *     ...Cloudflare.RealtimeKit.defaultRealtimeKitPresetPermissions(),
  *     canRecord: true,
  *     kickParticipant: true,
  *     pinParticipant: true,
@@ -282,11 +280,11 @@ export type RealtimeKitPreset = Resource<
  * @section Updating a Preset
  * @example Switch to a webinar layout
  * ```typescript
- * const preset = yield* Cloudflare.RealtimeKitPreset("Guest", {
+ * const preset = yield* Cloudflare.RealtimeKit.Preset("Guest", {
  *   appId: app.appId,
  *   name: "guest",
  *   config: {
- *     ...Cloudflare.defaultRealtimeKitPresetConfig(),
+ *     ...Cloudflare.RealtimeKit.defaultRealtimeKitPresetConfig(),
  *     viewType: "WEBINAR",
  *   },
  * });
@@ -294,25 +292,20 @@ export type RealtimeKitPreset = Resource<
  *
  * @see https://developers.cloudflare.com/realtime/realtimekit/
  */
-export const RealtimeKitPreset = Resource<RealtimeKitPreset>(
-  RealtimeKitPresetTypeId,
-);
+export const Preset = Resource<Preset>(TypeId);
 
 /**
- * Returns true if the given value is a RealtimeKitPreset resource.
+ * Returns true if the given value is a Preset resource.
  */
-export const isRealtimeKitPreset = (
-  value: unknown,
-): value is RealtimeKitPreset =>
-  Predicate.hasProperty(value, "Type") &&
-  value.Type === RealtimeKitPresetTypeId;
+export const isPreset = (value: unknown): value is Preset =>
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
 
 /**
  * The default media configuration used when `config` is omitted: a group
  * call with hd video at 30fps, hd screenshare at 5fps, and 9 desktop /
  * 4 mobile video streams.
  */
-export const defaultRealtimeKitPresetConfig = (): RealtimeKitPresetConfig => ({
+export const defaultRealtimeKitPresetConfig = (): PresetConfig => ({
   maxScreenshareCount: 1,
   maxVideoStreams: { desktop: 9, mobile: 4 },
   media: {
@@ -326,7 +319,7 @@ export const defaultRealtimeKitPresetConfig = (): RealtimeKitPresetConfig => ({
  * The default UI design tokens used when `ui` is omitted: RealtimeKit's
  * dark theme.
  */
-export const defaultRealtimeKitPresetUi = (): RealtimeKitPresetUi => ({
+export const defaultRealtimeKitPresetUi = (): PresetUi => ({
   designTokens: {
     borderRadius: "rounded",
     borderWidth: "thin",
@@ -364,49 +357,48 @@ export const defaultRealtimeKitPresetUi = (): RealtimeKitPresetUi => ({
  * attendee role — chat, polls, and media production allowed; recording,
  * livestreaming, and moderation denied.
  */
-export const defaultRealtimeKitPresetPermissions =
-  (): RealtimeKitPresetPermissions => ({
-    acceptWaitingRequests: false,
-    canAcceptProductionRequests: false,
-    canChangeParticipantPermissions: false,
-    canEditDisplayName: false,
-    canLivestream: false,
-    canRecord: false,
-    canSpotlight: false,
-    chat: {
-      private: { canReceive: true, canSend: true, files: true, text: true },
-      public: { canSend: true, files: true, text: true },
-    },
-    connectedMeetings: {
-      canAlterConnectedMeetings: false,
-      canSwitchConnectedMeetings: false,
-      canSwitchToParentMeeting: false,
-    },
-    disableParticipantAudio: false,
-    disableParticipantScreensharing: false,
-    disableParticipantVideo: false,
-    hiddenParticipant: false,
-    kickParticipant: false,
-    media: {
-      audio: { canProduce: "ALLOWED" },
-      screenshare: { canProduce: "ALLOWED" },
-      video: { canProduce: "ALLOWED" },
-    },
-    pinParticipant: false,
-    plugins: {
-      canClose: true,
-      canEditConfig: true,
-      canStart: true,
-      config: {},
-    },
-    polls: { canCreate: true, canView: true, canVote: true },
-    recorderType: "NONE",
-    showParticipantList: true,
-    waitingRoomType: "SKIP",
-  });
+export const defaultRealtimeKitPresetPermissions = (): PresetPermissions => ({
+  acceptWaitingRequests: false,
+  canAcceptProductionRequests: false,
+  canChangeParticipantPermissions: false,
+  canEditDisplayName: false,
+  canLivestream: false,
+  canRecord: false,
+  canSpotlight: false,
+  chat: {
+    private: { canReceive: true, canSend: true, files: true, text: true },
+    public: { canSend: true, files: true, text: true },
+  },
+  connectedMeetings: {
+    canAlterConnectedMeetings: false,
+    canSwitchConnectedMeetings: false,
+    canSwitchToParentMeeting: false,
+  },
+  disableParticipantAudio: false,
+  disableParticipantScreensharing: false,
+  disableParticipantVideo: false,
+  hiddenParticipant: false,
+  kickParticipant: false,
+  media: {
+    audio: { canProduce: "ALLOWED" },
+    screenshare: { canProduce: "ALLOWED" },
+    video: { canProduce: "ALLOWED" },
+  },
+  pinParticipant: false,
+  plugins: {
+    canClose: true,
+    canEditConfig: true,
+    canStart: true,
+    config: {},
+  },
+  polls: { canCreate: true, canView: true, canVote: true },
+  recorderType: "NONE",
+  showParticipantList: true,
+  waitingRoomType: "SKIP",
+});
 
-export const RealtimeKitPresetProvider = () =>
-  Provider.succeed(RealtimeKitPreset, {
+export const PresetProvider = () =>
+  Provider.succeed(Preset, {
     stables: ["presetId", "accountId", "appId"],
     diff: Effect.fn(function* ({ olds, news, output }) {
       if (!isResolved(news)) return undefined;
@@ -470,14 +462,44 @@ export const RealtimeKitPresetProvider = () =>
 
       if (!observed) {
         // Ensure — greenfield (or out-of-band delete): create with the full
-        // desired body. Preset names are not unique so there is no
-        // AlreadyExists race to tolerate.
-        const created = yield* realtimeKit.createPreset({
+        // desired body. The API rejects a duplicate name in the same app
+        // with a 409 (`RealtimeKitPresetExists`); this happens when a prior
+        // run leaked a same-named preset (lost state) or when a retried
+        // create races a 500 that actually persisted. Adopt the existing
+        // preset by name and converge it to the desired body instead of
+        // leaking / failing.
+        const created = yield* realtimeKit
+          .createPreset({ accountId, appId, ...desired })
+          .pipe(
+            Effect.catchTag("RealtimeKitPresetExists", () =>
+              Effect.succeed(undefined),
+            ),
+          );
+        if (created) {
+          return toAttributes(created.data, accountId, appId);
+        }
+        const existing = yield* findByName(accountId, appId, name);
+        if (!existing?.id) {
+          // Conflict reported but the preset isn't visible yet — let the
+          // engine retry the reconcile rather than silently succeeding.
+          return yield* realtimeKit
+            .createPreset({ accountId, appId, ...desired })
+            .pipe(
+              Effect.map((res) => toAttributes(res.data, accountId, appId)),
+            );
+        }
+        yield* realtimeKit.patchPreset({
           accountId,
           appId,
+          presetId: existing.id,
           ...desired,
         });
-        return toAttributes(created.data, accountId, appId);
+        const adopted = yield* realtimeKit.getPresetByIdPreset({
+          accountId,
+          appId,
+          presetId: existing.id,
+        });
+        return toAttributes(adopted.data, accountId, appId);
       }
 
       // Sync — diff what the user asked for against observed cloud state.
@@ -509,6 +531,107 @@ export const RealtimeKitPresetProvider = () =>
         })
         .pipe(Effect.catchTag("RealtimeKitPresetNotFound", () => Effect.void));
     }),
+    // Presets are sub-resources of a RealtimeKit app. There is no
+    // account-wide preset enumeration API, so fan out: list every app in the
+    // account, then list every preset within each app. The per-app preset
+    // list returns only a slim `{ id, name }` shape, so each row is hydrated
+    // via `getPresetByIdPreset` into the full `read` Attributes shape.
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const apps = yield* listAllApps(accountId);
+      const rows = yield* Effect.forEach(
+        apps,
+        (app) =>
+          Effect.gen(function* () {
+            const appId = app.id;
+            if (!appId) return [];
+            const presets = yield* listAllPresets(accountId, appId);
+            const hydrated = yield* Effect.forEach(
+              presets,
+              (preset) =>
+                preset.id
+                  ? getPreset(accountId, appId, preset.id).pipe(
+                      Effect.map((observed) =>
+                        observed
+                          ? toAttributes(observed, accountId, appId)
+                          : undefined,
+                      ),
+                    )
+                  : Effect.succeed(undefined),
+              { concurrency: 10 },
+            );
+            return hydrated.filter(
+              (row): row is PresetAttributes => row !== undefined,
+            );
+          }),
+        { concurrency: 10 },
+      );
+      return rows.flat();
+    }),
+  });
+
+const LIST_PER_PAGE = 100;
+
+/**
+ * Exhaustively enumerate every RealtimeKit app in the account. The list op is
+ * not generated as a paginated method, so fetch the first page, derive the
+ * page count from `paging.totalCount`, then fan out the remaining pages.
+ */
+const listAllApps = (accountId: string) =>
+  Effect.gen(function* () {
+    const first = yield* realtimeKit.getApp({
+      accountId,
+      pageNo: 1,
+      perPage: LIST_PER_PAGE,
+    });
+    const apps = (first.data ?? []).filter(
+      (a): a is NonNullable<typeof a> => a !== null,
+    );
+    const total = first.paging?.totalCount ?? apps.length;
+    const pages = Math.ceil(total / LIST_PER_PAGE);
+    if (pages <= 1) return apps;
+    const rest = yield* Effect.forEach(
+      Array.from({ length: pages - 1 }, (_, i) => i + 2),
+      (pageNo) =>
+        realtimeKit
+          .getApp({ accountId, pageNo, perPage: LIST_PER_PAGE })
+          .pipe(
+            Effect.map((res) =>
+              (res.data ?? []).filter(
+                (a): a is NonNullable<typeof a> => a !== null,
+              ),
+            ),
+          ),
+      { concurrency: 10 },
+    );
+    return [...apps, ...rest.flat()];
+  });
+
+/**
+ * Exhaustively enumerate every preset within a single app, paginating off
+ * `paging.totalCount` the same way as {@link listAllApps}.
+ */
+const listAllPresets = (accountId: string, appId: string) =>
+  Effect.gen(function* () {
+    const first = yield* realtimeKit.getPreset({
+      accountId,
+      appId,
+      pageNo: 1,
+      perPage: LIST_PER_PAGE,
+    });
+    const presets = [...first.data];
+    const total = first.paging?.totalCount ?? presets.length;
+    const pages = Math.ceil(total / LIST_PER_PAGE);
+    if (pages <= 1) return presets;
+    const rest = yield* Effect.forEach(
+      Array.from({ length: pages - 1 }, (_, i) => i + 2),
+      (pageNo) =>
+        realtimeKit
+          .getPreset({ accountId, appId, pageNo, perPage: LIST_PER_PAGE })
+          .pipe(Effect.map((res) => [...res.data])),
+      { concurrency: 10 },
+    );
+    return [...presets, ...rest.flat()];
   });
 
 type ObservedPreset = realtimeKit.GetPresetByIdPresetResponse["data"];
@@ -545,8 +668,8 @@ const createPresetName = (id: string, name: string | undefined) =>
   });
 
 const withUiDefaults = (
-  ui: RealtimeKitPresetUi | undefined,
-): RealtimeKitPresetUi & { configDiff: unknown } => {
+  ui: PresetUi | undefined,
+): PresetUi & { configDiff: unknown } => {
   const base = ui ?? defaultRealtimeKitPresetUi();
   // `config_diff` is required by the API even though it's incidental —
   // default it so users don't have to care.
@@ -557,11 +680,11 @@ const withUiDefaults = (
  * Fill `plugins.config` (required by the create API even though it's
  * incidental) so users don't have to care. The return type intentionally
  * stays inferred: `CreatePresetRequest` requires `plugins.config` to be
- * present, and annotating `RealtimeKitPresetPermissions` (where it is
+ * present, and annotating `PresetPermissions` (where it is
  * optional) would erase the guarantee the literal provides.
  */
 const withPermissionsDefaults = (
-  permissions: RealtimeKitPresetPermissions | undefined,
+  permissions: PresetPermissions | undefined,
 ) => {
   const base = permissions ?? defaultRealtimeKitPresetPermissions();
   return {
@@ -606,7 +729,7 @@ const toAttributes = (
   preset: ObservedPreset,
   accountId: string,
   appId: string,
-): RealtimeKitPresetAttributes => ({
+): PresetAttributes => ({
   presetId: preset.id,
   accountId,
   appId,
@@ -622,12 +745,11 @@ const toAttributes = (
     media: {
       screenshare: {
         frameRate: preset.config.media.screenshare.frameRate,
-        quality: preset.config.media.screenshare
-          .quality as RealtimeKitMediaQuality,
+        quality: preset.config.media.screenshare.quality as MediaQuality,
       },
       video: {
         frameRate: preset.config.media.video.frameRate,
-        quality: preset.config.media.video.quality as RealtimeKitMediaQuality,
+        quality: preset.config.media.video.quality as MediaQuality,
       },
       ...(preset.config.media.audio
         ? {
@@ -645,13 +767,12 @@ const toAttributes = (
           }
         : {}),
     },
-    viewType: preset.config.viewType as RealtimeKitViewType,
+    viewType: preset.config.viewType as ViewType,
   },
   ui: {
     designTokens: {
-      borderRadius: preset.ui.designTokens
-        .borderRadius as RealtimeKitBorderRadius,
-      borderWidth: preset.ui.designTokens.borderWidth as RealtimeKitBorderWidth,
+      borderRadius: preset.ui.designTokens.borderRadius as BorderRadius,
+      borderWidth: preset.ui.designTokens.borderWidth as BorderWidth,
       colors: {
         background: { ...preset.ui.designTokens.colors.background },
         brand: { ...preset.ui.designTokens.colors.brand },
@@ -664,7 +785,7 @@ const toAttributes = (
       },
       logo: preset.ui.designTokens.logo ?? "",
       spacingBase: preset.ui.designTokens.spacingBase,
-      theme: preset.ui.designTokens.theme as RealtimeKitTheme,
+      theme: preset.ui.designTokens.theme as Theme,
     },
     configDiff: preset.ui.configDiff ?? {},
   },
@@ -692,16 +813,14 @@ const toAttributes = (
         kickParticipant: preset.permissions.kickParticipant,
         media: {
           audio: {
-            canProduce: preset.permissions.media.audio
-              .canProduce as RealtimeKitCanProduce,
+            canProduce: preset.permissions.media.audio.canProduce as CanProduce,
           },
           screenshare: {
             canProduce: preset.permissions.media.screenshare
-              .canProduce as RealtimeKitCanProduce,
+              .canProduce as CanProduce,
           },
           video: {
-            canProduce: preset.permissions.media.video
-              .canProduce as RealtimeKitCanProduce,
+            canProduce: preset.permissions.media.video.canProduce as CanProduce,
           },
         },
         pinParticipant: preset.permissions.pinParticipant,
@@ -712,11 +831,9 @@ const toAttributes = (
           config: preset.permissions.plugins.config ?? {},
         },
         polls: { ...preset.permissions.polls },
-        recorderType: preset.permissions
-          .recorderType as RealtimeKitRecorderType,
+        recorderType: preset.permissions.recorderType as RecorderType,
         showParticipantList: preset.permissions.showParticipantList,
-        waitingRoomType: preset.permissions
-          .waitingRoomType as RealtimeKitWaitingRoomType,
+        waitingRoomType: preset.permissions.waitingRoomType as WaitingRoomType,
         ...(preset.permissions.isRecorder != null
           ? { isRecorder: preset.permissions.isRecorder }
           : {}),

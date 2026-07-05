@@ -1,14 +1,17 @@
 import * as ssl from "@distilled.cloud/cloudflare/ssl";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
 
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
+import { listAllZones } from "../Zone/lookup.ts";
 
-const UniversalSslTypeId = "Cloudflare.Ssl.UniversalSsl" as const;
-type UniversalSslTypeId = typeof UniversalSslTypeId;
+const TypeId = "Cloudflare.Ssl.UniversalSsl" as const;
+type TypeId = typeof TypeId;
 
 export type UniversalSslProps = {
   /**
@@ -45,7 +48,7 @@ export type UniversalSslAttributes = {
 };
 
 export type UniversalSsl = Resource<
-  UniversalSslTypeId,
+  TypeId,
   UniversalSslProps,
   UniversalSslAttributes,
   never,
@@ -65,11 +68,13 @@ export type UniversalSsl = Resource<
  * **Warning:** disabling Universal SSL removes any active Universal SSL
  * certificates for the zone from the edge. Visitors will see TLS errors
  * unless advanced/custom certificates cover the zone's hostnames.
- *
+ * @resource
+ * @product SSL/TLS
+ * @category SSL/TLS & Certificates
  * @section Managing Universal SSL
  * @example Disable Universal SSL for a zone
  * ```typescript
- * yield* Cloudflare.UniversalSsl("UniversalSsl", {
+ * yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
  *   zoneId: zone.zoneId,
  *   enabled: false,
  * });
@@ -77,7 +82,7 @@ export type UniversalSsl = Resource<
  *
  * @example Pin Universal SSL enabled
  * ```typescript
- * yield* Cloudflare.UniversalSsl("UniversalSsl", {
+ * yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
  *   zoneId: zone.zoneId,
  *   enabled: true,
  * });
@@ -85,17 +90,59 @@ export type UniversalSsl = Resource<
  *
  * @see https://developers.cloudflare.com/api/resources/ssl/subresources/universal/subresources/settings/
  */
-export const UniversalSsl = Resource<UniversalSsl>(UniversalSslTypeId);
+export const UniversalSsl = Resource<UniversalSsl>(TypeId);
 
 /**
  * Returns true if the given value is a UniversalSsl resource.
  */
 export const isUniversalSsl = (value: unknown): value is UniversalSsl =>
-  Predicate.hasProperty(value, "Type") && value.Type === UniversalSslTypeId;
+  Predicate.hasProperty(value, "Type") && value.Type === TypeId;
+
+/**
+ * The Universal SSL "edit setting" endpoint enforces its OWN per-zone,
+ * per-operation rate limit ("Rate limit reached for the update operation.
+ * Please try again in a minute") — much longer than the engine's blanket
+ * retry budget (~40s). Ride it out patiently on the typed `TooManyRequests`
+ * within a bounded number of attempts (~120s total) so a concurrent or
+ * recent patch on the same zone's singleton doesn't fail the operation.
+ */
+const patchUniversal = (input: { zoneId: string; enabled: boolean }) =>
+  ssl.patchUniversalSetting(input).pipe(
+    Effect.retry({
+      while: (e) => e._tag === "TooManyRequests",
+      schedule: Schedule.spaced("20 seconds"),
+      times: 6,
+    }),
+  );
 
 export const UniversalSslProvider = () =>
   Provider.succeed(UniversalSsl, {
+    nuke: { singleton: true },
     stables: ["zoneId", "initialEnabled"],
+
+    list: Effect.fn(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      // No account-wide API for this zone singleton — enumerate every
+      // zone in the account and read its setting (every zone has one).
+      const allZones = yield* listAllZones(accountId);
+      const rows = yield* Effect.forEach(
+        allZones.map((zone) => zone.id),
+        (zoneId) =>
+          ssl.getUniversalSetting({ zoneId }).pipe(
+            Effect.map((observed) => {
+              const enabled = observedEnabled(observed);
+              // Observed value is the pre-management value at adoption.
+              return { zoneId, enabled, initialEnabled: enabled };
+            }),
+            // Plan-gated or partial zones reject the route; skip them.
+            Effect.catchTag("InvalidRoute", () => Effect.succeed(undefined)),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter(
+        (row): row is UniversalSslAttributes => row !== undefined,
+      );
+    }),
 
     diff: Effect.fn(function* ({ olds, news, output }) {
       // news is Input<Props> during plan — only compare once resolved.
@@ -152,7 +199,7 @@ export const UniversalSslProvider = () =>
       if (enabled === news.enabled) {
         return { zoneId, enabled, initialEnabled };
       }
-      const patched = yield* ssl.patchUniversalSetting({
+      const patched = yield* patchUniversal({
         zoneId,
         enabled: news.enabled,
       });
@@ -169,9 +216,9 @@ export const UniversalSslProvider = () =>
       // Restore the pre-management value; skip the call when it already
       // matches (idempotent re-delete after a crashed run).
       if (observedEnabled(observed) === initialEnabled) return;
-      yield* ssl
-        .patchUniversalSetting({ zoneId, enabled: initialEnabled })
-        .pipe(Effect.catchTag("InvalidRoute", () => Effect.void));
+      yield* patchUniversal({ zoneId, enabled: initialEnabled }).pipe(
+        Effect.catchTag("InvalidRoute", () => Effect.void),
+      );
     }),
   });
 

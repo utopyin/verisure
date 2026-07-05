@@ -2,6 +2,7 @@ import { adopt, OwnedBySomeoneElse } from "@/AdoptPolicy";
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { findZoneByName } from "@/Cloudflare/Zone/lookup";
+import * as Provider from "@/Provider";
 import * as Test from "@/Test/Vitest";
 import * as pageRules from "@distilled.cloud/cloudflare/page-rules";
 import { expect } from "@effect/vitest";
@@ -28,6 +29,7 @@ const TARGET_DEFAULT = `${zoneName}/alchemy-pagerule-default/*`;
 const TARGET_UPDATE = `${zoneName}/alchemy-pagerule-update/*`;
 const TARGET_UPDATE_MOVED = `${zoneName}/alchemy-pagerule-update-moved/*`;
 const TARGET_ADOPT = `${zoneName}/alchemy-pagerule-adopt/*`;
+const TARGET_LIST = `${zoneName}/alchemy-pagerule-list/*`;
 
 const resolveZoneId = Effect.gen(function* () {
   const { accountId } = yield* yield* CloudflareEnvironment;
@@ -99,7 +101,7 @@ test.provider("create, verify out-of-band, and destroy a page rule", (stack) =>
 
     const rule = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.PageRule("DefaultRule", {
+        return yield* Cloudflare.PageRule.PageRule("DefaultRule", {
           zoneId,
           target: TARGET_DEFAULT,
           actions: [
@@ -142,7 +144,7 @@ test.provider(
 
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageRule("UpdateRule", {
+          return yield* Cloudflare.PageRule.PageRule("UpdateRule", {
             zoneId,
             target: TARGET_UPDATE,
             actions: [{ id: "cache_level", value: "bypass" }],
@@ -156,7 +158,7 @@ test.provider(
 
       const updated = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageRule("UpdateRule", {
+          return yield* Cloudflare.PageRule.PageRule("UpdateRule", {
             zoneId,
             // Targets are mutable via PUT — same rule, new URL pattern.
             target: TARGET_UPDATE_MOVED,
@@ -187,7 +189,7 @@ test.provider(
       // the PUT entirely) and keeps the same physical rule.
       const noop = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageRule("UpdateRule", {
+          return yield* Cloudflare.PageRule.PageRule("UpdateRule", {
             zoneId,
             target: TARGET_UPDATE_MOVED,
             actions: [
@@ -238,7 +240,7 @@ test.provider(
       const error = yield* stack
         .deploy(
           Effect.gen(function* () {
-            return yield* Cloudflare.PageRule("AdoptedRule", {
+            return yield* Cloudflare.PageRule.PageRule("AdoptedRule", {
               zoneId,
               target: TARGET_ADOPT,
               actions: [{ id: "cache_level", value: "cache_everything" }],
@@ -255,7 +257,7 @@ test.provider(
       // (same physical id) and converges it to the desired actions.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.PageRule("AdoptedRule", {
+          return yield* Cloudflare.PageRule.PageRule("AdoptedRule", {
             zoneId,
             target: TARGET_ADOPT,
             actions: [{ id: "cache_level", value: "cache_everything" }],
@@ -276,6 +278,42 @@ test.provider(
       const gone = yield* findRule(zoneId, TARGET_ADOPT);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
+);
+
+// Canonical `list()` test (zone-scoped collection): `list()` enumerates
+// every zone via `listAllZones` and lists each zone's Page Rules, hydrating
+// each into the same `Attributes` shape `read` returns. Deploy a rule with a
+// deterministic target, then assert it appears in the exhaustive result.
+test.provider("list enumerates the deployed page rule", (stack) =>
+  Effect.gen(function* () {
+    const zoneId = yield* resolveZoneId;
+
+    yield* stack.destroy();
+    yield* purgeRules(zoneId, [TARGET_LIST]);
+
+    const rule = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.PageRule.PageRule("ListRule", {
+          zoneId,
+          target: TARGET_LIST,
+          actions: [{ id: "cache_level", value: "cache_everything" }],
+        }).pipe(adopt(true));
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Cloudflare.PageRule.PageRule);
+    const all = yield* provider.list();
+
+    expect(all.some((r) => r.pageRuleId === rule.pageRuleId)).toBe(true);
+    const found = all.find((r) => r.pageRuleId === rule.pageRuleId);
+    expect(found?.zoneId).toEqual(zoneId);
+    expect(found?.target).toEqual(TARGET_LIST);
+
+    yield* stack.destroy();
+
+    const gone = yield* findRule(zoneId, TARGET_LIST);
+    expect(gone).toBeUndefined();
+  }).pipe(logLevel),
 );
 
 /**
