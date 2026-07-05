@@ -66,7 +66,7 @@ export const ApiHttpAppLive = Layer.effect(
         return yield* dashboardRpcHttp;
       }
 
-      if (pathname.startsWith("/api/v1/")) {
+      if (pathname === "/api/v1" || pathname.startsWith("/api/v1/")) {
         return yield* shortcutRestHttp;
       }
 

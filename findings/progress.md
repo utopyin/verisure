@@ -35,3 +35,5 @@
 - Finding 08 has split the API worker composition root into named infrastructure, persistence, application, and HTTP route layers, leaving `worker.ts` as a thin Cloudflare adapter.
 - Finding 06 has an ADR accepting the current Drizzle effectful adapter only as a temporary migration bridge with explicit future regression-test requirements.
 - Finding 09 has split the shared RPC contract into feature modules while keeping the existing compatibility exports and `DashboardRpcs` merge order.
+- Finding 04 has migrated Shortcut REST from manual `HttpRouter` route bodies to a schema-first `HttpApi` contract with `HttpApiBuilder.group` handlers while preserving the existing `ShortcutRestHttp` export.
+- Finding 10 has completed the REST half by introducing Shortcut REST-native error schemas/helpers and removing the Shortcut REST dependency on `DashboardRpcError`; the RPC mapper move remains deferred.

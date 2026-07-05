@@ -85,6 +85,23 @@ describe("Shortcut REST API", () => {
     });
   });
 
+  test("maps REST storage failures to service unavailable", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
+        headers: { authorization: "Bearer valid" },
+      }),
+      { failAuthenticationStorage: true }
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toStrictEqual({
+      error: {
+        code: "service_unavailable",
+        message: "Service storage is unavailable",
+      },
+    });
+  });
+
   test("serves status and mutation routes with request-scoped services", async () => {
     const status = await runRest(
       new Request("http://api.local/api/v1/alarm/status?giid=giid-1", {
@@ -103,7 +120,7 @@ describe("Shortcut REST API", () => {
     );
     const mode = await runRest(
       new Request("http://api.local/api/v1/alarm/mode", {
-        body: JSON.stringify({ giid: "giid-1", mode: "DISARMED" }),
+        body: JSON.stringify({ giid: "giid-1", mode: "ARMED_HOME" }),
         headers: {
           authorization: "Bearer valid",
           "content-type": "application/json",
@@ -125,7 +142,28 @@ describe("Shortcut REST API", () => {
     expect(mode.status).toBe(200);
     await expect(mode.json()).resolves.toMatchObject({
       giid: "giid-1",
-      requestedMode: "DISARMED",
+      requestedMode: "ARMED_HOME",
+    });
+  });
+
+  test("wraps unsupported content types in the REST error envelope", async () => {
+    const response = await runRest(
+      new Request("http://api.local/api/v1/alarm/mode", {
+        body: "giid=giid-1&mode=DISARMED",
+        headers: {
+          authorization: "Bearer valid",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        method: "POST",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toStrictEqual({
+      error: {
+        code: "invalid_input",
+        message: "Unsupported content type",
+      },
     });
   });
 });
@@ -133,6 +171,7 @@ describe("Shortcut REST API", () => {
 const runRest = (
   request: Request,
   options: {
+    readonly failAuthenticationStorage?: boolean;
     readonly installations?: readonly (typeof testInstallation)[];
   } = {}
 ) =>
@@ -154,6 +193,7 @@ const runRest = (
 
 const testLayer = (
   options: {
+    readonly failAuthenticationStorage?: boolean;
     readonly installations?: readonly (typeof testInstallation)[];
   } = {}
 ) =>
@@ -163,6 +203,11 @@ const testLayer = (
       Server.ApiTokenService,
       Server.ApiTokenService.of({
         authenticate: ({ giid, plaintextToken, requiredScopes }) => {
+          if (options.failAuthenticationStorage === true) {
+            return Effect.fail(
+              new Server.RepositoryError({ cause: "d1 down" })
+            );
+          }
           if (plaintextToken !== "valid") {
             return Effect.fail(
               new Server.ApiTokenError({ message: "Invalid API token" })
