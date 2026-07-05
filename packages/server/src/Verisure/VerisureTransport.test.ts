@@ -17,19 +17,37 @@ const BASE_URLS = [
   "https://automation02.test",
 ] as const;
 
+const request = Effect.fn("VerisureTransportTest.request")(function* (
+  request: HttpClientRequest.HttpClientRequest
+) {
+  const transport = yield* VerisureTransport;
+  return yield* transport.request(request);
+});
+
+const requestFailure = Effect.fn("VerisureTransportTest.requestFailure")(
+  function* (requestInput: HttpClientRequest.HttpClientRequest) {
+    return yield* Effect.flip(request(requestInput));
+  }
+);
+
+const requestPingTwice = Effect.fn("VerisureTransportTest.requestPingTwice")(
+  function* () {
+    const first = yield* request(HttpClientRequest.get("/ping"));
+    const second = yield* request(HttpClientRequest.get("/ping"));
+    return { first, second };
+  }
+);
+
 describe(VerisureTransport, () => {
   it.effect("adds APPLICATION_ID and preserves request cookies", () =>
     Effect.gen(function* () {
       const { calls, provideTransport } = makeFetch([response(200, "ok")]);
 
-      yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        return yield* transport.request(
-          HttpClientRequest.get("/auth/token", {
-            headers: { Cookie: "vid=one; vs-refresh=two" },
-          })
-        );
-      }).pipe(provideTransport);
+      yield* request(
+        HttpClientRequest.get("/auth/token", {
+          headers: { Cookie: "vid=one; vs-refresh=two" },
+        })
+      ).pipe(provideTransport);
 
       expect(calls).toHaveLength(1);
       expect(calls[0]?.url).toBe("https://automation01.test/auth/token");
@@ -46,12 +64,7 @@ describe(VerisureTransport, () => {
         response(200, "still ok"),
       ]);
 
-      const result = yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        const first = yield* transport.request(HttpClientRequest.get("/ping"));
-        const second = yield* transport.request(HttpClientRequest.get("/ping"));
-        return { first, second };
-      }).pipe(provideTransport);
+      const result = yield* requestPingTwice().pipe(provideTransport);
 
       expect(result.first.request.url).toBe("https://automation02.test/ping");
       expect(result.second.request.url).toBe("https://automation02.test/ping");
@@ -70,10 +83,9 @@ describe(VerisureTransport, () => {
         response(200, "ok"),
       ]);
 
-      const result = yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        return yield* transport.request(HttpClientRequest.post("/graphql"));
-      }).pipe(provideTransport);
+      const result = yield* request(HttpClientRequest.post("/graphql")).pipe(
+        provideTransport
+      );
 
       expect(result.request.url).toBe("https://automation02.test/graphql");
       expect(calls.map((call) => call.url)).toStrictEqual([
@@ -90,10 +102,9 @@ describe(VerisureTransport, () => {
         response(200, "ok"),
       ]);
 
-      const result = yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        return yield* transport.request(HttpClientRequest.post("/graphql"));
-      }).pipe(provideTransport);
+      const result = yield* request(HttpClientRequest.post("/graphql")).pipe(
+        provideTransport
+      );
 
       expect(result.request.url).toBe("https://automation02.test/graphql");
       expect(calls).toHaveLength(2);
@@ -106,12 +117,9 @@ describe(VerisureTransport, () => {
         response(401, "unauthorized"),
       ]);
 
-      const error = yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        return yield* Effect.flip(
-          transport.request(HttpClientRequest.get("/auth/token"))
-        );
-      }).pipe(provideTransport);
+      const error = yield* requestFailure(
+        HttpClientRequest.get("/auth/token")
+      ).pipe(provideTransport);
 
       expect(error).toBeInstanceOf(AuthenticationError);
       expect(calls).toHaveLength(1);
@@ -124,12 +132,9 @@ describe(VerisureTransport, () => {
         response(200, "AUT_00021 request limit"),
       ]);
 
-      const error = yield* Effect.gen(function* () {
-        const transport = yield* VerisureTransport;
-        return yield* Effect.flip(
-          transport.request(HttpClientRequest.get("/auth/token"))
-        );
-      }).pipe(provideTransport);
+      const error = yield* requestFailure(
+        HttpClientRequest.get("/auth/token")
+      ).pipe(provideTransport);
 
       expect(error).toBeInstanceOf(RateLimitError);
     })
@@ -144,12 +149,9 @@ describe(VerisureTransport, () => {
           response(502, "bad gateway"),
         ]);
 
-        const error = yield* Effect.gen(function* () {
-          const transport = yield* VerisureTransport;
-          return yield* Effect.flip(
-            transport.request(HttpClientRequest.get("/auth/token"))
-          );
-        }).pipe(provideTransport);
+        const error = yield* requestFailure(
+          HttpClientRequest.get("/auth/token")
+        ).pipe(provideTransport);
 
         expect(error).toBeInstanceOf(ResponseError);
         expect(error.message).toContain("bad gateway");
@@ -165,12 +167,9 @@ describe(VerisureTransport, () => {
           new Error("second network failure"),
         ]);
 
-        const error = yield* Effect.gen(function* () {
-          const transport = yield* VerisureTransport;
-          return yield* Effect.flip(
-            transport.request(HttpClientRequest.get("/auth/token"))
-          );
-        }).pipe(provideTransport);
+        const error = yield* requestFailure(
+          HttpClientRequest.get("/auth/token")
+        ).pipe(provideTransport);
 
         expect(error).toBeInstanceOf(RequestError);
         expect(error.message).toBe("second network failure");

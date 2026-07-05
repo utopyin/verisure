@@ -2,18 +2,18 @@
 
 ## what to do
 
-- Simplify tests to one main `Effect.gen` per `it.effect` where possible.
-- Extract reused test operations into named `Effect.fn` helpers.
-- Normalize harness providers/layers across service and Verisure tests.
+- Keep future tests in the one-main-`Effect.gen` style used by the Effect testing fixtures.
+- Consider a separate API/RPC test cleanup only if it can be done without widening production or REST/RPC scope.
 
 ## what is done
 
 - Confirmed tests already use `@effect/vitest`.
 - Identified nested effect/provider patterns in service, Verisure, and RPC tests.
 - Compared with Effect testing docs.
+- Simplified the targeted server test harnesses by extracting named local `Effect.fn` helpers for service and Verisure operations, while preserving per-test harness state, fixture data, and assertions.
+- Left broad API/RPC test cleanup deferred because this slice was scoped to the server harness shape.
 
 ## what is next
 
-- After `01-effect-fn-boundaries`, refactor test helpers to mirror production service method names.
-- Do not change tests first; use them to protect production refactors.
-- Dependencies: `01-effect-fn-boundaries`; optional dependency on `05-layer-composition-naming` for cleaner test layers.
+- Address any unrelated runtime/typecheck failures separately before using these server tests as a green CI gate.
+- Keep mutable test queues/arrays per test; do not introduce shared layers for those harnesses.

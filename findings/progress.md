@@ -37,3 +37,4 @@
 - Finding 09 has split the shared RPC contract into feature modules while keeping the existing compatibility exports and `DashboardRpcs` merge order.
 - Finding 04 has migrated Shortcut REST from manual `HttpRouter` route bodies to a schema-first `HttpApi` contract with `HttpApiBuilder.group` handlers while preserving the existing `ShortcutRestHttp` export.
 - Finding 10 has completed the REST half by introducing Shortcut REST-native error schemas/helpers and removing the Shortcut REST dependency on `DashboardRpcError`; the dashboard RPC mapper now lives at the RPC boundary in `apps/api/src/Rpc/ErrorMapper.ts` with RPC handlers/middleware using the local mapper.
+- Finding 07 has cleaned the targeted server Effect test harnesses with named local `Effect.fn` helpers; broad API/RPC harness cleanup remains deferred.

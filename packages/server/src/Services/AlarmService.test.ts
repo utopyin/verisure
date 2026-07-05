@@ -10,8 +10,27 @@ import {
 } from "../Security/RequestContext";
 import type { VerisureRequestsTestOperation } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
+import type { AlarmServiceShape } from "./AlarmService";
 import { AlarmService } from "./AlarmService";
 import { ServiceError } from "./ServiceError";
+
+const toggleFull = Effect.fn("AlarmServiceTest.toggleFull")(function* () {
+  const alarm = yield* AlarmService;
+  return yield* alarm.toggleFull();
+});
+
+const setMode = Effect.fn("AlarmServiceTest.setMode")(function* (
+  input: Parameters<AlarmServiceShape["setMode"]>[0]
+) {
+  const alarm = yield* AlarmService;
+  return yield* alarm.setMode(input);
+});
+
+const setModeFailure = Effect.fn("AlarmServiceTest.setModeFailure")(function* (
+  input: Parameters<AlarmServiceShape["setMode"]>[0]
+) {
+  return yield* Effect.flip(setMode(input));
+});
 
 const credential = {
   ...testCredentialRow,
@@ -34,10 +53,7 @@ describe(AlarmService, () => {
           },
         ]);
 
-        const result = yield* Effect.gen(function* () {
-          const alarm = yield* AlarmService;
-          return yield* alarm.toggleFull();
-        }).pipe(harness.provide);
+        const result = yield* toggleFull().pipe(harness.provide);
 
         expect(result).toStrictEqual({
           accepted: true,
@@ -65,10 +81,9 @@ describe(AlarmService, () => {
         }
       );
 
-      const result = yield* Effect.gen(function* () {
-        const alarm = yield* AlarmService;
-        return yield* alarm.setMode({ code: "9999", mode: "ARMED_AWAY" });
-      }).pipe(harness.provide);
+      const result = yield* setMode({ code: "9999", mode: "ARMED_AWAY" }).pipe(
+        harness.provide
+      );
 
       expect(result).toStrictEqual({
         accepted: true,
@@ -89,10 +104,9 @@ describe(AlarmService, () => {
       Effect.gen(function* () {
         const harness = makeHarness([], { pin: undefined });
 
-        const error = yield* Effect.gen(function* () {
-          const alarm = yield* AlarmService;
-          return yield* Effect.flip(alarm.setMode({ mode: "DISARMED" }));
-        }).pipe(harness.provide);
+        const error = yield* setModeFailure({ mode: "DISARMED" }).pipe(
+          harness.provide
+        );
 
         expect(error).toBeInstanceOf(ServiceError);
         expect(error.message).toBe(

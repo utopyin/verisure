@@ -21,7 +21,7 @@ import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential } from "../Security/RequestContext";
 import { VerisureAuth } from "./VerisureAuth";
 import { VerisureRequests } from "./VerisureRequests";
-import type { SessionSnapshot } from "./VerisureSessionStore";
+import type { SessionMfaState, SessionSnapshot } from "./VerisureSessionStore";
 import { VerisureSessionStore } from "./VerisureSessionStore";
 import { VerisureTransport } from "./VerisureTransport";
 
@@ -30,6 +30,62 @@ const credential = {
   connectionStatus: "unchecked" as const,
   defaultGiid: null,
 };
+
+const ensureSession = Effect.fn("VerisureAuthTest.ensureSession")(function* () {
+  const auth = yield* VerisureAuth;
+  return yield* auth.ensureSession;
+});
+
+const ensureSessionFromSnapshot = Effect.fn(
+  "VerisureAuthTest.ensureSessionFromSnapshot"
+)(function* (snapshot: SessionSnapshot) {
+  const auth = yield* VerisureAuth;
+  const store = yield* VerisureSessionStore;
+  yield* store.putSnapshot(snapshot);
+  return yield* auth.ensureSession;
+});
+
+const requestMfaAndReadState = Effect.fn(
+  "VerisureAuthTest.requestMfaAndReadState"
+)(function* () {
+  const auth = yield* VerisureAuth;
+  const store = yield* VerisureSessionStore;
+  yield* auth.requestMfa;
+  const mfa = yield* store.getMfaState;
+  const snapshot = yield* store.getSnapshot;
+  return { mfa, snapshot };
+});
+
+const validateMfaFromStoredState = Effect.fn(
+  "VerisureAuthTest.validateMfaFromStoredState"
+)(function* (input: {
+  readonly mfaState: SessionMfaState;
+  readonly token: string;
+}) {
+  const auth = yield* VerisureAuth;
+  const store = yield* VerisureSessionStore;
+  yield* store.putMfaState(input.mfaState);
+  const snapshot = yield* auth.validateMfa(input.token);
+  const mfa = yield* store.getMfaState;
+  return { mfa, snapshot };
+});
+
+const logoutFromSnapshot = Effect.fn("VerisureAuthTest.logoutFromSnapshot")(
+  function* (snapshot: SessionSnapshot) {
+    const auth = yield* VerisureAuth;
+    const store = yield* VerisureSessionStore;
+    yield* store.putSnapshot(snapshot);
+    yield* auth.logout;
+    return yield* store.getSnapshot;
+  }
+);
+
+const armStateFailure = Effect.fn("VerisureRequestsTest.armStateFailure")(
+  function* (input: { readonly giid: string }) {
+    const requests = yield* VerisureRequests;
+    return yield* Effect.flip(requests.armState(input));
+  }
+);
 
 describe(VerisureAuth, () => {
   it.effect(
@@ -41,10 +97,7 @@ describe(VerisureAuth, () => {
           response('[{"data":{"account":{"installations":[]}}}]'),
         ]);
 
-        const snapshot = yield* Effect.gen(function* () {
-          const auth = yield* VerisureAuth;
-          return yield* auth.ensureSession;
-        }).pipe(harness.provide);
+        const snapshot = yield* ensureSession().pipe(harness.provide);
 
         expect(harness.calls.map((call) => call.url)).toStrictEqual([
           "/auth/login",
@@ -76,14 +129,7 @@ describe(VerisureAuth, () => {
         response("{}", "mfa=two; Path=/"),
       ]);
 
-      const result = yield* Effect.gen(function* () {
-        const auth = yield* VerisureAuth;
-        const store = yield* VerisureSessionStore;
-        yield* auth.requestMfa;
-        const mfa = yield* store.getMfaState;
-        const snapshot = yield* store.getSnapshot;
-        return { mfa, snapshot };
-      }).pipe(harness.provide);
+      const result = yield* requestMfaAndReadState().pipe(harness.provide);
 
       expect(harness.calls.map((call) => call.url)).toStrictEqual([
         "/auth/login",
@@ -113,16 +159,12 @@ describe(VerisureAuth, () => {
           response('[{"data":{"account":{"installations":[]}}}]'),
         ]);
 
-        const result = yield* Effect.gen(function* () {
-          const auth = yield* VerisureAuth;
-          const store = yield* VerisureSessionStore;
-          yield* store.putMfaState({
+        const result = yield* validateMfaFromStoredState({
+          mfaState: {
             cookies: [{ name: "step", value: "one" }],
             requestedAt: Date.now(),
-          });
-          const snapshot = yield* auth.validateMfa("123456");
-          const mfa = yield* store.getMfaState;
-          return { mfa, snapshot };
+          },
+          token: "123456",
         }).pipe(harness.provide);
 
         expect(harness.calls.map((call) => call.url)).toStrictEqual([
@@ -145,12 +187,9 @@ describe(VerisureAuth, () => {
         response("{}", "vid=new; Path=/, vs-refresh=new-refresh; Path=/"),
       ]);
 
-      const snapshot = yield* Effect.gen(function* () {
-        const auth = yield* VerisureAuth;
-        const store = yield* VerisureSessionStore;
-        yield* store.putSnapshot(expiredSnapshot);
-        return yield* auth.ensureSession;
-      }).pipe(harness.provide);
+      const snapshot = yield* ensureSessionFromSnapshot(expiredSnapshot).pipe(
+        harness.provide
+      );
 
       expect(harness.calls.map((call) => call.url)).toStrictEqual([
         "/auth/token",
@@ -172,12 +211,9 @@ describe(VerisureAuth, () => {
         response('[{"data":{"account":{"installations":[]}}}]'),
       ]);
 
-      const snapshot = yield* Effect.gen(function* () {
-        const auth = yield* VerisureAuth;
-        const store = yield* VerisureSessionStore;
-        yield* store.putSnapshot(expiredSnapshot);
-        return yield* auth.ensureSession;
-      }).pipe(harness.provide);
+      const snapshot = yield* ensureSessionFromSnapshot(expiredSnapshot).pipe(
+        harness.provide
+      );
 
       expect(harness.calls.map((call) => call.url)).toStrictEqual([
         "/auth/token",
@@ -203,15 +239,10 @@ describe(VerisureAuth, () => {
           response('[{"data":{"account":{"installations":[]}}}]'),
         ]);
 
-        const snapshot = yield* Effect.gen(function* () {
-          const auth = yield* VerisureAuth;
-          const store = yield* VerisureSessionStore;
-          yield* store.putSnapshot({
-            ...expiredSnapshot,
-            cookies: [{ name: "vs-trust", value: "trusted" }],
-            trustToken: { trustTokenValue: "trust-token" },
-          });
-          return yield* auth.ensureSession;
+        const snapshot = yield* ensureSessionFromSnapshot({
+          ...expiredSnapshot,
+          cookies: [{ name: "vs-trust", value: "trusted" }],
+          trustToken: { trustTokenValue: "trust-token" },
         }).pipe(harness.provide);
 
         expect(harness.calls.map((call) => call.url)).toStrictEqual([
@@ -231,15 +262,9 @@ describe(VerisureAuth, () => {
     Effect.gen(function* () {
       const harness = makeHarness([response("{}"), response("{}")]);
 
-      const result = yield* Effect.gen(function* () {
-        const auth = yield* VerisureAuth;
-        const store = yield* VerisureSessionStore;
-        yield* store.putSnapshot({
-          ...expiredSnapshot,
-          trustToken: { trustTokenValue: "trust-token" },
-        });
-        yield* auth.logout;
-        return yield* store.getSnapshot;
+      const result = yield* logoutFromSnapshot({
+        ...expiredSnapshot,
+        trustToken: { trustTokenValue: "trust-token" },
       }).pipe(harness.provide);
 
       expect(harness.calls.map((call) => call.url)).toStrictEqual([
@@ -259,10 +284,9 @@ describe(VerisureRequests, () => {
         response('[{"errors":[{"message":"boom"}]}]'),
       ]);
 
-      const error = yield* Effect.gen(function* () {
-        const requests = yield* VerisureRequests;
-        return yield* Effect.flip(requests.armState({ giid: "GIID" }));
-      }).pipe(harness.provideRequestsWithSnapshot(expiredSnapshot));
+      const error = yield* armStateFailure({ giid: "GIID" }).pipe(
+        harness.provideRequestsWithSnapshot(expiredSnapshot)
+      );
 
       expect(error).toBeInstanceOf(GraphQLError);
       expect(harness.calls[0]?.headers.cookie).toContain("vid=old");

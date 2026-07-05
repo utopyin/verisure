@@ -13,7 +13,15 @@ import { UserRepository } from "../Repositories/UserRepository";
 import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 import { CurrentUser } from "../Security/RequestContext";
 import { ApiTokenService } from "./ApiTokenService";
+import type { ShortcutExportCommand } from "./ShortcutExportService";
 import { ShortcutExportService } from "./ShortcutExportService";
+
+const exportShortcut = Effect.fn("ShortcutExportServiceTest.exportShortcut")(
+  function* (command: ShortcutExportCommand) {
+    const service = yield* ShortcutExportService;
+    return yield* service.exportShortcut(command);
+  }
+);
 
 describe(ShortcutExportService, () => {
   it.effect(
@@ -21,13 +29,10 @@ describe(ShortcutExportService, () => {
     () =>
       Effect.gen(function* () {
         const harness = makeHarness();
-        const result = yield* Effect.gen(function* () {
-          const service = yield* ShortcutExportService;
-          return yield* service.exportShortcut({
-            credentialId: testCredentialRow.id,
-            giid: testCredentialRow.defaultGiid ?? "giid-1",
-            template: "toggle-full",
-          });
+        const result = yield* exportShortcut({
+          credentialId: testCredentialRow.id,
+          giid: testCredentialRow.defaultGiid ?? "giid-1",
+          template: "toggle-full",
         }).pipe(harness.provide);
 
         expect(result.template).toBe("toggle-full");
@@ -50,12 +55,9 @@ describe(ShortcutExportService, () => {
   it.effect("exports Choose Explicit Alarm Mode fallback payload", () =>
     Effect.gen(function* () {
       const harness = makeHarness();
-      const result = yield* Effect.gen(function* () {
-        const service = yield* ShortcutExportService;
-        return yield* service.exportShortcut({
-          credentialId: testCredentialRow.id,
-          template: "choose-mode",
-        });
+      const result = yield* exportShortcut({
+        credentialId: testCredentialRow.id,
+        template: "choose-mode",
       }).pipe(harness.provide);
 
       expect(result.template).toBe("choose-mode");

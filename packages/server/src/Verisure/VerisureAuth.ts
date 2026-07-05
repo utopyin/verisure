@@ -263,24 +263,30 @@ export class VerisureAuth extends Context.Service<
 
       const recoverExpiredSnapshot = Effect.fn(
         "VerisureAuth.recoverExpiredSnapshot"
-      )((snapshot: SessionSnapshot) =>
-        refreshSession(snapshot).pipe(
-          Effect.catchAll((refreshError) => {
-            if (!canTryTrustLogin(refreshError)) {
-              return Effect.fail(refreshError);
-            }
+      )(function* (snapshot: SessionSnapshot) {
+        return yield* refreshSession(snapshot).pipe(
+          Effect.matchEffect({
+            onFailure: (refreshError) => {
+              if (!canTryTrustLogin(refreshError)) {
+                return Effect.fail(refreshError);
+              }
 
-            return loginWithTrustCookie(snapshot).pipe(
-              Effect.catchAll((trustError) => {
-                if (!canTryBasicLogin(trustError)) {
-                  return Effect.fail(trustError);
-                }
-                return loginWithBasicAuth();
-              })
-            );
+              return loginWithTrustCookie(snapshot).pipe(
+                Effect.matchEffect({
+                  onFailure: (trustError) => {
+                    if (!canTryBasicLogin(trustError)) {
+                      return Effect.fail(trustError);
+                    }
+                    return loginWithBasicAuth();
+                  },
+                  onSuccess: Effect.succeed,
+                })
+              );
+            },
+            onSuccess: Effect.succeed,
           })
-        )
-      );
+        );
+      });
 
       const currentValidSnapshot = Effect.gen(function* () {
         const snapshot = yield* sessions.getSnapshot;

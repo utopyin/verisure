@@ -29,17 +29,51 @@ const mfa = {
   requestedAt: 3000,
 } satisfies SessionMfaState;
 
+const storeReadAndClearSnapshot = Effect.fn(
+  "VerisureSessionStoreTest.storeReadAndClearSnapshot"
+)(function* () {
+  const store = yield* VerisureSessionStore;
+  yield* store.putSnapshot(snapshot);
+  const stored = yield* store.getSnapshot;
+  yield* store.clearSnapshot;
+  const cleared = yield* store.getSnapshot;
+  return { cleared, stored };
+});
+
+const storeReadAndClearMfa = Effect.fn(
+  "VerisureSessionStoreTest.storeReadAndClearMfa"
+)(function* () {
+  const store = yield* VerisureSessionStore;
+  yield* store.putMfaState(mfa);
+  const stored = yield* store.getMfaState;
+  const snapshotAfterMfa = yield* store.getSnapshot;
+  yield* store.clearMfaState;
+  const cleared = yield* store.getMfaState;
+  return { cleared, snapshotAfterMfa, stored };
+});
+
+const runLockedTasks = Effect.fn("VerisureSessionStoreTest.runLockedTasks")(
+  function* () {
+    const store = yield* VerisureSessionStore;
+    const events = yield* Ref.make<readonly string[]>([]);
+    const append = (event: string) =>
+      Ref.update(events, (current) => [...current, event]);
+    const task = (id: string) =>
+      Effect.gen(function* () {
+        yield* append(`${id}:start`);
+        yield* Effect.yieldNow;
+        yield* append(`${id}:end`);
+      }).pipe(store.withCredentialLock);
+
+    yield* Effect.all([task("a"), task("b")], { concurrency: 2 });
+    return yield* Ref.get(events);
+  }
+);
+
 describe(VerisureSessionStore, () => {
   it.effect("stores, reads, and clears a session snapshot", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const store = yield* VerisureSessionStore;
-        yield* store.putSnapshot(snapshot);
-        const stored = yield* store.getSnapshot;
-        yield* store.clearSnapshot;
-        const cleared = yield* store.getSnapshot;
-        return { cleared, stored };
-      }).pipe(provideStore);
+      const result = yield* storeReadAndClearSnapshot().pipe(provideStore);
 
       expect(result.stored._tag).toBe("Some");
       expect(Option.getOrThrow(result.stored)).toStrictEqual(snapshot);
@@ -49,15 +83,7 @@ describe(VerisureSessionStore, () => {
 
   it.effect("stores and clears temporary MFA state", () =>
     Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const store = yield* VerisureSessionStore;
-        yield* store.putMfaState(mfa);
-        const stored = yield* store.getMfaState;
-        const snapshotAfterMfa = yield* store.getSnapshot;
-        yield* store.clearMfaState;
-        const cleared = yield* store.getMfaState;
-        return { cleared, snapshotAfterMfa, stored };
-      }).pipe(provideStore);
+      const result = yield* storeReadAndClearMfa().pipe(provideStore);
 
       expect(result.stored._tag).toBe("Some");
       expect(Option.getOrThrow(result.stored)).toStrictEqual(mfa);
@@ -68,21 +94,7 @@ describe(VerisureSessionStore, () => {
 
   it.effect("serializes credential-scoped effects", () =>
     Effect.gen(function* () {
-      const trace = yield* Effect.gen(function* () {
-        const store = yield* VerisureSessionStore;
-        const events = yield* Ref.make<readonly string[]>([]);
-        const append = (event: string) =>
-          Ref.update(events, (current) => [...current, event]);
-        const task = (id: string) =>
-          Effect.gen(function* () {
-            yield* append(`${id}:start`);
-            yield* Effect.yieldNow;
-            yield* append(`${id}:end`);
-          }).pipe(store.withCredentialLock);
-
-        yield* Effect.all([task("a"), task("b")], { concurrency: 2 });
-        return yield* Ref.get(events);
-      }).pipe(provideStore);
+      const trace = yield* runLockedTasks().pipe(provideStore);
 
       expect(trace).toHaveLength(4);
       const first = trace[0]?.split(":")[0];

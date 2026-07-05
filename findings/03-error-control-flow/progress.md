@@ -20,6 +20,7 @@
 - Removed the `effect/Result` import from `VerisureAuth.ts`.
 - Ran `bun fix`.
 - Ran `bun check`; it still fails on pre-existing alchemy module/type issues outside this refactor.
+- Follow-up during finding 07 replaced `Effect.catchAll` with the Effect 4-compatible `Effect.matchEffect` fallback form in `VerisureTransport` and `VerisureAuth` after targeted server tests exposed `Effect.catchAll is not a function` at runtime.
 
 ## what is next
 
