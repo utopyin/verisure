@@ -12,9 +12,22 @@
 - Identified all major `Data.TaggedError` locations.
 - Compared with Effect app docs and HTTP fixtures.
 - Documented why `Data.TaggedError` is not universally wrong, but is less idiomatic for this app's domain/API errors.
+- Migrated the cross-package Verisure domain errors in `packages/domain/src/errors.ts` to `Schema.TaggedErrorClass`.
+- Migrated server errors that can flow into HTTP/RPC/application boundaries to `Schema.TaggedErrorClass`:
+  - `packages/server/src/Repositories/RepositoryError.ts`
+  - `packages/server/src/Services/ServiceError.ts`
+  - `packages/server/src/Services/ApiTokenService.ts` (`ApiTokenError`)
+  - `packages/server/src/Auth/BetterAuthService.ts` (`AuthError`)
+  - `packages/server/src/Email/EmailService.ts` (`EmailError`)
+  - `packages/server/src/Security/CredentialCrypto.ts` (`CredentialCryptoError`)
+  - `packages/server/src/Security/RequestContext.ts` (`ScopeError`)
+  - `packages/server/src/Verisure/VerisureSessionStore.ts` (`VerisureSessionStoreError`)
+- Removed remaining production `Data.TaggedError` usage under `packages/` and `apps/`.
+- Ran `bun fix`.
+- Ran `bun check`; it still fails on pre-existing alchemy module/type issues outside this refactor.
 
 ## what is next
 
-- Start with `packages/domain/src/errors.ts`, because many other packages depend on it.
-- Then migrate server errors that flow to `apps/api/src/Http/ErrorMapper.ts`.
-- Dependencies: preferably after or alongside `04-http-api-schema-first`, because the final error schemas should match HTTP/RPC contracts.
+- Coordinate with `04-http-api-schema-first` and `10-http-rpc-error-boundaries` to attach public HTTP status semantics to contract/API error schemas instead of relying on central mapping only.
+- Consider converting `packages/rpc-contract/src/errors.ts` from manual `Schema.ErrorClass` + `_tag` fields to `Schema.TaggedErrorClass` during the HTTP/RPC contract pass if that improves consistency.
+- Start `03-error-control-flow`; typed schema errors preserve `_tag` handling for `catchTag`/`catchTags` cleanup.

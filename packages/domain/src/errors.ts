@@ -1,62 +1,87 @@
-import * as Data from "effect/Data";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export class RequestError extends Data.TaggedError("RequestError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class RequestError extends Schema.TaggedErrorClass<RequestError>()(
+  "RequestError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
-export class AuthenticationError extends Data.TaggedError(
-  "AuthenticationError"
-)<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class AuthenticationError extends Schema.TaggedErrorClass<AuthenticationError>()(
+  "AuthenticationError",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class MFARequired extends Data.TaggedError("MFARequired")<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class MFARequired extends Schema.TaggedErrorClass<MFARequired>()(
+  "MFARequired",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class CookieReadError extends Data.TaggedError("CookieReadError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class CookieReadError extends Schema.TaggedErrorClass<CookieReadError>()(
+  "CookieReadError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
-export class CredentialsRejected extends Data.TaggedError(
-  "CredentialsRejected"
-)<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class CredentialsRejected extends Schema.TaggedErrorClass<CredentialsRejected>()(
+  "CredentialsRejected",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class LoginError extends Data.TaggedError("LoginError")<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class LoginError extends Schema.TaggedErrorClass<LoginError>()(
+  "LoginError",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class RateLimitError extends Data.TaggedError("RateLimitError")<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class RateLimitError extends Schema.TaggedErrorClass<RateLimitError>()(
+  "RateLimitError",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class LogoutError extends Data.TaggedError("LogoutError")<{
-  readonly message: string;
-  readonly statusCode?: number;
-}> {}
+export class LogoutError extends Schema.TaggedErrorClass<LogoutError>()(
+  "LogoutError",
+  {
+    message: Schema.String,
+    statusCode: Schema.optionalKey(Schema.Finite),
+  }
+) {}
 
-export class ResponseError extends Data.TaggedError("ResponseError")<{
-  readonly message: string;
-  readonly statusCode: number;
-  readonly text: string;
-}> {}
+export class ResponseError extends Schema.TaggedErrorClass<ResponseError>()(
+  "ResponseError",
+  {
+    message: Schema.String,
+    statusCode: Schema.Finite,
+    text: Schema.String,
+  }
+) {}
 
-export class GraphQLError extends Data.TaggedError("GraphQLError")<{
-  readonly message: string;
-  readonly operationName?: string;
-  readonly errors?: unknown;
-}> {}
+export class GraphQLError extends Schema.TaggedErrorClass<GraphQLError>()(
+  "GraphQLError",
+  {
+    errors: Schema.optionalKey(Schema.Unknown),
+    message: Schema.String,
+    operationName: Schema.optionalKey(Schema.String),
+  }
+) {}
 
 export type VerisureDomainError =
   | RequestError

@@ -1,7 +1,7 @@
 import type { VerisureCredentialRow } from "@verisure/db/schema";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 export interface CurrentUserShape {
   readonly id: string;
@@ -43,12 +43,15 @@ export class CurrentInstallation extends Context.Service<
   CurrentInstallationShape
 >()("@verisure/server/CurrentInstallation") {}
 
-export class ScopeError extends Data.TaggedError("ScopeError")<{
-  readonly message: string;
-  readonly credentialId?: string;
-  readonly giid?: string;
-  readonly cause?: unknown;
-}> {}
+export class ScopeError extends Schema.TaggedErrorClass<ScopeError>()(
+  "ScopeError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    credentialId: Schema.optionalKey(Schema.String),
+    giid: Schema.optionalKey(Schema.String),
+    message: Schema.String,
+  }
+) {}
 
 export const provideCurrentUser = <A, E, R>(
   user: CurrentUserShape,

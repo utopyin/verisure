@@ -1,8 +1,8 @@
 import type { RuntimeContext } from "alchemy";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 export interface SendEmailInput {
   readonly to: string | readonly string[];
@@ -11,10 +11,13 @@ export interface SendEmailInput {
   readonly html?: string;
 }
 
-export class EmailError extends Data.TaggedError("EmailError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class EmailError extends Schema.TaggedErrorClass<EmailError>()(
+  "EmailError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 export interface EmailServiceShape {
   readonly send: (

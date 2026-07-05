@@ -1,5 +1,6 @@
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
-export class RepositoryError extends Data.TaggedError("RepositoryError")<{
-  readonly cause: unknown;
-}> {}
+export class RepositoryError extends Schema.TaggedErrorClass<RepositoryError>()(
+  "RepositoryError",
+  { cause: Schema.Defect() }
+) {}

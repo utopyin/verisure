@@ -1,10 +1,10 @@
 import type { Cookie } from "@verisure/shared/cookies";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as TxSemaphore from "effect/TxSemaphore";
 
 import { CurrentCredential } from "../Security/RequestContext";
@@ -29,12 +29,13 @@ export interface SessionSnapshot {
   readonly expiresAt: number;
 }
 
-export class VerisureSessionStoreError extends Data.TaggedError(
-  "VerisureSessionStoreError"
-)<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class VerisureSessionStoreError extends Schema.TaggedErrorClass<VerisureSessionStoreError>()(
+  "VerisureSessionStoreError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 interface VerisureSessionStoreShape {
   readonly getSnapshot: Effect.Effect<

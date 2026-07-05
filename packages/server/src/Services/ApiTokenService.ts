@@ -2,11 +2,11 @@ import type { VerisureCredentialRow } from "@verisure/db/schema";
 import type { ApiTokenRecord } from "@verisure/interface";
 import * as Context from "effect/Context";
 import { Crypto } from "effect/Crypto";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 import { ApiTokenRepository } from "../Repositories/ApiTokenRepository";
 import { CredentialRepository } from "../Repositories/CredentialRepository";
@@ -23,10 +23,13 @@ export const ShortcutAlarmScopes = [
   ShortcutAlarmWriteScope,
 ] as const;
 
-export class ApiTokenError extends Data.TaggedError("ApiTokenError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ApiTokenError extends Schema.TaggedErrorClass<ApiTokenError>()(
+  "ApiTokenError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 export interface CreateApiTokenCommand {
   readonly credentialId: string;

@@ -1,9 +1,9 @@
 import type { VerisureCredentialRow } from "@verisure/db/schema";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 
@@ -30,12 +30,13 @@ export interface DecryptedVerisureCredential {
   readonly pin?: Redacted.Redacted;
 }
 
-export class CredentialCryptoError extends Data.TaggedError(
-  "CredentialCryptoError"
-)<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class CredentialCryptoError extends Schema.TaggedErrorClass<CredentialCryptoError>()(
+  "CredentialCryptoError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 export interface CredentialCryptoShape {
   readonly encryptString: (

@@ -4,7 +4,6 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { betterAuth } from "better-auth";
 import { magicLink } from "better-auth/plugins";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -28,10 +27,13 @@ export interface AuthSession {
   readonly user: AuthUser;
 }
 
-export class AuthError extends Data.TaggedError("AuthError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class AuthError extends Schema.TaggedErrorClass<AuthError>()(
+  "AuthError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}
 
 export interface BetterAuthInstance {
   readonly handler: (request: Request) => Promise<Response>;

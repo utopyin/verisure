@@ -1,6 +1,9 @@
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 
-export class ServiceError extends Data.TaggedError("ServiceError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ServiceError extends Schema.TaggedErrorClass<ServiceError>()(
+  "ServiceError",
+  {
+    cause: Schema.optionalKey(Schema.Defect()),
+    message: Schema.String,
+  }
+) {}

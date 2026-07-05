@@ -28,4 +28,5 @@
 - Use these folders as a durable refactoring backlog.
 - Recommended remediation order: 01 → 02 → 03 → 05 → 08 → 04 → 10 → 09 → 07, with 06 treated as a design spike because it is invasive.
 - Follow-up pass added higher-level findings specifically for layer composition, file structure, and HTTP/RPC error boundaries.
-- No implementation changes were made; this pass only structured the findings requested.
+- Finding 01 has been implemented for representative production boundaries.
+- Finding 02 has migrated domain/server boundary errors from `Data.TaggedError` to `Schema.TaggedErrorClass`.
