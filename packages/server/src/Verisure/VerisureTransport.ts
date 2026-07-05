@@ -144,18 +144,15 @@ export class VerisureTransport extends Context.Service<
             }
 
             return yield* executeAgainstBaseUrl(input, baseUrl).pipe(
-              Effect.matchEffect({
-                onFailure: (error) => {
-                  const nextIndex = index + 1;
-                  if (
-                    nextIndex < orderedBaseUrls.length &&
-                    canFailoverBaseUrl(error)
-                  ) {
-                    return tryBaseUrls(input, orderedBaseUrls, nextIndex);
-                  }
-                  return Effect.fail(error);
-                },
-                onSuccess: Effect.succeed,
+              Effect.catch((error) => {
+                const nextIndex = index + 1;
+                if (
+                  nextIndex < orderedBaseUrls.length &&
+                  canFailoverBaseUrl(error)
+                ) {
+                  return tryBaseUrls(input, orderedBaseUrls, nextIndex);
+                }
+                return Effect.fail(error);
               })
             );
           }

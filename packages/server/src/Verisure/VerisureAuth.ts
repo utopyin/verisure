@@ -261,30 +261,34 @@ export class VerisureAuth extends Context.Service<
         return yield* saveConnectedSnapshot(next);
       });
 
+      const recoverTrustLoginFailure = (trustError: VerisureAuthError) => {
+        if (!canTryBasicLogin(trustError)) {
+          return Effect.fail(trustError);
+        }
+        return loginWithBasicAuth();
+      };
+
+      const recoverRefreshFailure = (
+        snapshot: SessionSnapshot,
+        refreshError: VerisureAuthError
+      ) => {
+        if (!canTryTrustLogin(refreshError)) {
+          return Effect.fail(refreshError);
+        }
+
+        return loginWithTrustCookie(snapshot).pipe(
+          // oxlint-disable-next-line promise/prefer-await-to-then -- Effect.catch is the Effect 4 recovery combinator, not Promise.prototype.catch.
+          Effect.catch(recoverTrustLoginFailure)
+        );
+      };
+
       const recoverExpiredSnapshot = Effect.fn(
         "VerisureAuth.recoverExpiredSnapshot"
       )(function* (snapshot: SessionSnapshot) {
         return yield* refreshSession(snapshot).pipe(
-          Effect.matchEffect({
-            onFailure: (refreshError) => {
-              if (!canTryTrustLogin(refreshError)) {
-                return Effect.fail(refreshError);
-              }
-
-              return loginWithTrustCookie(snapshot).pipe(
-                Effect.matchEffect({
-                  onFailure: (trustError) => {
-                    if (!canTryBasicLogin(trustError)) {
-                      return Effect.fail(trustError);
-                    }
-                    return loginWithBasicAuth();
-                  },
-                  onSuccess: Effect.succeed,
-                })
-              );
-            },
-            onSuccess: Effect.succeed,
-          })
+          Effect.catch((refreshError) =>
+            recoverRefreshFailure(snapshot, refreshError)
+          )
         );
       });
 
