@@ -10,31 +10,28 @@ import * as Layer from "effect/Layer";
 
 import type { CurrentCredential } from "../Security/RequestContext";
 import { CurrentInstallation } from "../Security/RequestContext";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
-import type { ServiceError } from "./ServiceError";
-
-export type DeviceServiceError = ServiceError | VerisureRequestsError;
+import { ServiceUnavailable } from "./ServiceError";
 
 export interface DeviceServiceShape {
   readonly listDoorWindows: Effect.Effect<
     readonly DoorWindowSensorStatus[],
-    DeviceServiceError,
+    ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
   readonly listClimate: Effect.Effect<
     readonly ClimateSensorStatus[],
-    DeviceServiceError,
+    ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
   readonly listSmartLocks: Effect.Effect<
     readonly SmartLockStatus[],
-    DeviceServiceError,
+    ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
   readonly listSmartPlugs: Effect.Effect<
     readonly SmartPlugStatus[],
-    DeviceServiceError,
+    ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
 }
@@ -78,22 +75,58 @@ export class DeviceService extends Context.Service<
       const listDoorWindows = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.doorWindows({ giid });
-      }).pipe(Effect.withSpan("DeviceService.listDoorWindows"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to read door/window sensors",
+            })
+        ),
+        Effect.withSpan("DeviceService.listDoorWindows")
+      );
 
       const listClimate = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.climate({ giid });
-      }).pipe(Effect.withSpan("DeviceService.listClimate"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to read climate sensors",
+            })
+        ),
+        Effect.withSpan("DeviceService.listClimate")
+      );
 
       const listSmartLocks = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.smartLocks({ giid });
-      }).pipe(Effect.withSpan("DeviceService.listSmartLocks"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to read smart locks",
+            })
+        ),
+        Effect.withSpan("DeviceService.listSmartLocks")
+      );
 
       const listSmartPlugs = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.smartPlugs({ giid });
-      }).pipe(Effect.withSpan("DeviceService.listSmartPlugs"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to read smart plugs",
+            })
+        ),
+        Effect.withSpan("DeviceService.listSmartPlugs")
+      );
 
       return DeviceService.of({
         listClimate,

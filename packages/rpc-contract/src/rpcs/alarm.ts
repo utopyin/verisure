@@ -2,8 +2,32 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { DashboardRpcError } from "../errors";
+import {
+  AlarmCodeRequired,
+  AlarmUnavailable,
+  CredentialNotFound,
+  InstallationNotFound,
+  InvalidInput,
+  Unauthorized,
+} from "../errors";
 import { AlarmMode, AlarmStatusPayload } from "./shared";
+
+const AlarmReadError = Schema.Union([
+  Unauthorized,
+  CredentialNotFound,
+  InstallationNotFound,
+  InvalidInput,
+  AlarmUnavailable,
+]);
+
+const AlarmCommandError = Schema.Union([
+  Unauthorized,
+  CredentialNotFound,
+  InstallationNotFound,
+  InvalidInput,
+  AlarmUnavailable,
+  AlarmCodeRequired,
+]);
 
 const AlarmMutationResult = Schema.Struct({
   accepted: Schema.Boolean,
@@ -20,7 +44,7 @@ const AlarmCommandPayload = Schema.Struct({
 
 export const AlarmRpcs = RpcGroup.make(
   Rpc.make("GetArmState", {
-    error: DashboardRpcError,
+    error: AlarmReadError,
     payload: AlarmStatusPayload,
     success: Schema.Struct({
       changedVia: Schema.optionalKey(Schema.String),
@@ -31,7 +55,7 @@ export const AlarmRpcs = RpcGroup.make(
     }),
   }),
   Rpc.make("SetAlarmMode", {
-    error: DashboardRpcError,
+    error: AlarmCommandError,
     payload: Schema.Struct({
       code: Schema.optionalKey(Schema.String),
       credentialId: Schema.String,
@@ -41,22 +65,22 @@ export const AlarmRpcs = RpcGroup.make(
     success: AlarmMutationResult,
   }),
   Rpc.make("ArmAway", {
-    error: DashboardRpcError,
+    error: AlarmCommandError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
   }),
   Rpc.make("ArmHome", {
-    error: DashboardRpcError,
+    error: AlarmCommandError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
   }),
   Rpc.make("Disarm", {
-    error: DashboardRpcError,
+    error: AlarmCommandError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
   }),
   Rpc.make("ToggleFullAlarm", {
-    error: DashboardRpcError,
+    error: AlarmCommandError,
     payload: AlarmCommandPayload,
     success: AlarmMutationResult,
   })

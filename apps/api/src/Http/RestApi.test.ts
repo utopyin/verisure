@@ -25,7 +25,8 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "unauthorized", message: "Missing bearer token" },
+      _tag: "ShortcutUnauthorizedError",
+      message: "Missing bearer token",
     });
   });
 
@@ -38,7 +39,8 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "unauthorized", message: "Invalid API token" },
+      _tag: "ShortcutUnauthorizedError",
+      message: "Invalid API token",
     });
   });
 
@@ -51,7 +53,7 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "invalid_input" },
+      _tag: "ShortcutInvalidInputError",
     });
   });
 
@@ -64,10 +66,8 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
-      error: {
-        code: "forbidden",
-        message: "API token is not allowed to access this installation",
-      },
+      _tag: "ShortcutForbiddenError",
+      message: "API token is not allowed to access this installation",
     });
   });
 
@@ -81,7 +81,7 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({
-      error: { code: "installation_not_found" },
+      _tag: "ShortcutInstallationNotFoundError",
     });
   });
 
@@ -95,10 +95,8 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toStrictEqual({
-      error: {
-        code: "service_unavailable",
-        message: "Service storage is unavailable",
-      },
+      _tag: "ShortcutServiceUnavailableError",
+      message: "Service storage is unavailable",
     });
   });
 
@@ -146,7 +144,7 @@ describe("Shortcut REST API", () => {
     });
   });
 
-  test("wraps unsupported content types in the REST error envelope", async () => {
+  test("maps unsupported content types to invalid input", async () => {
     const response = await runRest(
       new Request("http://api.local/api/v1/alarm/mode", {
         body: "giid=giid-1&mode=DISARMED",
@@ -160,10 +158,7 @@ describe("Shortcut REST API", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toStrictEqual({
-      error: {
-        code: "invalid_input",
-        message: "Unsupported content type",
-      },
+      message: "Unsupported content type",
     });
   });
 });
@@ -188,7 +183,7 @@ const runRest = (
       ),
       Effect.provide(testLayer(options)),
       Effect.scoped
-    ) as Effect.Effect<Response, unknown, never>
+    ) as unknown as Effect.Effect<Response, unknown, never>
   );
 
 const testLayer = (
@@ -205,12 +200,15 @@ const testLayer = (
         authenticate: ({ giid, plaintextToken, requiredScopes }) => {
           if (options.failAuthenticationStorage === true) {
             return Effect.fail(
-              new Server.RepositoryError({ cause: "d1 down" })
+              new Server.ServiceUnavailable({
+                cause: "d1 down",
+                message: "Service storage is unavailable",
+              })
             );
           }
           if (plaintextToken !== "valid") {
             return Effect.fail(
-              new Server.ApiTokenError({ message: "Invalid API token" })
+              new Server.ApiTokenUnauthorized({ message: "Invalid API token" })
             );
           }
           const missingScope = (requiredScopes ?? []).find(
@@ -222,14 +220,14 @@ const testLayer = (
           );
           if (missingScope !== undefined) {
             return Effect.fail(
-              new Server.ApiTokenError({
+              new Server.ApiTokenForbidden({
                 message: `API token is missing required scope: ${missingScope}`,
               })
             );
           }
           if (giid !== undefined && giid !== testInstallation.giid) {
             return Effect.fail(
-              new Server.ApiTokenError({
+              new Server.ApiTokenForbidden({
                 message: "API token is not allowed to access this installation",
               })
             );
@@ -247,9 +245,13 @@ const testLayer = (
           });
         },
         create: () =>
-          Effect.fail(new Server.ApiTokenError({ message: "not stubbed" })),
+          Effect.fail(
+            new Server.ServiceUnavailable({ message: "not stubbed" })
+          ),
         hashPlaintextToken: () =>
-          Effect.fail(new Server.ApiTokenError({ message: "not stubbed" })),
+          Effect.fail(
+            new Server.ServiceUnavailable({ message: "not stubbed" })
+          ),
         list: () => Effect.succeed([]),
         revoke: () => Effect.void,
       })

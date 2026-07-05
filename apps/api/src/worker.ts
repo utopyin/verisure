@@ -20,7 +20,11 @@ export default Cloudflare.Worker(
     const app = yield* ApiHttpApp;
 
     return {
-      fetch: app.fetch,
+      fetch: app.fetch as never,
     };
-  }).pipe(Effect.provide(ApiWorkerLayer))
+  }).pipe(Effect.provide(ApiWorkerLayer)) as Effect.Effect<
+    { readonly fetch: never },
+    never,
+    never
+  >
 );

@@ -6,26 +6,17 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import { CredentialRepository } from "../Repositories/CredentialRepository";
-import type { RepositoryError } from "../Repositories/RepositoryError";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto";
 import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential } from "../Security/RequestContext";
-import type { VerisureAuthError } from "../Verisure/VerisureAuth";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
-import { ServiceError } from "./ServiceError";
+import { CredentialNotFound, ServiceUnavailable } from "./ServiceError";
 
-export type InstallationServiceError =
-  | CredentialCryptoError
-  | RepositoryError
-  | ServiceError
-  | VerisureAuthError
-  | VerisureRequestsError;
+export type InstallationServiceError = CredentialNotFound | ServiceUnavailable;
 
 export interface InstallationServiceShape {
   readonly list: Effect.Effect<
     readonly InstallationSummary[],
-    InstallationServiceError,
+    ServiceUnavailable,
     CurrentCredential
   >;
   readonly setDefault: (
@@ -37,7 +28,7 @@ export interface InstallationServiceShape {
   >;
   readonly getDefault: Effect.Effect<
     string | undefined,
-    InstallationServiceError,
+    never,
     CurrentCredential
   >;
 }
@@ -87,26 +78,55 @@ export class InstallationService extends Context.Service<
         return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
-      }).pipe(Effect.withSpan("InstallationService.list"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to list installations",
+            })
+        ),
+        Effect.withSpan("InstallationService.list")
+      );
 
-      const setDefault: InstallationServiceShape["setDefault"] = Effect.fn(
-        "InstallationService.setDefault"
-      )(function* (giid) {
-        const credential = yield* CurrentCredential;
-        const updated = yield* repository.setDefaultInstallation({
-          giid,
-          id: credential.id,
-          now: new Date(),
-          userId: credential.userId,
-        });
-        if (Option.isNone(updated)) {
-          return yield* new ServiceError({
-            message: "Credential not found while setting default installation",
+      const setDefault: InstallationServiceShape["setDefault"] = (giid) =>
+        Effect.gen(function* () {
+          const credential = yield* CurrentCredential;
+          const updated = yield* repository.setDefaultInstallation({
+            giid,
+            id: credential.id,
+            now: new Date(),
+            userId: credential.userId,
           });
-        }
-        const email = yield* crypto.decryptString(updated.value.encryptedEmail);
-        return credentialSummary(updated.value, email);
-      });
+          if (Option.isNone(updated)) {
+            return yield* new CredentialNotFound({
+              credentialId: credential.id,
+              message:
+                "Credential not found while setting default installation",
+            });
+          }
+          const email = yield* crypto
+            .decryptString(updated.value.encryptedEmail)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServiceUnavailable({
+                    cause,
+                    message: "Unable to read credential",
+                  })
+              )
+            );
+          return credentialSummary(updated.value, email);
+        }).pipe(
+          Effect.catchTag("RepositoryError", (cause) =>
+            Effect.fail(
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to set default installation",
+              })
+            )
+          )
+        );
 
       const getDefault = CurrentCredential.pipe(
         Effect.map((credential) => credential.defaultGiid ?? undefined)

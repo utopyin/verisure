@@ -2,11 +2,11 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { DashboardRpcError } from "../errors";
+import { InvalidInput, Unauthorized } from "../errors";
 
 export const AuthRpcs = RpcGroup.make(
   Rpc.make("GetSession", {
-    error: DashboardRpcError,
+    error: Unauthorized,
     success: Schema.Struct({
       expiresAt: Schema.String,
       user: Schema.Struct({
@@ -17,6 +17,6 @@ export const AuthRpcs = RpcGroup.make(
     }),
   }),
   Rpc.make("Logout", {
-    error: DashboardRpcError,
+    error: Schema.Union([Unauthorized, InvalidInput]),
   })
 ).prefix("Auth.");

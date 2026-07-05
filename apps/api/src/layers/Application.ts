@@ -5,12 +5,12 @@ import { ApiHttpAppLive } from "../Http/Routes";
 import { InfrastructureLayer } from "./Infrastructure";
 import { PersistenceLayer } from "./Persistence";
 
-export const ApplicationServicesLayer = Layer.mergeAll(
+const ApplicationServicesLayer = Layer.mergeAll(
   Server.ApplicationServicesLive,
   Server.BetterAuthService.Live
 );
 
-export const ApplicationLayer = ApiHttpAppLive.pipe(
+const ApplicationLayer = ApiHttpAppLive.pipe(
   Layer.provideMerge(ApplicationServicesLayer),
   Layer.provideMerge(PersistenceLayer)
 );

@@ -46,11 +46,7 @@ export const HandlersLive = Rpcs.toLayer(
     });
   })
 ).pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      AuthMiddlewareLive,
-      CredentialScopeMiddlewareLive,
-      InstallationScopeMiddlewareLive
-    )
-  )
+  Layer.provideMerge(AuthMiddlewareLive),
+  Layer.provideMerge(CredentialScopeMiddlewareLive),
+  Layer.provideMerge(InstallationScopeMiddlewareLive)
 );

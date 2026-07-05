@@ -6,8 +6,6 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
 
-import { toDashboardRpcError } from "./ErrorMapper";
-
 export class CredentialScopeMiddleware extends RpcMiddleware.Service<
   CredentialScopeMiddleware,
   {
@@ -15,7 +13,7 @@ export class CredentialScopeMiddleware extends RpcMiddleware.Service<
     readonly requires: Server.CurrentUser;
   }
 >()("@verisure/api/CredentialScopeMiddleware", {
-  error: RpcContract.DashboardRpcError,
+  error: RpcContract.ScopedRpcError,
 }) {}
 
 export class InstallationScopeMiddleware extends RpcMiddleware.Service<
@@ -25,7 +23,7 @@ export class InstallationScopeMiddleware extends RpcMiddleware.Service<
     readonly requires: Server.CurrentCredential;
   }
 >()("@verisure/api/InstallationScopeMiddleware", {
-  error: RpcContract.DashboardRpcError,
+  error: RpcContract.ScopedRpcError,
 }) {}
 
 export const CredentialScopeMiddlewareLive = Layer.effect(
@@ -55,7 +53,23 @@ export const CredentialScopeMiddlewareLive = Layer.effect(
           }
 
           return credential.value;
-        }).pipe(Effect.mapError(toDashboardRpcError));
+        }).pipe(
+          Effect.catchTags({
+            RepositoryError: () =>
+              Effect.fail(
+                new RpcContract.InvalidInput({
+                  message: "Unable to load credential scope",
+                })
+              ),
+            ScopeError: (error) =>
+              Effect.fail(
+                new RpcContract.CredentialNotFound({
+                  credentialId: error.credentialId ?? "",
+                  message: "Credential not found",
+                })
+              ),
+          })
+        );
 
         return yield* Effect.provideService(
           effect,
@@ -96,7 +110,26 @@ export const InstallationScopeMiddlewareLive = Layer.effect(
             message:
               "Installation not found or not owned by current credential",
           });
-        }).pipe(Effect.mapError(toDashboardRpcError));
+        }).pipe(
+          Effect.catchTag("ScopeError", (error) =>
+            Effect.fail(
+              new RpcContract.InstallationNotFound({
+                giid: error.giid ?? "",
+                message: "Installation not found",
+              })
+            )
+          ),
+          Effect.mapError((error) =>
+            error instanceof RpcContract.InstallationNotFound
+              ? error
+              : new RpcContract.InvalidInput({
+                  message:
+                    error._tag === "CredentialCryptoError"
+                      ? "Credential material is invalid"
+                      : "Unable to load installation scope",
+                })
+          )
+        );
 
         return yield* Effect.provideService(
           effect,

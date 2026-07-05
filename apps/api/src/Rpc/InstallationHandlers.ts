@@ -3,7 +3,6 @@ import * as Server from "@verisure/server";
 import * as Effect from "effect/Effect";
 
 import { AuthMiddleware } from "./AuthMiddleware";
-import { toDashboardRpcError } from "./ErrorMapper";
 import { CredentialScopeMiddleware } from "./ScopeMiddleware";
 
 export const Rpcs = RpcContract.InstallationRpcs.middleware(
@@ -15,10 +14,30 @@ export const installationHandlers = Effect.gen(function* () {
 
   return Rpcs.of({
     "Installation.ListInstallations": () =>
-      installation.list.pipe(Effect.mapError(toDashboardRpcError)),
+      installation.list.pipe(
+        Effect.catchTag("ServiceUnavailable", (error) =>
+          Effect.fail(
+            new RpcContract.InstallationUnavailable({ message: error.message })
+          )
+        )
+      ),
     "Installation.SetDefaultInstallation": (payload) =>
-      installation
-        .setDefault(payload.giid)
-        .pipe(Effect.mapError(toDashboardRpcError)),
+      installation.setDefault(payload.giid).pipe(
+        Effect.catchTags({
+          CredentialNotFound: (error) =>
+            Effect.fail(
+              new RpcContract.CredentialNotFound({
+                credentialId: error.credentialId,
+                message: error.message,
+              })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.InstallationUnavailable({
+                message: error.message,
+              })
+            ),
+        })
+      ),
   });
 });

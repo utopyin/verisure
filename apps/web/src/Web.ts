@@ -1,6 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 
-export class Web extends Cloudflare.Website.Vite<Web>()("Web", {
+class Web extends Cloudflare.Website.Vite<Web>()("Web", {
   assets: {
     runWorkerFirst: true,
   },

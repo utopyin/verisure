@@ -9,27 +9,14 @@ import * as Context from "effect/Context";
 import { Crypto } from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 
 import { CredentialRepository } from "../Repositories/CredentialRepository";
-import type { RepositoryError } from "../Repositories/RepositoryError";
-import type { CredentialCryptoError } from "../Security/CredentialCrypto";
 import { CredentialCrypto } from "../Security/CredentialCrypto";
 import { CurrentCredential, CurrentUser } from "../Security/RequestContext";
-import type { VerisureAuthError } from "../Verisure/VerisureAuth";
 import { VerisureAuth } from "../Verisure/VerisureAuth";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
-import type { ServiceError } from "./ServiceError";
-
-export type CredentialServiceError =
-  | CredentialCryptoError
-  | PlatformError
-  | RepositoryError
-  | ServiceError
-  | VerisureAuthError
-  | VerisureRequestsError;
+import { ServiceUnavailable } from "./ServiceError";
 
 export interface CreateVerisureCredentialInput {
   readonly alias: string;
@@ -41,39 +28,31 @@ export interface CreateVerisureCredentialInput {
 export interface CredentialServiceShape {
   readonly list: Effect.Effect<
     readonly CredentialSummary[],
-    CredentialServiceError,
+    ServiceUnavailable,
     CurrentUser
   >;
   readonly create: (
     input: CreateVerisureCredentialInput
-  ) => Effect.Effect<CredentialSummary, CredentialServiceError, CurrentUser>;
-  readonly delete: Effect.Effect<
-    void,
-    CredentialServiceError,
-    CurrentCredential
-  >;
+  ) => Effect.Effect<CredentialSummary, ServiceUnavailable, CurrentUser>;
+  readonly delete: Effect.Effect<void, ServiceUnavailable, CurrentCredential>;
   readonly checkConnection: Effect.Effect<
     readonly InstallationSummary[],
-    CredentialServiceError,
+    ServiceUnavailable,
     CurrentCredential
   >;
   readonly requestMfa: Effect.Effect<
     MfaRequestResult,
-    CredentialServiceError,
+    ServiceUnavailable,
     CurrentCredential
   >;
   readonly validateMfa: (
     code: string
   ) => Effect.Effect<
     MfaValidationResult,
-    CredentialServiceError,
+    ServiceUnavailable,
     CurrentCredential
   >;
-  readonly logout: Effect.Effect<
-    void,
-    CredentialServiceError,
-    CurrentCredential
-  >;
+  readonly logout: Effect.Effect<void, ServiceUnavailable, CurrentCredential>;
 }
 
 export class CredentialService extends Context.Service<
@@ -139,33 +118,56 @@ export class CredentialService extends Context.Service<
       const repository = yield* CredentialRepository;
 
       const summarize = (row: VerisureCredentialRow) =>
-        crypto
-          .decryptString(row.encryptedEmail)
-          .pipe(Effect.map((email) => credentialSummary(row, email)));
+        crypto.decryptString(row.encryptedEmail).pipe(
+          Effect.map((email) => credentialSummary(row, email)),
+          Effect.mapError(
+            (cause) =>
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to read credential",
+              })
+          )
+        );
 
       const list = Effect.gen(function* () {
         const user = yield* CurrentUser;
         const rows = yield* repository.listForUser(user.id);
         return yield* Effect.forEach(rows, summarize);
-      }).pipe(Effect.withSpan("CredentialService.list"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to list credentials",
+            })
+        ),
+        Effect.withSpan("CredentialService.list")
+      );
 
-      const create: CredentialServiceShape["create"] = Effect.fn(
-        "CredentialService.create"
-      )(function* (input) {
-        const user = yield* CurrentUser;
-        const encrypted = yield* crypto.encryptCredential(input);
-        const now = new Date();
-        const row = yield* repository.create({
-          alias: input.alias,
-          encryptedEmail: encrypted.encryptedEmail,
-          encryptedPassword: encrypted.encryptedPassword,
-          encryptedPin: encrypted.encryptedPin,
-          id: yield* platformCrypto.randomUUIDv4,
-          now,
-          userId: user.id,
-        });
-        return credentialSummary(row, input.email);
-      });
+      const create: CredentialServiceShape["create"] = (input) =>
+        Effect.gen(function* () {
+          const user = yield* CurrentUser;
+          const encrypted = yield* crypto.encryptCredential(input);
+          const now = new Date();
+          const row = yield* repository.create({
+            alias: input.alias,
+            encryptedEmail: encrypted.encryptedEmail,
+            encryptedPassword: encrypted.encryptedPassword,
+            encryptedPin: encrypted.encryptedPin,
+            id: yield* platformCrypto.randomUUIDv4,
+            now,
+            userId: user.id,
+          });
+          return credentialSummary(row, input.email);
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to create credential",
+              })
+          )
+        );
 
       const deleteCredential = Effect.gen(function* () {
         const credential = yield* CurrentCredential;
@@ -173,7 +175,16 @@ export class CredentialService extends Context.Service<
           id: credential.id,
           userId: credential.userId,
         });
-      }).pipe(Effect.withSpan("CredentialService.delete"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to delete credential",
+            })
+        ),
+        Effect.withSpan("CredentialService.delete")
+      );
 
       const listScopedInstallations = Effect.gen(function* () {
         yield* auth.ensureSession;
@@ -182,7 +193,16 @@ export class CredentialService extends Context.Service<
         return yield* requests.fetchAllInstallations({
           email: Redacted.value(credential.email),
         });
-      }).pipe(Effect.withSpan("CredentialService.listScopedInstallations"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to list credential installations",
+            })
+        ),
+        Effect.withSpan("CredentialService.listScopedInstallations")
+      );
 
       const checkConnection = listScopedInstallations;
 
@@ -193,19 +213,43 @@ export class CredentialService extends Context.Service<
           credentialId: credential.id,
           status: "mfa_requested" as const,
         };
-      }).pipe(Effect.withSpan("CredentialService.requestMfa"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to request MFA",
+            })
+        ),
+        Effect.withSpan("CredentialService.requestMfa")
+      );
 
-      const validateMfa: CredentialServiceShape["validateMfa"] = Effect.fn(
-        "CredentialService.validateMfa"
-      )(function* (code) {
-        yield* auth.validateMfa(code);
-        const installations = yield* listScopedInstallations;
-        const current = yield* CurrentCredential;
-        const credential = yield* summarize(current);
-        return { credential, installations };
-      });
+      const validateMfa: CredentialServiceShape["validateMfa"] = (code) =>
+        Effect.gen(function* () {
+          yield* auth.validateMfa(code);
+          const installations = yield* listScopedInstallations;
+          const current = yield* CurrentCredential;
+          const credential = yield* summarize(current);
+          return { credential, installations };
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to validate MFA",
+              })
+          )
+        );
 
-      const { logout } = auth;
+      const logout = auth.logout.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to log out credential",
+            })
+        )
+      );
 
       return CredentialService.of({
         checkConnection,

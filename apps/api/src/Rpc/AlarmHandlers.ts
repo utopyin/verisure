@@ -3,7 +3,6 @@ import * as Server from "@verisure/server";
 import * as Effect from "effect/Effect";
 
 import { AuthMiddleware } from "./AuthMiddleware";
-import { toDashboardRpcError } from "./ErrorMapper";
 import {
   CredentialScopeMiddleware,
   InstallationScopeMiddleware,
@@ -20,24 +19,77 @@ export const alarmHandlers = Effect.gen(function* () {
 
   return Rpcs.of({
     "Alarm.ArmAway": (payload) =>
-      alarm
-        .setMode({ code: payload.code, mode: "ARMED_AWAY" })
-        .pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.setMode({ code: payload.code, mode: "ARMED_AWAY" }).pipe(
+        Effect.catchTags({
+          AlarmCodeRequired: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmCodeRequired({ message: error.message })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmUnavailable({ message: error.message })
+            ),
+        })
+      ),
     "Alarm.ArmHome": (payload) =>
-      alarm
-        .setMode({ code: payload.code, mode: "ARMED_HOME" })
-        .pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.setMode({ code: payload.code, mode: "ARMED_HOME" }).pipe(
+        Effect.catchTags({
+          AlarmCodeRequired: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmCodeRequired({ message: error.message })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmUnavailable({ message: error.message })
+            ),
+        })
+      ),
     "Alarm.Disarm": (payload) =>
-      alarm
-        .setMode({ code: payload.code, mode: "DISARMED" })
-        .pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.setMode({ code: payload.code, mode: "DISARMED" }).pipe(
+        Effect.catchTags({
+          AlarmCodeRequired: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmCodeRequired({ message: error.message })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmUnavailable({ message: error.message })
+            ),
+        })
+      ),
     "Alarm.GetArmState": () =>
-      alarm.getArmState.pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.getArmState.pipe(
+        Effect.catchTag("ServiceUnavailable", (error) =>
+          Effect.fail(
+            new RpcContract.AlarmUnavailable({ message: error.message })
+          )
+        )
+      ),
     "Alarm.SetAlarmMode": (payload) =>
-      alarm
-        .setMode({ code: payload.code, mode: payload.mode })
-        .pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.setMode({ code: payload.code, mode: payload.mode }).pipe(
+        Effect.catchTags({
+          AlarmCodeRequired: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmCodeRequired({ message: error.message })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmUnavailable({ message: error.message })
+            ),
+        })
+      ),
     "Alarm.ToggleFullAlarm": (payload) =>
-      alarm.toggleFull(payload.code).pipe(Effect.mapError(toDashboardRpcError)),
+      alarm.toggleFull(payload.code).pipe(
+        Effect.catchTags({
+          AlarmCodeRequired: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmCodeRequired({ message: error.message })
+            ),
+          ServiceUnavailable: (error) =>
+            Effect.fail(
+              new RpcContract.AlarmUnavailable({ message: error.message })
+            ),
+        })
+      ),
   });
 });

@@ -123,5 +123,3 @@ export const VerisureSessionObjectLive = VerisureSessionObject.make(
     })
   )
 );
-
-export default VerisureSessionObjectLive;

@@ -12,7 +12,7 @@ import type { VerisureRequestsTestOperation } from "../Verisure/VerisureRequests
 import { VerisureRequests } from "../Verisure/VerisureRequests";
 import type { AlarmServiceShape } from "./AlarmService";
 import { AlarmService } from "./AlarmService";
-import { ServiceError } from "./ServiceError";
+import { AlarmCodeRequired } from "./ServiceError";
 
 const toggleFull = Effect.fn("AlarmServiceTest.toggleFull")(function* () {
   const alarm = yield* AlarmService;
@@ -108,7 +108,7 @@ describe(AlarmService, () => {
           harness.provide
         );
 
-        expect(error).toBeInstanceOf(ServiceError);
+        expect(error).toBeInstanceOf(AlarmCodeRequired);
         expect(error.message).toBe(
           "Alarm code is required for this credential"
         );

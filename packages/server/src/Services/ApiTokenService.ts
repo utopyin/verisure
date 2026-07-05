@@ -6,15 +6,20 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 
 import { ApiTokenRepository } from "../Repositories/ApiTokenRepository";
 import { CredentialRepository } from "../Repositories/CredentialRepository";
-import type { RepositoryError } from "../Repositories/RepositoryError";
 import { UserRepository } from "../Repositories/UserRepository";
 import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 import type { CurrentUserShape } from "../Security/RequestContext";
 import { CurrentUser } from "../Security/RequestContext";
+import {
+  ApiTokenForbidden,
+  ApiTokenNotFound,
+  ApiTokenUnauthorized,
+  CredentialNotFound,
+  ServiceUnavailable,
+} from "./ServiceError";
 
 export const ShortcutAlarmReadScope = "shortcut:alarm:read" as const;
 export const ShortcutAlarmWriteScope = "shortcut:alarm:write" as const;
@@ -22,14 +27,6 @@ export const ShortcutAlarmScopes = [
   ShortcutAlarmReadScope,
   ShortcutAlarmWriteScope,
 ] as const;
-
-export class ApiTokenError extends Schema.TaggedErrorClass<ApiTokenError>()(
-  "ApiTokenError",
-  {
-    cause: Schema.optionalKey(Schema.Defect()),
-    message: Schema.String,
-  }
-) {}
 
 export interface CreateApiTokenCommand {
   readonly credentialId: string;
@@ -60,21 +57,28 @@ export interface ApiTokenServiceShape {
     command: CreateApiTokenCommand
   ) => Effect.Effect<
     CreatedApiToken,
-    ApiTokenError | RepositoryError,
+    CredentialNotFound | ServiceUnavailable,
     CurrentUser
   >;
   readonly authenticate: (
     command: AuthenticateApiTokenCommand
-  ) => Effect.Effect<AuthenticatedApiToken, ApiTokenError | RepositoryError>;
+  ) => Effect.Effect<
+    AuthenticatedApiToken,
+    ApiTokenForbidden | ApiTokenUnauthorized | ServiceUnavailable
+  >;
   readonly list: (input: {
     readonly credentialId?: string;
-  }) => Effect.Effect<readonly ApiTokenRecord[], RepositoryError, CurrentUser>;
+  }) => Effect.Effect<
+    readonly ApiTokenRecord[],
+    ServiceUnavailable,
+    CurrentUser
+  >;
   readonly revoke: (input: {
     readonly tokenId: string;
-  }) => Effect.Effect<void, ApiTokenError | RepositoryError, CurrentUser>;
+  }) => Effect.Effect<void, ApiTokenNotFound | ServiceUnavailable, CurrentUser>;
   readonly hashPlaintextToken: (
     plaintextToken: string
-  ) => Effect.Effect<string, ApiTokenError>;
+  ) => Effect.Effect<string, ServiceUnavailable>;
 }
 
 export class ApiTokenService extends Context.Service<
@@ -91,13 +95,17 @@ export class ApiTokenService extends Context.Service<
       ApiTokenService.of({
         authenticate: () =>
           Effect.fail(
-            new ApiTokenError({ message: "authenticate not stubbed" })
+            new ApiTokenUnauthorized({ message: "authenticate not stubbed" })
           ),
         create: () =>
-          Effect.fail(new ApiTokenError({ message: "create not stubbed" })),
+          Effect.fail(
+            new ServiceUnavailable({ message: "create not stubbed" })
+          ),
         hashPlaintextToken: () =>
           Effect.fail(
-            new ApiTokenError({ message: "hashPlaintextToken not stubbed" })
+            new ServiceUnavailable({
+              message: "hashPlaintextToken not stubbed",
+            })
           ),
         list: () => Effect.succeed(options.tokens ?? []),
         revoke: () => Effect.void,
@@ -124,147 +132,183 @@ export class ApiTokenService extends Context.Service<
           ).pipe(Effect.provideService(Crypto, platformCrypto))
         );
 
-      const create: ApiTokenServiceShape["create"] = Effect.fn(
-        "ApiTokenService.create"
-      )(function* create(command) {
-        const user = yield* CurrentUser;
-        const credential = yield* credentials.getOwnedById({
-          id: command.credentialId,
-          userId: user.id,
-        });
-        if (Option.isNone(credential)) {
-          return yield* new ApiTokenError({
-            message: "Credential not found or not owned by current user",
+      const create: ApiTokenServiceShape["create"] = (command) =>
+        Effect.gen(function* () {
+          const user = yield* CurrentUser;
+          const credential = yield* credentials.getOwnedById({
+            id: command.credentialId,
+            userId: user.id,
           });
-        }
-
-        const bytes = yield* platformCrypto.randomBytes(32).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApiTokenError({
-                cause,
-                message: "Failed to generate API token",
-              })
-          )
-        );
-        const plaintextToken = `vs_${bytesToBase64Url(bytes)}`;
-        const tokenHash = yield* hashPlaintextToken(plaintextToken);
-        const tokenId = yield* platformCrypto.randomUUIDv4.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ApiTokenError({
-                cause,
-                message: "Failed to generate API token id",
-              })
-          )
-        );
-        const now = new Date();
-        const token = yield* tokens.create({
-          allowedGiids: command.allowedGiids,
-          credentialId: command.credentialId,
-          displayPrefix: `${plaintextToken.slice(0, 10)}…`,
-          expiresAt: command.expiresAt ?? null,
-          id: tokenId,
-          now,
-          scopes: command.scopes,
-          tokenHash,
-          userId: user.id,
-        });
-
-        return { plaintextToken, token };
-      });
-
-      const authenticate: ApiTokenServiceShape["authenticate"] = Effect.fn(
-        "ApiTokenService.authenticate"
-      )(function* authenticate(command) {
-        const tokenHash = yield* hashPlaintextToken(command.plaintextToken);
-        const token = yield* tokens.findUsableByHash({
-          now: new Date(),
-          tokenHash,
-        });
-        if (Option.isNone(token)) {
-          return yield* new ApiTokenError({ message: "Invalid API token" });
-        }
-
-        const tokenRecord = token.value;
-        const missingScope = (command.requiredScopes ?? []).find(
-          (scope) => !tokenRecord.scopes.includes(scope)
-        );
-        if (missingScope !== undefined) {
-          return yield* new ApiTokenError({
-            message: `API token is missing required scope: ${missingScope}`,
-          });
-        }
-
-        if (
-          command.giid !== undefined &&
-          tokenRecord.allowedGiids !== undefined &&
-          !tokenRecord.allowedGiids.includes(command.giid)
-        ) {
-          return yield* new ApiTokenError({
-            message: "API token is not allowed to access this installation",
-          });
-        }
-
-        const credential = yield* credentials.getOwnedById({
-          id: tokenRecord.credentialId,
-          userId: tokenRecord.userId,
-        });
-        if (Option.isNone(credential)) {
-          return yield* new ApiTokenError({
-            message: "API token credential no longer exists",
-          });
-        }
-
-        const tokenUser = yield* users.getById(tokenRecord.userId);
-        if (Option.isNone(tokenUser)) {
-          return yield* new ApiTokenError({
-            message: "API token user no longer exists",
-          });
-        }
-
-        const usedToken = yield* tokens.markUsed({
-          id: tokenRecord.id,
-          usedAt: new Date(),
-        });
-        const finalToken = Option.getOrElse(usedToken, () => tokenRecord);
-
-        return {
-          credential: credential.value,
-          token: finalToken,
-          user: {
-            email: tokenUser.value.email,
-            id: tokenUser.value.id,
-            name: tokenUser.value.name,
-          },
-        };
-      });
-
-      const list: ApiTokenServiceShape["list"] = Effect.fn(
-        "ApiTokenService.list"
-      )(function* list(input) {
-        const user = yield* CurrentUser;
-        return input.credentialId === undefined
-          ? yield* tokens.listForUser(user.id)
-          : yield* tokens.listForCredential({
-              credentialId: input.credentialId,
-              userId: user.id,
+          if (Option.isNone(credential)) {
+            return yield* new CredentialNotFound({
+              credentialId: command.credentialId,
+              message: "Credential not found",
             });
-      });
+          }
 
-      const revoke: ApiTokenServiceShape["revoke"] = Effect.fn(
-        "ApiTokenService.revoke"
-      )(function* revoke(input) {
-        const user = yield* CurrentUser;
-        const revoked = yield* tokens.revoke({
-          id: input.tokenId,
-          revokedAt: new Date(),
-          userId: user.id,
-        });
-        if (Option.isNone(revoked)) {
-          return yield* new ApiTokenError({ message: "API token not found" });
-        }
-      });
+          const bytes = yield* platformCrypto.randomBytes(32).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceUnavailable({
+                  cause,
+                  message: "Failed to generate API token",
+                })
+            )
+          );
+          const plaintextToken = `vs_${bytesToBase64Url(bytes)}`;
+          const tokenHash = yield* hashPlaintextToken(plaintextToken);
+          const tokenId = yield* platformCrypto.randomUUIDv4.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceUnavailable({
+                  cause,
+                  message: "Failed to generate API token id",
+                })
+            )
+          );
+          const now = new Date();
+          const token = yield* tokens.create({
+            allowedGiids: command.allowedGiids,
+            credentialId: command.credentialId,
+            displayPrefix: `${plaintextToken.slice(0, 10)}…`,
+            expiresAt: command.expiresAt ?? null,
+            id: tokenId,
+            now,
+            scopes: command.scopes,
+            tokenHash,
+            userId: user.id,
+          });
+
+          return { plaintextToken, token };
+        }).pipe(
+          Effect.catchTag("RepositoryError", (cause) =>
+            Effect.fail(
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to create API token",
+              })
+            )
+          )
+        );
+
+      const authenticate: ApiTokenServiceShape["authenticate"] = (command) =>
+        Effect.gen(function* () {
+          const tokenHash = yield* hashPlaintextToken(command.plaintextToken);
+          const token = yield* tokens.findUsableByHash({
+            now: new Date(),
+            tokenHash,
+          });
+          if (Option.isNone(token)) {
+            return yield* new ApiTokenUnauthorized({
+              message: "Invalid API token",
+            });
+          }
+
+          const tokenRecord = token.value;
+          const missingScope = (command.requiredScopes ?? []).find(
+            (scope) => !tokenRecord.scopes.includes(scope)
+          );
+          if (missingScope !== undefined) {
+            return yield* new ApiTokenForbidden({
+              message: `API token is missing required scope: ${missingScope}`,
+            });
+          }
+
+          if (
+            command.giid !== undefined &&
+            tokenRecord.allowedGiids !== undefined &&
+            !tokenRecord.allowedGiids.includes(command.giid)
+          ) {
+            return yield* new ApiTokenForbidden({
+              message: "API token is not allowed to access this installation",
+            });
+          }
+
+          const credential = yield* credentials.getOwnedById({
+            id: tokenRecord.credentialId,
+            userId: tokenRecord.userId,
+          });
+          if (Option.isNone(credential)) {
+            return yield* new ApiTokenUnauthorized({
+              message: "API token credential no longer exists",
+            });
+          }
+
+          const tokenUser = yield* users.getById(tokenRecord.userId);
+          if (Option.isNone(tokenUser)) {
+            return yield* new ApiTokenUnauthorized({
+              message: "API token user no longer exists",
+            });
+          }
+
+          const usedToken = yield* tokens.markUsed({
+            id: tokenRecord.id,
+            usedAt: new Date(),
+          });
+          const finalToken = Option.getOrElse(usedToken, () => tokenRecord);
+
+          return {
+            credential: credential.value,
+            token: finalToken,
+            user: {
+              email: tokenUser.value.email,
+              id: tokenUser.value.id,
+              name: tokenUser.value.name,
+            },
+          };
+        }).pipe(
+          Effect.catchTag("RepositoryError", (cause) =>
+            Effect.fail(
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to authenticate API token",
+              })
+            )
+          )
+        );
+
+      const list: ApiTokenServiceShape["list"] = (input) =>
+        Effect.gen(function* () {
+          const user = yield* CurrentUser;
+          return input.credentialId === undefined
+            ? yield* tokens.listForUser(user.id)
+            : yield* tokens.listForCredential({
+                credentialId: input.credentialId,
+                userId: user.id,
+              });
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to list API tokens",
+              })
+          )
+        );
+
+      const revoke: ApiTokenServiceShape["revoke"] = (input) =>
+        Effect.gen(function* () {
+          const user = yield* CurrentUser;
+          const revoked = yield* tokens.revoke({
+            id: input.tokenId,
+            revokedAt: new Date(),
+            userId: user.id,
+          });
+          if (Option.isNone(revoked)) {
+            return yield* new ApiTokenNotFound({
+              message: "API token not found",
+            });
+          }
+        }).pipe(
+          Effect.catchTag("RepositoryError", (cause) =>
+            Effect.fail(
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to revoke API token",
+              })
+            )
+          )
+        );
 
       return ApiTokenService.of({
         authenticate,
@@ -280,7 +324,7 @@ export class ApiTokenService extends Context.Service<
 const hashToken = (
   plaintextToken: string,
   pepper: string
-): Effect.Effect<string, ApiTokenError, Crypto> =>
+): Effect.Effect<string, ServiceUnavailable, Crypto> =>
   Effect.gen(function* () {
     const crypto = yield* Crypto;
     const digest = yield* crypto
@@ -291,7 +335,10 @@ const hashToken = (
       .pipe(
         Effect.mapError(
           (cause) =>
-            new ApiTokenError({ cause, message: "Failed to hash API token" })
+            new ServiceUnavailable({
+              cause,
+              message: "Failed to hash API token",
+            })
         )
       );
     return bytesToBase64Url(digest);

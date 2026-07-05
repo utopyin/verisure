@@ -4,12 +4,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { RepositoryError } from "../Repositories/RepositoryError";
 import { ShortcutExportRepository } from "../Repositories/ShortcutExportRepository";
 import { RuntimeConfig } from "../Runtime/RuntimeConfig";
 import { CurrentUser } from "../Security/RequestContext";
-import type { ApiTokenError } from "./ApiTokenService";
 import { ApiTokenService, ShortcutAlarmScopes } from "./ApiTokenService";
+import type { CredentialNotFound } from "./ServiceError";
+import { ServiceUnavailable } from "./ServiceError";
 
 export interface ShortcutExportCommand {
   readonly credentialId: string;
@@ -37,7 +37,7 @@ export interface ShortcutExportServiceShape {
     command: ShortcutExportCommand
   ) => Effect.Effect<
     ShortcutExportResult,
-    ApiTokenError | RepositoryError,
+    CredentialNotFound | ServiceUnavailable,
     CurrentUser
   >;
 }
@@ -81,8 +81,10 @@ export class ShortcutExportService extends Context.Service<
       const tokenService = yield* ApiTokenService;
       const exports = yield* ShortcutExportRepository;
 
-      const exportShortcut: ShortcutExportServiceShape["exportShortcut"] =
-        Effect.fn("ShortcutExportService.exportShortcut")(function* (command) {
+      const exportShortcut: ShortcutExportServiceShape["exportShortcut"] = (
+        command
+      ) =>
+        Effect.gen(function* () {
           const user = yield* CurrentUser;
           const createdToken = yield* tokenService.create({
             allowedGiids:
@@ -112,7 +114,16 @@ export class ShortcutExportService extends Context.Service<
             ...payload,
             apiToken: createdToken.token,
           };
-        });
+        }).pipe(
+          Effect.catchTag("RepositoryError", (cause) =>
+            Effect.fail(
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to record shortcut export",
+              })
+            )
+          )
+        );
 
       return ShortcutExportService.of({ exportShortcut });
     })

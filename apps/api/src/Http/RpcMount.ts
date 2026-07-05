@@ -8,5 +8,7 @@ import { HandlersLive, Rpcs } from "../Rpc";
 export const DashboardRpcHttp = RpcServer.toHttpEffect(Rpcs, {
   spanPrefix: "DashboardRpc",
 }).pipe(
-  Effect.provide(Layer.mergeAll(HandlersLive, RpcSerialization.layerNdjson))
+  Effect.provide(
+    HandlersLive.pipe(Layer.provideMerge(RpcSerialization.layerNdjson))
+  )
 );

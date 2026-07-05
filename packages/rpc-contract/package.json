@@ -10,7 +10,6 @@
     "test": "bun test ./src"
   },
   "dependencies": {
-    "@verisure/domain": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

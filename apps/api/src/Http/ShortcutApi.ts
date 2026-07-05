@@ -8,21 +8,25 @@ import {
 } from "effect/unstable/httpapi";
 
 import { ShortcutRestErrorSchemas } from "./ShortcutErrors";
+import {
+  ShortcutAuthorization,
+  ShortcutSchemaErrorHandler,
+} from "./ShortcutMiddleware";
 
-export const GiidQuery = Schema.Struct({ giid: Schema.NonEmptyString });
+const GiidQuery = Schema.Struct({ giid: Schema.NonEmptyString });
 
-export const ToggleFullPayload = Schema.Struct({
+const ToggleFullPayload = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   giid: Schema.NonEmptyString,
 });
 
-export const SetModePayload = Schema.Struct({
+const SetModePayload = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   giid: Schema.NonEmptyString,
   mode: Domain.AlarmModeSchema,
 });
 
-export class ShortcutAlarmApiGroup extends HttpApiGroup.make("alarm")
+class ShortcutAlarmApiGroup extends HttpApiGroup.make("alarm")
   .add(
     HttpApiEndpoint.get("status", "/status", {
       error: ShortcutRestErrorSchemas,
@@ -40,6 +44,8 @@ export class ShortcutAlarmApiGroup extends HttpApiGroup.make("alarm")
       success: Domain.AlarmMutationResultSchema,
     })
   )
+  .middleware(ShortcutAuthorization)
+  .middleware(ShortcutSchemaErrorHandler)
   .prefix("/api/v1/alarm")
   .annotateMerge(
     OpenApi.annotations({

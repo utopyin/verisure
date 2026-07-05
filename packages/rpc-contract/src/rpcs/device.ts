@@ -2,8 +2,22 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { DashboardRpcError } from "../errors";
+import {
+  CredentialNotFound,
+  DeviceReadUnavailable,
+  InstallationNotFound,
+  InvalidInput,
+  Unauthorized,
+} from "../errors";
 import { AlarmStatusPayload } from "./shared";
+
+const DeviceRpcError = Schema.Union([
+  Unauthorized,
+  CredentialNotFound,
+  InstallationNotFound,
+  InvalidInput,
+  DeviceReadUnavailable,
+]);
 
 const DeviceRef = Schema.Struct({
   area: Schema.optionalKey(Schema.String),
@@ -13,7 +27,7 @@ const DeviceRef = Schema.Struct({
 
 export const DeviceRpcs = RpcGroup.make(
   Rpc.make("ListDoorWindows", {
-    error: DashboardRpcError,
+    error: DeviceRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(
       Schema.Struct({
@@ -27,7 +41,7 @@ export const DeviceRpcs = RpcGroup.make(
     ),
   }),
   Rpc.make("ListClimate", {
-    error: DashboardRpcError,
+    error: DeviceRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(
       Schema.Struct({
@@ -41,7 +55,7 @@ export const DeviceRpcs = RpcGroup.make(
     ),
   }),
   Rpc.make("ListSmartLocks", {
-    error: DashboardRpcError,
+    error: DeviceRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(
       Schema.Struct({
@@ -57,7 +71,7 @@ export const DeviceRpcs = RpcGroup.make(
     ),
   }),
   Rpc.make("ListSmartPlugs", {
-    error: DashboardRpcError,
+    error: DeviceRpcError,
     payload: AlarmStatusPayload,
     success: Schema.Array(
       Schema.Struct({

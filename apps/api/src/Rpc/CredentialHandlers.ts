@@ -3,7 +3,6 @@ import * as Server from "@verisure/server";
 import * as Effect from "effect/Effect";
 
 import { AuthMiddleware } from "./AuthMiddleware";
-import { toDashboardRpcError } from "./ErrorMapper";
 import { CredentialScopeMiddleware } from "./ScopeMiddleware";
 
 export const Rpcs = RpcContract.CredentialRpcs.omit(
@@ -26,16 +25,48 @@ export const credentialHandlers = Effect.gen(function* () {
 
   return Rpcs.of({
     "Credential.CreateCredential": (payload) =>
-      credential.create(payload).pipe(Effect.mapError(toDashboardRpcError)),
+      credential
+        .create(payload)
+        .pipe(
+          Effect.catchTag("ServiceUnavailable", (error) =>
+            Effect.fail(
+              new RpcContract.CredentialUnavailable({ message: error.message })
+            )
+          )
+        ),
     "Credential.DeleteCredential": () =>
-      credential.delete.pipe(Effect.mapError(toDashboardRpcError)),
+      credential.delete.pipe(
+        Effect.catchTag("ServiceUnavailable", (error) =>
+          Effect.fail(
+            new RpcContract.CredentialUnavailable({ message: error.message })
+          )
+        )
+      ),
     "Credential.ListCredentials": () =>
-      credential.list.pipe(Effect.mapError(toDashboardRpcError)),
+      credential.list.pipe(
+        Effect.catchTag("ServiceUnavailable", (error) =>
+          Effect.fail(
+            new RpcContract.CredentialUnavailable({ message: error.message })
+          )
+        )
+      ),
     "Credential.RequestCredentialMfa": () =>
-      credential.requestMfa.pipe(Effect.mapError(toDashboardRpcError)),
+      credential.requestMfa.pipe(
+        Effect.catchTag("ServiceUnavailable", (error) =>
+          Effect.fail(
+            new RpcContract.CredentialUnavailable({ message: error.message })
+          )
+        )
+      ),
     "Credential.ValidateCredentialMfa": (payload) =>
       credential
         .validateMfa(payload.code)
-        .pipe(Effect.mapError(toDashboardRpcError)),
+        .pipe(
+          Effect.catchTag("ServiceUnavailable", (error) =>
+            Effect.fail(
+              new RpcContract.CredentialUnavailable({ message: error.message })
+            )
+          )
+        ),
   });
 });

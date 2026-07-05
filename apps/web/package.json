@@ -9,7 +9,6 @@
     "check:types": "tsgo"
   },
   "dependencies": {
-    "@verisure/rpc-contract": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "vite": "catalog:"

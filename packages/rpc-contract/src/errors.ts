@@ -7,11 +7,6 @@ export class Unauthorized extends Schema.ErrorClass<Unauthorized>(
   message: Schema.String,
 }) {}
 
-export class Forbidden extends Schema.ErrorClass<Forbidden>("Forbidden")({
-  _tag: Schema.tag("Forbidden"),
-  message: Schema.String,
-}) {}
-
 export class CredentialNotFound extends Schema.ErrorClass<CredentialNotFound>(
   "CredentialNotFound"
 )({
@@ -36,32 +31,58 @@ export class InvalidInput extends Schema.ErrorClass<InvalidInput>(
   message: Schema.String,
 }) {}
 
-export class VerisureUpstreamError extends Schema.ErrorClass<VerisureUpstreamError>(
-  "VerisureUpstreamError"
+export class DeviceReadUnavailable extends Schema.ErrorClass<DeviceReadUnavailable>(
+  "DeviceReadUnavailable"
 )({
-  _tag: Schema.tag("VerisureUpstreamError"),
-  kind: Schema.Literals([
-    "RequestError",
-    "AuthenticationError",
-    "MFARequired",
-    "CookieReadError",
-    "CredentialsRejected",
-    "LoginError",
-    "RateLimitError",
-    "LogoutError",
-    "ResponseError",
-    "GraphQLError",
-  ]),
+  _tag: Schema.tag("DeviceReadUnavailable"),
   message: Schema.String,
-  statusCode: Schema.optionalKey(Schema.Finite),
 }) {}
 
-export const DashboardRpcError = Schema.Union([
+export class AlarmUnavailable extends Schema.ErrorClass<AlarmUnavailable>(
+  "AlarmUnavailable"
+)({
+  _tag: Schema.tag("AlarmUnavailable"),
+  message: Schema.String,
+}) {}
+
+export class AlarmCodeRequired extends Schema.ErrorClass<AlarmCodeRequired>(
+  "AlarmCodeRequired"
+)({
+  _tag: Schema.tag("AlarmCodeRequired"),
+  message: Schema.String,
+}) {}
+
+export class CredentialUnavailable extends Schema.ErrorClass<CredentialUnavailable>(
+  "CredentialUnavailable"
+)({
+  _tag: Schema.tag("CredentialUnavailable"),
+  message: Schema.String,
+}) {}
+
+export class InstallationUnavailable extends Schema.ErrorClass<InstallationUnavailable>(
+  "InstallationUnavailable"
+)({
+  _tag: Schema.tag("InstallationUnavailable"),
+  message: Schema.String,
+}) {}
+
+export class ShortcutUnavailable extends Schema.ErrorClass<ShortcutUnavailable>(
+  "ShortcutUnavailable"
+)({
+  _tag: Schema.tag("ShortcutUnavailable"),
+  message: Schema.String,
+}) {}
+
+export class ApiTokenNotFound extends Schema.ErrorClass<ApiTokenNotFound>(
+  "ApiTokenNotFound"
+)({
+  _tag: Schema.tag("ApiTokenNotFound"),
+  message: Schema.String,
+}) {}
+
+export const ScopedRpcError = Schema.Union([
   Unauthorized,
-  Forbidden,
   CredentialNotFound,
   InstallationNotFound,
   InvalidInput,
-  VerisureUpstreamError,
 ]);
-export type DashboardRpcError = Schema.Schema.Type<typeof DashboardRpcError>;

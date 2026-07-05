@@ -8,25 +8,20 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import type { CredentialCryptoError } from "../Security/CredentialCrypto";
 import { CredentialCrypto } from "../Security/CredentialCrypto";
 import {
   CurrentCredential,
   CurrentInstallation,
 } from "../Security/RequestContext";
-import type { VerisureRequestsError } from "../Verisure/VerisureRequests";
 import { VerisureRequests } from "../Verisure/VerisureRequests";
-import { ServiceError } from "./ServiceError";
+import { AlarmCodeRequired, ServiceUnavailable } from "./ServiceError";
 
-export type AlarmServiceError =
-  | CredentialCryptoError
-  | ServiceError
-  | VerisureRequestsError;
+export type AlarmCommandError = AlarmCodeRequired | ServiceUnavailable;
 
 export interface AlarmServiceShape {
   readonly getArmState: Effect.Effect<
     ArmState,
-    AlarmServiceError,
+    ServiceUnavailable,
     CurrentCredential | CurrentInstallation
   >;
   readonly setMode: (input: {
@@ -34,14 +29,14 @@ export interface AlarmServiceShape {
     readonly code?: string;
   }) => Effect.Effect<
     AlarmMutationResult,
-    AlarmServiceError,
+    AlarmCommandError,
     CurrentCredential | CurrentInstallation
   >;
   readonly toggleFull: (
     code?: string
   ) => Effect.Effect<
     AlarmMutationResult,
-    AlarmServiceError,
+    AlarmCommandError,
     CurrentCredential | CurrentInstallation
   >;
 }
@@ -93,7 +88,16 @@ export class AlarmService extends Context.Service<
       const getArmState = Effect.gen(function* () {
         const giid = yield* currentGiid;
         return yield* requests.armState({ giid });
-      }).pipe(Effect.withSpan("AlarmService.getArmState"));
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceUnavailable({
+              cause,
+              message: "Unable to read alarm state",
+            })
+        ),
+        Effect.withSpan("AlarmService.getArmState")
+      );
 
       const resolveCode = Effect.fn("AlarmService.resolveCode")(function* (
         code?: string
@@ -102,9 +106,17 @@ export class AlarmService extends Context.Service<
           return code;
         }
         const credential = yield* CurrentCredential;
-        const decrypted = yield* crypto.decryptCredential(credential);
+        const decrypted = yield* crypto.decryptCredential(credential).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceUnavailable({
+                cause,
+                message: "Unable to read alarm code",
+              })
+          )
+        );
         if (decrypted.pin === undefined) {
-          return yield* new ServiceError({
+          return yield* new AlarmCodeRequired({
             message: "Alarm code is required for this credential",
           });
         }
@@ -116,11 +128,21 @@ export class AlarmService extends Context.Service<
       )(function* (input) {
         const giid = yield* currentGiid;
         const code = yield* resolveCode(input.code);
-        return yield* requests.setAlarmMode({
-          code,
-          giid,
-          mode: input.mode,
-        });
+        return yield* requests
+          .setAlarmMode({
+            code,
+            giid,
+            mode: input.mode,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceUnavailable({
+                  cause,
+                  message: "Unable to change alarm mode",
+                })
+            )
+          );
       });
 
       const toggleFull: AlarmServiceShape["toggleFull"] = Effect.fn(
