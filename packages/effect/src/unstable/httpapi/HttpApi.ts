@@ -57,7 +57,7 @@ export interface HttpApi<
   /**
    * Add a `HttpApiGroup` to the `HttpApi`.
    */
-  add<A extends NonEmptyReadonlyArray<HttpApiGroup.Any>>(...groups: A): HttpApi<Id, Groups | A[number]>
+  add<const A extends NonEmptyReadonlyArray<HttpApiGroup.Any>>(...groups: A): HttpApi<Id, Groups | A[number]>
 
   /**
    * Add another `HttpApi` to the `HttpApi`.
@@ -186,9 +186,7 @@ const makeProto = <Id extends string, Groups extends HttpApiGroup.Any>(
 ): HttpApi<Id, Groups> => {
   function HttpApi() {}
   Object.setPrototypeOf(HttpApi, Proto)
-  HttpApi.groups = options.groups
-  HttpApi.annotations = options.annotations
-  return HttpApi as any
+  return Object.assign(HttpApi, options) as any
 }
 
 /**
@@ -206,7 +204,7 @@ const makeProto = <Id extends string, Groups extends HttpApiGroup.Any>(
 export const make = <const Id extends string>(identifier: Id): HttpApi<Id, never> =>
   makeProto({
     identifier,
-    groups: new Map() as any,
+    groups: {},
     annotations: Context.empty()
   })
 
@@ -291,6 +289,7 @@ const extractResponseContent = (
   return map
 
   function add(schema: Schema.Top) {
+    if (HttpApiSchema.isStreamSchema(schema)) return
     const ast = schema.ast
     const status = getStatus(ast)
     const schemas = map.get(status)
@@ -311,5 +310,5 @@ const extractResponseContent = (
  */
 export class AdditionalSchemas extends Context.Service<
   AdditionalSchemas,
-  ReadonlyArray<Schema.Top>
+  ReadonlyArray<Schema.Constraint>
 >()("effect/httpapi/HttpApi/AdditionalSchemas") {}
