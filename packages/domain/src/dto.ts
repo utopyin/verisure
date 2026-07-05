@@ -1,14 +1,8 @@
 import * as Schema from "effect/Schema";
 
-export const AlarmModes = ["DISARMED", "ARMED_AWAY", "ARMED_HOME"] as const;
+const AlarmModes = ["DISARMED", "ARMED_AWAY", "ARMED_HOME"] as const;
 export const AlarmModeSchema = Schema.Literals(AlarmModes);
 export type AlarmMode = Schema.Schema.Type<typeof AlarmModeSchema>;
-
-export const ShortcutAlarmModes = ["DISARMED", "ARMED_AWAY"] as const;
-export const ShortcutAlarmModeSchema = Schema.Literals(ShortcutAlarmModes);
-export type ShortcutAlarmMode = Schema.Schema.Type<
-  typeof ShortcutAlarmModeSchema
->;
 
 export const ConnectionStatusSchema = Schema.Literals([
   "unchecked",
@@ -44,15 +38,11 @@ export type MfaRequestResult = Schema.Schema.Type<
   typeof MfaRequestResultSchema
 >;
 
-export const InstallationAddressSchema = Schema.Struct({
+const InstallationAddressSchema = Schema.Struct({
   city: Schema.optionalKey(Schema.String),
   postalNumber: Schema.optionalKey(Schema.String),
   street: Schema.optionalKey(Schema.String),
 });
-export type InstallationAddress = Schema.Schema.Type<
-  typeof InstallationAddressSchema
->;
-
 export const InstallationSummarySchema = Schema.Struct({
   address: Schema.optionalKey(InstallationAddressSchema),
   alias: Schema.String,
@@ -94,13 +84,11 @@ export type AlarmMutationResult = Schema.Schema.Type<
   typeof AlarmMutationResultSchema
 >;
 
-export const DeviceRefSchema = Schema.Struct({
+const DeviceRefSchema = Schema.Struct({
   area: Schema.optionalKey(Schema.String),
   deviceLabel: Schema.String,
   label: Schema.optionalKey(Schema.String),
 });
-export type DeviceRef = Schema.Schema.Type<typeof DeviceRefSchema>;
-
 export const DoorWindowSensorStatusSchema = Schema.Struct({
   area: Schema.optionalKey(Schema.String),
   device: DeviceRefSchema,
@@ -145,37 +133,4 @@ export const SmartPlugStatusSchema = Schema.Struct({
 });
 export type SmartPlugStatus = Schema.Schema.Type<typeof SmartPlugStatusSchema>;
 
-export interface EventLogEntry {
-  readonly eventId: string;
-  readonly eventTime: string;
-  readonly eventType?: string;
-  readonly eventCategory?: string;
-  readonly userName?: string;
-  readonly armState?: string;
-  readonly device?: DeviceRef;
-}
-
-export interface ApiTokenSummary {
-  readonly id: string;
-  readonly credentialId: string;
-  readonly displayPrefix: string;
-  readonly scopes: readonly string[];
-  readonly allowedGiids?: readonly string[];
-  readonly expiresAt?: Date;
-  readonly lastUsedAt?: Date;
-  readonly revokedAt?: Date;
-  readonly createdAt: Date;
-}
-
 export type ShortcutTemplate = "toggle-full" | "choose-mode";
-
-export interface ShortcutExportResult {
-  readonly template: ShortcutTemplate;
-  readonly apiUrl: string;
-  readonly bearerToken: string;
-  readonly credentialId: string;
-  readonly giid?: string;
-  readonly shortcutName: string;
-  readonly instructions: readonly string[];
-  readonly downloadUrl?: string;
-}
